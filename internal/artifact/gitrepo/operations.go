@@ -116,6 +116,10 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 		result.Commit, result.Changed, result.Nested, err = r.SnapshotWithNested(ctx, req.WorkTree, req.Parent, req.Message, req.Flatten)
 	case ops.Checkout:
 		err = r.Checkout(ctx, req.Commit, req.WorkTree)
+	case ops.VerifyRecoveryRemainder:
+		err = r.VerifyRecoveryRemainder(ctx, req.Commit, req.WorkTree)
+	case ops.VerifyRecoveryContent:
+		err = r.VerifyRecoveryContent(ctx, req.Commit, req.WorkTree)
 	case ops.VerifyCheckout:
 		err = r.VerifyCheckout(ctx, req.Commit, req.WorkTree)
 	case ops.PrepareRecovery:
@@ -157,6 +161,8 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 		result.Paths, err = r.Apply(ctx, req.From, req.Commit, req.WorkTree)
 	case ops.Changed:
 		result.Paths, err = r.Changed(ctx, req.From, req.Commit)
+	case ops.InspectRecovery, ops.RemoveRecovery:
+		result, err = RecoveryContainer(ctx, req.WorkTree, req.Path, req.Recovery, req.Commit, req.Identity, req.RootIdentity, req.Op == ops.RemoveRecovery)
 	case ops.Remove:
 		err = os.RemoveAll(req.Path)
 	case ops.ListWorktrees:
@@ -196,7 +202,7 @@ func validateOperation(req ops.Request) error {
 		if req.Parent != "" {
 			commits = []string{req.Parent}
 		}
-	case ops.Checkout, ops.VerifyCheckout, ops.PrepareRecovery:
+	case ops.Checkout, ops.VerifyCheckout, ops.PrepareRecovery, ops.VerifyRecoveryContent, ops.VerifyRecoveryRemainder:
 		paths, commits = []string{req.Repo, req.WorkTree}, []string{req.Commit}
 	case ops.Has:
 		paths, commits = []string{req.Repo}, []string{req.Commit}
@@ -220,6 +226,8 @@ func validateOperation(req ops.Request) error {
 		}
 	case ops.WritePath:
 		paths, commits = []string{req.Repo, req.WorkTree}, []string{req.Commit}
+	case ops.InspectRecovery, ops.RemoveRecovery:
+		paths, commits = []string{req.WorkTree, req.Path}, []string{req.Commit}
 	case ops.Remove:
 		paths = []string{req.Path}
 		if filepath.Clean(req.Path) == string(filepath.Separator) {

@@ -32,7 +32,7 @@ func ReleaseProjectGuard(tx *ledger.Tx, project string) error {
 		return err
 	}
 	for _, r := range recoveries {
-		if r.Project == project {
+		if r.Project == project && (r.Phase != "released" || r.CopyRemovedAt.IsZero() && r.Workspace.Path != "") {
 			return ErrWorkspaceRecovery
 		}
 	}

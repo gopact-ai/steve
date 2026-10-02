@@ -12,6 +12,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/channel"
@@ -966,6 +967,7 @@ func releasedRecoveryCopy(t *testing.T) (*Coordinator, project.Project, project.
 	}); err != nil {
 		t.Fatal(err)
 	}
+	c.projects = project.Open(ledgerOf(t, c), attempt.CheckDeclarationsTx)
 	return c, p, ws, episode
 }
 
@@ -979,7 +981,7 @@ func TestReleasedRecoveryCopyKeepsItsContainerClaimUntilExactRemovalIsRecorded(t
 	if err := c.projects.Declare(t.Context(), []project.Project{p, other}); !errors.Is(err, attempt.ErrWorkspaceRecovery) {
 		t.Fatalf("another project claimed pending owned container: %v", err)
 	}
-	forceStopTrigger(t, c, `CREATE TRIGGER refuse_copy_removed BEFORE UPDATE ON operations WHEN NEW.kind='workspace-recovery' AND json_extract(NEW.data,'$.copy_removed_at') IS NOT NULL BEGIN SELECT RAISE(ABORT,'copy removed refused'); END`)
+	forceStopTrigger(t, c, `CREATE TRIGGER refuse_copy_removed BEFORE UPDATE ON operations WHEN NEW.kind='workspace-recovery' AND json_extract(NEW.data,'$.copy_removed_at') IS NOT NULL AND json_extract(NEW.data,'$.copy_removed_at')!='0001-01-01T00:00:00Z' BEGIN SELECT RAISE(ABORT,'copy removed refused'); END`)
 	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		if _, err := cleaner.CleanupRecoveryCopy(ctx, episode.ID, driver); err == nil {
 			t.Fatal("refused deletion confirmation became success")
@@ -1041,5 +1043,263 @@ func TestReleasedRecoveryCopyRefusesUnknownMarkerAndKeepsAdjacentContent(t *test
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("marker refusal lost exact protected path %s: %v", path, err)
 		}
+	}
+}
+
+func TestReleasedRecoveryCopyWithUnpreservedContentRemainsCleanupPending(t *testing.T) {
+	for _, mode := range []string{"new-content", "ignored", "nested"} {
+		t.Run(mode, func(t *testing.T) {
+			c, p, ws, episode := releasedRecoveryCopy(t)
+			path := filepath.Join(ws.Path, "unpreserved")
+			switch mode {
+			case "ignored":
+				if err := os.WriteFile(filepath.Join(ws.Path, ".gitignore"), []byte("unpreserved\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "nested":
+				path = filepath.Join(ws.Path, "nested", "owned")
+				if err := os.MkdirAll(filepath.Join(ws.Path, "nested", ".git"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(ws.Path, "nested", ".git", "HEAD"), []byte("ref: refs/heads/example\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(path, []byte("not preserved in C\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+				_, err := c.artifacts.CleanupRecoveryCopy(ctx, episode.ID, driver)
+				if err == nil {
+					t.Fatal("copy data outside frozen C was deleted")
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			current, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID)
+			if err != nil || current.Phase != "released" || !current.CopyRemovedAt.IsZero() {
+				t.Fatalf("unsafe copy cleanup altered release fact: %+v %v", current, err)
+			}
+			if raw, err := os.ReadFile(path); err != nil || string(raw) != "not preserved in C\n" {
+				t.Fatalf("cleanup erased unpublished copy content: %q %v", raw, err)
+			}
+			if err := ledgerOf(t, c).Read(t.Context(), func(tx *ledger.ReadTx) error { return attempt.RecoveryHoldTx(tx, p.Home.Node, p.Home.Path) }); err != nil {
+				t.Fatalf("cleanup-pending re-held original: %v", err)
+			}
+		})
+	}
+}
+
+func TestNoCopyWorkRecordsRealNoChangeResultWithoutMaterializingAContainer(t *testing.T) {
+	c, p, episode := drainWithoutCopy(t)
+	if err := os.WriteFile(filepath.Join(p.Home.Path, "residual-current"), []byte("current original\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		if _, err := c.artifacts.CaptureRecoveryResidual(ctx, episode.ID, driver); err != nil {
+			return err
+		}
+		land, err := c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver)
+		if err != nil {
+			return err
+		}
+		if len(land.Paths) != 0 || land.Committed == nil {
+			t.Fatalf("no copy work created fake physical changes: %+v", land)
+		}
+		r, err := c.artifacts.ReleaseRecovery(ctx, episode.ID, driver)
+		if err != nil {
+			return err
+		}
+		if r.Workspace.Path != "" || r.Result == nil || r.Result.Outcome != "no-copy-change" {
+			t.Fatalf("no-copy completion fabricated a materialization: %+v", r)
+		}
+		_, err = c.artifacts.CleanupRecoveryCopy(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(p.Home.Path, "residual-current")); err != nil || string(raw) != "current original\n" {
+		t.Fatalf("no-change completion restored B: %q %v", raw, err)
+	}
+}
+
+func TestRecoveryCleanupRefusesAReplacementContainerBeforeRecursiveRemoval(t *testing.T) {
+	_, p, ws, episode := releasedRecoveryCopy(t)
+	root := filepath.Dir(filepath.Dir(filepath.Dir(ws.Path)))
+	container := filepath.Dir(ws.Path)
+	observed, err := gitrepo.RecoveryContainer(t.Context(), root, container, episode.ID, episode.Baseline.Artifact, "", "", false)
+	if err != nil || !observed.Has {
+		t.Fatalf("inspect exact container: %+v %v", observed, err)
+	}
+	moved := container + "-held-owned-fixture"
+	if err := os.Rename(container, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(container, "work"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(container, ".steve-workspace"), []byte(episode.ID+"\n"+episode.Baseline.Artifact+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(container, "work", "replacement")
+	if err := os.WriteFile(foreign, []byte("preserve replacement\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitrepo.RecoveryContainer(t.Context(), root, container, episode.ID, episode.Baseline.Artifact, observed.Identity, observed.RootIdentity, true); err == nil {
+		t.Fatal("fixed basename/marker replaced directory identity")
+	}
+	if raw, err := os.ReadFile(foreign); err != nil || string(raw) != "preserve replacement\n" {
+		t.Fatalf("replacement container was recursively deleted: %q %v", raw, err)
+	}
+	if _, err := os.Stat(filepath.Join(moved, "work", "landed")); err != nil {
+		t.Fatalf("rename refusal deleted the original owned handle: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(p.Home.Path, "landed")); err != nil {
+		t.Fatal("container replacement touched canonical")
+	}
+}
+
+type cleanupNodeFixture struct {
+	artifact.Nodes
+	refuse     bool
+	generation int64
+}
+
+func (n *cleanupNodeFixture) Generation(ctx context.Context, node string) (int64, error) {
+	if n.generation != 0 {
+		return n.generation, nil
+	}
+	return n.Nodes.Generation(ctx, node)
+}
+func (n *cleanupNodeFixture) Artifact(ctx context.Context, node string, req ops.Request) (ops.Result, error) {
+	if req.Op == ops.RemoveRecovery && n.refuse {
+		return ops.Result{}, errors.New("fixture removal interrupted after intent")
+	}
+	return n.Nodes.Artifact(ctx, node, req)
+}
+
+func TestRecoveryPartialCleanupKeepsMarkerScopeAndRefusesNewCopyBytes(t *testing.T) {
+	for _, mode := range []string{"partial", "new-data", "generation"} {
+		t.Run(mode, func(t *testing.T) {
+			c, p, ws, episode := releasedRecoveryCopy(t)
+			nodes := &cleanupNodeFixture{Nodes: artifact.LocalNodes{Dir: filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(ws.Path)))))}, refuse: true, generation: 1}
+			c.artifacts = artifact.New(c.artifacts.Dir, ledgerOf(t, c), c.projects, nodes)
+			if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+				_, err := c.artifacts.CleanupRecoveryCopy(ctx, episode.ID, driver)
+				if err == nil {
+					t.Fatal("injected removal interruption ignored")
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			current, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID)
+			if err != nil || current.CopyIdentity == "" || current.CopyRootIdentity == "" || !current.CopyRemovedAt.IsZero() {
+				t.Fatalf("removal intent was not persisted before side effect: %+v %v", current, err)
+			}
+			// Simulate only the fixture's already-owned partial removal. The known
+			// fixture file and marker are checked before either is removed.
+			file := filepath.Join(ws.Path, "landed")
+			if raw, err := os.ReadFile(file); err != nil || string(raw) != "keep landed\n" {
+				t.Fatal("fixture file ownership changed")
+			}
+			if err := os.Remove(file); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(filepath.Dir(ws.Path), ".steve-workspace")
+			if raw, err := os.ReadFile(marker); err != nil || string(raw) != episode.ID+"\n"+episode.Baseline.Artifact+"\n" {
+				t.Fatal("fixture marker ownership changed")
+			}
+			if mode == "partial" {
+				if err := os.Remove(marker); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "new-data" {
+				if err := os.WriteFile(filepath.Join(ws.Path, "new-owned-fixture"), []byte("unpreserved new copy data\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "generation" {
+				nodes.generation = 2
+			}
+			nodes.refuse = false
+			if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+				_, err := c.artifacts.CleanupRecoveryCopy(ctx, episode.ID, driver)
+				if mode == "partial" {
+					return err
+				}
+				if err == nil {
+					t.Fatalf("%s invalidated ownership but cleanup continued", mode)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "partial" {
+				if _, err := os.Stat(filepath.Dir(ws.Path)); !os.IsNotExist(err) {
+					t.Fatalf("same scoped partial was not exactly removed: %v", err)
+				}
+			} else {
+				if _, err := os.Stat(ws.Path); err != nil {
+					t.Fatalf("unknown cleanup target disappeared: %v", err)
+				}
+			}
+			if raw, err := os.ReadFile(filepath.Join(p.Home.Path, "landed")); err != nil || string(raw) != "keep landed\n" {
+				t.Fatalf("copy partial cleanup touched original: %q %v", raw, err)
+			}
+		})
+	}
+}
+
+func TestNeverMaterializedCopyCanFinishWithoutReadingANonexistentWorkspace(t *testing.T) {
+	c, p, episode := drainWithoutCopy(t)
+	// Select before draining as the preparation owner would, but do not
+	// perform any filesystem checkout or native preparation in this fixture.
+	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error {
+		_, err := tx.Exec(`UPDATE operations SET state='recorded',data=json_set(data,'$.phase','recorded') WHERE id=?`, episode.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	episode, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := c.artifacts.PlanRecoveryWorkspace(t.Context(), episode, "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.attempts.SelectRecoveryWorkspace(t.Context(), episode.ID, ws, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		if _, err := c.attempts.BeginRecoveryDrain(ctx, episode.ID, driver); err != nil {
+			return err
+		}
+		if _, err := c.artifacts.CaptureRecoveryResidual(ctx, episode.ID, driver); err != nil {
+			return err
+		}
+		if _, err := c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver); err != nil {
+			return err
+		}
+		r, err := c.artifacts.ReleaseRecovery(ctx, episode.ID, driver)
+		if err != nil {
+			return err
+		}
+		if r.Result == nil || r.Result.Outcome != "no-copy-change" {
+			t.Fatalf("unmaterialized copy result: %+v", r)
+		}
+		_, err = c.artifacts.CleanupRecoveryCopy(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(ws.Path); !os.IsNotExist(err) {
+		t.Fatalf("finishing never-prepared copy materialized it: %v", err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(p.Home.Path, "original")); err != nil || string(raw) != "named base\n" {
+		t.Fatalf("unmaterialized finish changed original: %q %v", raw, err)
 	}
 }

@@ -43,13 +43,16 @@ func (r *applicationWorkspaceRecovery) Reconcile(parent context.Context) error {
 	}
 	var failures []error
 	for _, episode := range all {
-		if episode.Phase == "released" {
+		if episode.Phase == "released" && !episode.CopyRemovedAt.IsZero() {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 		replayed, err := r.control.Replay(ctx, episode.ID)
 		if err == nil && !replayed {
-			err = r.control.Drive(ctx, episode.ID, func(ctx context.Context, driver ledger.Lease) error { return r.drain(ctx, episode.ID, driver) })
+			err = r.control.Drive(ctx, episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+				cause := r.drain(ctx, episode.ID, driver)
+				return errors.Join(cause, r.attempts.RecordRecoveryWait(ctx, episode.ID, driver, cause))
+			})
 		}
 		cancel()
 		if err != nil {
@@ -62,6 +65,10 @@ func (r *applicationWorkspaceRecovery) Reconcile(parent context.Context) error {
 func (r *applicationWorkspaceRecovery) drain(ctx context.Context, id string, driver ledger.Lease) error {
 	episode, err := r.attempts.WorkspaceRecovery(ctx, id)
 	if err != nil {
+		return err
+	}
+	if episode.Phase == "released" {
+		_, err := r.artifacts.CleanupRecoveryCopy(ctx, id, driver)
 		return err
 	}
 	if episode.Phase == "capture" || episode.Phase == "landing" {

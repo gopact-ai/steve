@@ -1,6 +1,12 @@
 import type { consoleZh } from "../zh/console.ts";
 
 export const consoleEn = {
+    "console.recoveryWorkspaceDraining": "Draining the shared copy: only its admitted writer may finish. New input waits, and every native context requires verified process exit.",
+    "console.recoveryWorkspaceCapture": "Saving the original directory as it is, without resetting the baseline or removing ignored or nested content.",
+    "console.recoveryWorkspaceLanding": "Merging the copy from its fixed baseline into the current original directory. Conflicts and unfinished writes keep isolation in place.",
+    "console.recoveryWorkspaceReleasedTitle": "Project recovery mergeback completed",
+    "console.recoveryWorkspaceCleanup": "The original directory is released for the next safe turn. The owned copy remains protected until exact cleanup is confirmed.",
+    "console.recoveryWorkspaceReleased": "The current original directory has been preserved and merged. Owned-copy cleanup is confirmed; historical content evidence is retained.",
     "console.recoveryWorkspaceNode": "Fixed copy node: {node}",
     "console.recoveryWorkspaceHub": "the coordinator",
     "console.recoveryWorkspaceMaterializing": "The copy is being prepared at the fixed node and path below from the pinned recovery artifact. The original directory remains isolated.",

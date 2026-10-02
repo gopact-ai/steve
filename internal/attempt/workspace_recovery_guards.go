@@ -24,7 +24,7 @@ func checkRecoveryDeclarationsTx(tx ledger.Reader, desired []project.Project) er
 				kept = true
 			}
 			for _, w := range p.Workspaces() {
-				if r.Workspace.Path != "" && w.Node == r.Workspace.Node && recoveryPathsOverlap(w.Path, path.Dir(r.Workspace.Path)) {
+				if r.CopyRemovedAt.IsZero() && r.Workspace.Path != "" && w.Node == r.Workspace.Node && recoveryPathsOverlap(w.Path, path.Dir(r.Workspace.Path)) {
 					return ErrWorkspaceRecovery
 				}
 				if r.Phase == "released" || w.Node != r.Target.Node {
@@ -87,7 +87,7 @@ func RecoveryCopyHoldTx(tx ledger.Reader, node, directory string) error {
 		return err
 	}
 	for _, r := range all {
-		if r.Workspace.Path == "" || r.Workspace.Node != node {
+		if !r.CopyRemovedAt.IsZero() || r.Workspace.Path == "" || r.Workspace.Node != node {
 			continue
 		}
 		container := path.Dir(r.Workspace.Path)
@@ -108,7 +108,7 @@ func (s *Service) RecoveryWorkspaces(ctx context.Context) ([]project.Workspace, 
 			return err
 		}
 		for _, r := range all {
-			if r.Workspace.Path != "" {
+			if r.Workspace.Path != "" && r.CopyRemovedAt.IsZero() {
 				out = append(out, r.Workspace)
 			}
 		}

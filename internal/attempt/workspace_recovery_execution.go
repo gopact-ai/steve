@@ -84,6 +84,12 @@ func checkRecoveryWriterTx(tx ledger.Reader, spec Spec) error {
 		if r.Workspace.Path == "" || r.Workspace.Node != spec.Workspace.Node || !samePhysicalPath(r.Workspace.Path, spec.Workspace.Path) {
 			continue
 		}
+		if !r.CopyRemovedAt.IsZero() {
+			if spec.WorkspaceRecovery != nil && spec.WorkspaceRecovery.ID == r.ID || spec.Workspace.RecoveryID == r.ID {
+				return ErrWorkspaceRecovery
+			}
+			continue
+		}
 		if spec.WorkspaceRecovery == nil || spec.WorkspaceRecovery.ID != r.ID || !sameRecoveryWorkspace(spec.Workspace, r.Workspace) {
 			return ErrWorkspaceRecovery
 		}

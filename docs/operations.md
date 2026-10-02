@@ -649,7 +649,7 @@ bash -lc 'exec /home/me/steve-bin/steve-node mcp-broker -config /home/me/steve-b
 
 隔离工作树的显式 `Base` 和每个 input 必须是同一项目已经被产物 owner 接纳的 artifact；仅在影子 Git 仓库中存在的裸 SHA 或被拒绝的 snapshot candidate 不再足以物化。普通已发布的非 canonical 产物、经授权的派生产物和已记录的冲突树仍按原流程使用。没有可信 canonical name、且其他 writer 正持有 canonical 租约时，初始基线请求明确返回可重试的占用错误，不读取该 writer 的目录来补出裸 SHA。等待其建立 accepted name 或释放租约后重试；取得自己快照租约的调用者可以正常建立初始基线。
 
-canonical snapshot 的最终接纳事务核对原声明、目录、精确租约及恢复 hold，并与 artifact/content 索引和名称提交一起判定。已经发出的 I/O 可能完成，但完成回执、Git pin 或可达对象不等于新产物已经被接纳；同 SHA 更早已获接纳的历史事实不会因晚到拒绝而撤销。恢复副本仍从同事务固定的可信基线开始，原目录保留隔离。当前阶段不捕获原目录残留、不自动合回或释放 hold。
+canonical snapshot 的最终接纳事务核对原声明、目录、精确租约及恢复 hold，并与 artifact/content 索引和名称提交一起判定。已经发出的 I/O 可能完成，但完成回执、Git pin 或可达对象不等于新产物已经被接纳；同 SHA 更早已获接纳的历史事实不会因晚到拒绝而撤销。恢复副本仍从同事务固定的可信基线开始，原目录保留隔离。确认所有原目录写者已真实退出后，恢复驱动排空共享副本并保存原目录现状 R，以最初固定 B 将接受的副本 C 合到执行时的当前目录。不会恢复 B、reset/clean 原树或删除忽略及嵌套内容。冲突沿精确恢复关联交给手工或正常授权的解析者；未取得退出证明、完整来源当前授权或真实提交回执时继续隔离。最终 Result 与 released/原 hold 解除同事务，下一回合重新解析 canonical，不热改 native cwd。合回完成后自有容器仍受声明保护，核对固定路径、marker、安装/目录身份和机器 generation 并以锚定 handle 精确清理；副本新变化或未捕获内容使 cleanup 保持 pending，不重新封锁已释放原目录。节点或安装身份变化、未知替换及不支持的文件身份能力均保守等待。dev/inode、Windows file-id 不是永久不复用标识；协作声明与安装协议提供正常互斥，不承诺外部非合作 rename/check/unlink 的全目录原子性。
 
 恢复 owner 保存完整连续 head 来源链，并独立引用内容寻址的 Git 存储模式证据。保留检查不依赖普通 artifact 行仍存在；模式证据、producing attempt 事实或当前内容 manifest/依赖/发布回执缺失、错关联时保守拒绝删除与回收。模式证据用于核对历史事实和单条元数据损坏，不是密码学签名，不授予当前 task token、项目权限或合回授权，也不声称防御同时恶意重写全部账本。它随 accepted artifact 的历史事实保留，普通 artifact 行删除不能顺带删除仍被恢复 owner 引用的证据。
 

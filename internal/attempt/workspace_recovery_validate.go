@@ -102,8 +102,19 @@ func validateWorkspaceRecovery(r WorkspaceRecovery) error {
 }
 
 func validateRecoveryCapture(r WorkspaceRecovery) error {
-	if (r.Phase == "released") != (r.Result != nil && !r.ReleasedAt.IsZero()) {
+	if r.Phase == "released" && (r.Result == nil || r.ReleasedAt.IsZero()) || r.Phase != "released" && (r.Result != nil || !r.ReleasedAt.IsZero()) {
 		return errors.New("recovery release lacks its exact result")
+	}
+	if len(r.Error) > 2048 || !r.CopyRemovedAt.IsZero() && r.Phase != "released" || r.CopyIdentity == "" && (r.CopyRootIdentity != "" || r.CopyGeneration != 0) || r.CopyIdentity != "" && (r.CopyRootIdentity == "" || r.CopyGeneration < 1) {
+		return errors.New("recovery cleanup identity differs from its phase")
+	}
+	if r.Result != nil {
+		if r.Result.Version < 1 || r.Result.Landing == "" || r.Result.Evidence == "" {
+			return errors.New("recovery result has no exact committed identity")
+		}
+		if err := validateRecoveryContent(r.Result.Artifact, r.Result.ID, r.Result.Storage); err != nil {
+			return err
+		}
 	}
 	frozen := r.Phase == "capture" || r.Phase == "landing" || r.Phase == "released"
 	if frozen && (r.FrozenHeadVersion != r.Head.Version || r.Producer != nil) || !frozen && r.FrozenHeadVersion != 0 {

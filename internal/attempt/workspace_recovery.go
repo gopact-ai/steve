@@ -34,8 +34,13 @@ type WorkspaceRecovery struct {
 	FrozenHeadVersion int64              `json:"frozen_head_version,omitempty"`
 	Residual          *RecoveryResidual  `json:"residual,omitempty"`
 	Result            *RecoveryResult    `json:"result,omitempty"`
-	ReleasedAt        time.Time          `json:"released_at,omitempty"`
+	ReleasedAt        time.Time          `json:"released_at,omitzero"`
 	Resolvers         []RecoveryResolver `json:"resolvers,omitempty"`
+	CopyIdentity      string             `json:"copy_identity,omitempty"`
+	CopyRemovedAt     time.Time          `json:"copy_removed_at,omitzero"`
+	Error             string             `json:"error,omitempty"`
+	CopyGeneration    int64              `json:"copy_generation,omitempty"`
+	CopyRootIdentity  string             `json:"copy_root_identity,omitempty"`
 }
 
 type RecoveryContent struct {
