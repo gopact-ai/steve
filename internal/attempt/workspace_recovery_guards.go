@@ -24,6 +24,9 @@ func checkRecoveryDeclarationsTx(tx ledger.Reader, desired []project.Project) er
 				kept = true
 			}
 			for _, w := range p.Workspaces() {
+				if r.Workspace.Path != "" && w.Node == r.Workspace.Node && recoveryPathsOverlap(w.Path, path.Dir(r.Workspace.Path)) {
+					return ErrWorkspaceRecovery
+				}
 				if w.Node != r.Target.Node {
 					continue
 				}
@@ -31,7 +34,7 @@ func checkRecoveryDeclarationsTx(tx ledger.Reader, desired []project.Project) er
 				if a == b && p.ID == r.Project && w.Kind == project.KindCanonical {
 					continue
 				}
-				if a == b || strings.HasPrefix(a, strings.TrimSuffix(b, "/")+"/") || strings.HasPrefix(b, strings.TrimSuffix(a, "/")+"/") {
+				if recoveryPathsOverlap(a, b) {
 					return ErrWorkspaceRecovery
 				}
 			}
@@ -101,4 +104,9 @@ func (s *Service) RecoveryWorkspaces(ctx context.Context) ([]project.Workspace, 
 		return nil
 	})
 	return out, err
+}
+
+func recoveryPathsOverlap(a, b string) bool {
+	a, b = path.Clean(a), path.Clean(b)
+	return a == b || strings.HasPrefix(a, strings.TrimSuffix(b, "/")+"/") || strings.HasPrefix(b, strings.TrimSuffix(a, "/")+"/")
 }

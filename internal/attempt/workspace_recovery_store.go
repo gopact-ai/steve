@@ -81,7 +81,8 @@ func saveWorkspaceRecoveryTx(tx *ledger.Tx, r *WorkspaceRecovery, by string) err
 	}
 	op.Kind, op.Data = workspaceRecoveryKind, json.RawMessage(raw)
 	r.Revision++
-	if err := tx.SetData(&op, r); err != nil {
+	op.Data, err = json.Marshal(r)
+	if err != nil {
 		return err
 	}
 	return tx.RecordTransition(op, r.Phase, by)

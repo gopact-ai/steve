@@ -47,3 +47,36 @@ func RecoveryIdentity(p Project) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
+
+// CheckRecoveryWorkspaceTx keeps an isolated recovery container separate from
+// every current project declaration in the transaction that fixes its location.
+func CheckRecoveryWorkspaceTx(tx ledger.Reader, workspace Workspace) error {
+	if workspace.Kind != KindWorktree || workspace.RecoveryID == "" || !path.IsAbs(workspace.Path) || path.Base(workspace.Path) != "work" {
+		return errors.New("recovery workspace has no exact isolated container")
+	}
+	last := ""
+	for {
+		var id string
+		err := tx.QueryRow(`SELECT id FROM bindings WHERE kind=? AND id>? ORDER BY id LIMIT 1`, kindProject, last).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		p, err := ReadTx(tx, id)
+		if err != nil {
+			return err
+		}
+		p, err = p.normalized()
+		if err != nil {
+			return err
+		}
+		for _, place := range p.Workspaces() {
+			if place.Node == workspace.Node && pathsOverlap(place.Path, path.Dir(workspace.Path)) {
+				return fmt.Errorf("recovery container overlaps project %s on %s", p.ID, nodeLabel(workspace.Node))
+			}
+		}
+		last = id
+	}
+}

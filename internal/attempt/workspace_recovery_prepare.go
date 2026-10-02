@@ -30,6 +30,9 @@ func (s *Service) SelectRecoveryWorkspace(ctx context.Context, id string, ws pro
 		if ws.RecoveryID != id || ws.Project != r.Project || ws.Kind != project.KindWorktree || ws.Base != r.Baseline.Artifact || ws.ID == "" || ws.Path == "" {
 			return ErrWorkspaceRecovery
 		}
+		if err := project.CheckRecoveryWorkspaceTx(tx, ws); err != nil {
+			return errors.Join(ErrWorkspaceRecovery, err)
+		}
 		if r.Workspace.Path != "" {
 			if r.Workspace != ws {
 				return errors.New("recovery already has a fixed workspace on another node or location")
