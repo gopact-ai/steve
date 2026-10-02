@@ -107,6 +107,13 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 	attempts := waitingAttempts{Attempts: c.attempts, passes: snapshotPasses, limit: snapshotWaitLimit, waiting: func() {
 		req.stage(view.StageAwaitSnapshot)
 	}}
+	if spec.WorkspaceRecovery != nil {
+		attempts.passes = func(err error) bool {
+			var busy attempt.Busy
+			return errors.As(err, &busy) && busy.Resource == "workspace:"+spec.Workspace.ID
+		}
+		attempts.limit = 0
+	}
 	if req.ExpectedTask != "" {
 		attempts = waitingAttempts{Attempts: c.attempts, passes: continuationPasses, waiting: func() {
 			slog.Info("turn: parent continuation waiting for a workspace or endpoint", "task", req.ExpectedTask, "conversation", req.ConversationID)
