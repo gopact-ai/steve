@@ -53,6 +53,17 @@ type RecoveryHead struct {
 
 // Producer is recorded before execution, so a failed result write cannot make
 // the next writer resume from a stale head or erase unpublished work.
+type RecoveryExecution struct {
+	ID          string `json:"id"`
+	HeadVersion int64  `json:"head_version"`
+}
+
+// RecoveryOutput is the exact result-name proposal retained if commit fails.
+type RecoveryOutput struct {
+	Name            string `json:"name"`
+	ExpectedVersion int64  `json:"expected_version"`
+}
+
 type RecoveryProducer struct {
 	Attempt     string              `json:"attempt"`
 	Execution   task.ExecutionToken `json:"execution"`

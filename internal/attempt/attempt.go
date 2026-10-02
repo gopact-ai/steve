@@ -107,8 +107,9 @@ const (
 
 // Spec is what an attempt is fixed to when it opens.
 type Spec struct {
-	NativeImport  *nativehistory.Reference `json:"native_import,omitempty"`
-	PluginRuntime *plugins.RuntimeRef      `json:"plugin_runtime,omitempty"`
+	WorkspaceRecovery *RecoveryExecution       `json:"workspace_recovery,omitempty"`
+	NativeImport      *nativehistory.Reference `json:"native_import,omitempty"`
+	PluginRuntime     *plugins.RuntimeRef      `json:"plugin_runtime,omitempty"`
 	// WorkID is the caller-owned specification identity used by recovery.
 	WorkID    string               `json:"work_id,omitempty"`
 	Execution *task.ExecutionToken `json:"execution,omitempty"`
@@ -159,9 +160,10 @@ type SessionPreferences struct {
 
 // Result is what a finished attempt produced.
 type Result struct {
-	Summary  string   `json:"summary,omitempty"`
-	Artifact string   `json:"artifact,omitempty"`
-	Refs     []string `json:"refs,omitempty"`
+	RecoveryOutput *RecoveryOutput `json:"recovery_output,omitempty"`
+	Summary        string          `json:"summary,omitempty"`
+	Artifact       string          `json:"artifact,omitempty"`
+	Refs           []string        `json:"refs,omitempty"`
 	// Output is the caller-owned recovery document committed with this result.
 	Output json.RawMessage `json:"output,omitempty"`
 	// CaptureError keeps a successful turn's missing snapshot visible.
