@@ -162,7 +162,7 @@ func (s *Service) continueDetached(e *queuedExchange, err error) bool {
 	}
 	s.mu.Lock()
 	driver := s.recoveryDriver
-	enabled := s.recoveryLifetime != nil && !s.recoveryStoppedLocked()
+	enabled := s.recoveryLifetime != nil && !s.recoveryStoppedLocked() && !e.State.Terminal()
 	exchange := copyExchange(e.Exchange)
 	s.mu.Unlock()
 	if !enabled || driver == nil {
@@ -173,7 +173,7 @@ func (s *Service) continueDetached(e *queuedExchange, err error) bool {
 		return false
 	}
 	s.mu.Lock()
-	if s.recoveryStoppedLocked() {
+	if s.recoveryStoppedLocked() || e.State.Terminal() {
 		s.mu.Unlock()
 		return false
 	}

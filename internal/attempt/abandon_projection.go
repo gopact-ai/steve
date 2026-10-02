@@ -58,13 +58,3 @@ func (s *Service) ProjectAbandonedCapacity(ctx context.Context, id string, revis
 }
 
 var errAbandonProjected = errors.New("abandonment was already projected")
-
-// AbandonProjections includes exits that arrived before session retirement.
-// Physical stop candidates alone cannot keep that obligation recoverable.
-func (s *Service) AbandonProjections(ctx context.Context) ([]Record, error) {
-	records, err := s.StopCandidates(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return slices.DeleteFunc(records, func(r Record) bool { return r.Abandoned == nil || !r.Abandoned.ProjectedAt.IsZero() }), nil
-}

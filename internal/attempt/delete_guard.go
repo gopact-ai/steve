@@ -22,7 +22,10 @@ func CheckTaskDeletionTx(tx ledger.Reader, taskIDs []string) error {
 	}
 	r, err := scanIdentityRecord(tx.QueryRow(`SELECT `+identityColumns+` FROM operations INDEXED BY operations_attempt_stop_candidates WHERE `+stopCandidatePredicate+` AND `+identityTask+` IN (SELECT value FROM json_each(?)) ORDER BY updated_at DESC LIMIT 1`, string(ids)))
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		r, err = scanIdentityRecord(tx.QueryRow(`SELECT `+identityColumns+` FROM operations INDEXED BY operations_attempt_abandon_pending WHERE `+abandonPendingPredicate+` AND `+identityTask+` IN (SELECT value FROM json_each(?)) ORDER BY updated_at DESC LIMIT 1`, string(ids)))
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
 	}
 	if err != nil {
 		return err

@@ -49,7 +49,18 @@ func (s *Service) projectAbandoned(ctx context.Context, id string) error {
 	if r.Abandoned == nil || r.Abandoned.ProjectedAt.IsZero() {
 		return errors.New("abandonment projection is still pending")
 	}
-	return s.deliverAbandonment(ctx, r)
+	if !r.Abandoned.DeliveryDoneAt.IsZero() {
+		return s.abandons.CompleteAbandonDelivery(ctx, r, abandonDeliveryEvidenceTx)
+	}
+	if err := s.abandonDeliveryStatus(ctx, r); err != nil {
+		if !errors.Is(err, errAbandonDeliveryPending) {
+			return err
+		}
+		if err := s.deliverAbandonment(ctx, r); err != nil {
+			return err
+		}
+	}
+	return s.abandons.CompleteAbandonDelivery(ctx, r, abandonDeliveryEvidenceTx)
 }
 
 // ReconcileAbandonments completes session retirement independently of process

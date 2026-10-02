@@ -19,9 +19,10 @@ import (
 )
 
 type durableAbandonDriver struct {
-	attempts *attempt.Service
-	tasks    *task.Store
-	sessions *state.Store
+	directory string
+	attempts  *attempt.Service
+	tasks     *task.Store
+	sessions  *state.Store
 }
 
 func (d *durableAbandonDriver) AbandonAttempt(ctx context.Context, id, owner string, revision uint64) (attempt.Record, error) {
@@ -63,8 +64,13 @@ func (d *durableAbandonDriver) CompleteAbandonDelivery(ctx context.Context, r at
 }
 
 func durableAbandonFixture(t *testing.T) (*Service, *ledger.Ledger, *durableAbandonDriver, attempt.Record) {
+	return durableAbandonFixtureAt(t, attempt.KindChat, "console:delivery")
+}
+
+func durableAbandonFixtureAt(t *testing.T, kind attempt.Kind, conversation string) (*Service, *ledger.Ledger, *durableAbandonDriver, attempt.Record) {
 	t.Helper()
-	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	directory := t.TempDir()
+	book, err := ledger.Open(directory, ledger.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,8 +83,8 @@ func durableAbandonFixture(t *testing.T) (*Service, *ledger.Ledger, *durableAban
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &durableAbandonDriver{attempts: attempt.New(book), tasks: tasks, sessions: sessions}
-	tracked, err := tasks.Create(task.Task{Transport: "console", Channel: "console:delivery", AnchorMessage: "web-original", Member: "worker", ProjectID: "p"})
+	d := &durableAbandonDriver{directory: directory, attempts: attempt.New(book), tasks: tasks, sessions: sessions}
+	tracked, err := tasks.Create(task.Task{Transport: "console", Channel: conversation, AnchorMessage: "web-original", Member: "worker", ProjectID: "p"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +92,7 @@ func durableAbandonFixture(t *testing.T) (*Service, *ledger.Ledger, *durableAban
 		t.Fatal(err)
 	}
 	token, _ := tasks.ExecutionToken(tracked.ID)
-	r, err := d.attempts.Open(t.Context(), attempt.Spec{ID: "abandon-delivery", TaskID: tracked.ID, TurnID: "web-original", Execution: &token, Kind: attempt.KindChat, Agent: "worker", Node: "node", Harness: "mock", Project: "p", Scope: attempt.ScopePathSet, Workspace: project.Workspace{ID: "original", Project: "p", Node: "node", Path: t.TempDir(), Kind: project.KindWorktree}})
+	r, err := d.attempts.Open(t.Context(), attempt.Spec{ID: "abandon-delivery", TaskID: tracked.ID, TurnID: "web-original", Execution: &token, Kind: kind, Agent: "worker", Node: "node", Harness: "mock", Project: "p", Scope: attempt.ScopePathSet, Workspace: project.Workspace{ID: "original", Project: "p", Node: "node", Path: t.TempDir(), Kind: project.KindWorktree}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,6 +124,7 @@ func durableAbandonFixture(t *testing.T) (*Service, *ledger.Ledger, *durableAban
 	e := &queuedExchange{Exchange: Exchange{ID: "original", Conversation: tracked.Channel, State: consoleapi.ExchangeAwaitingUser, ExpectedProject: "p", Input: "original work"}, RecoveryStopPending: "unproved", done: make(chan struct{})}
 	s.mu.Lock()
 	s.exchanges[tracked.Channel] = []*queuedExchange{e}
+	s.meta[tracked.Channel] = Meta{Title: "original conversation"}
 	s.running[tracked.Channel] = 1
 	err = s.save()
 	s.mu.Unlock()
@@ -153,12 +160,7 @@ func TestAbandonmentDeliveryIsRetriedAfterSessionProjectionCommitted(t *testing.
 			}
 			abandonDeliverySQL(t, book, `DROP TRIGGER refuse_abandon_receipt`)
 			if restart {
-				s = New(&echo{}, "owner", nil)
-				s.EnableRetainedRecovery(t.Context())
-				if err := s.PersistLedger(book); err != nil {
-					t.Fatal(err)
-				}
-				s.SetAbandons(d)
+				s, book = reopenAbandonReceiver(t, book, d)
 			}
 			if err := s.ReconcileAbandonments(t.Context()); err != nil {
 				t.Fatal(err)
@@ -264,4 +266,32 @@ func (r *abandonReplyReplica) Propose(_ context.Context, write ledger.Replicated
 		return nil, errors.New("final abandonment reply refused")
 	}
 	return r.book.ApplyReplicated(write.ID, write.ExpectedVersion+1, write.Payload)
+}
+
+func reopenAbandonReceiver(t *testing.T, book *ledger.Ledger, d *durableAbandonDriver) (*Service, *ledger.Ledger) {
+	t.Helper()
+	if err := book.Close(); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := ledger.Open(d.directory, ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = opened.Close() })
+	d.attempts = attempt.New(opened)
+	d.tasks, err = task.OpenLedger(opened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.sessions, err = state.OpenLedger(opened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(&echo{}, "owner", nil)
+	s.EnableRetainedRecovery(t.Context())
+	if err := s.PersistLedger(opened); err != nil {
+		t.Fatal(err)
+	}
+	s.SetAbandons(d)
+	return s, opened
 }

@@ -78,6 +78,7 @@ func TestAbandonedConversationWaitsForExitProjectionAndOwedCloseBeforeDeletion(t
 					t.Fatal(err)
 				}
 			}
+			completeFixtureDelivery(t, c, r.ID)
 			if err := c.DiscardConversation(t.Context(), "console:original"); err != nil {
 				t.Fatalf("completed cleanup still blocks deletion: %v", err)
 			}
@@ -142,6 +143,7 @@ func TestTaskDeletionRechecksAnExecutionQuarantinedAfterIdlePreflight(t *testing
 			t.Fatal(err)
 		}
 	}
+	completeFixtureDelivery(t, c, r.ID)
 	if err := c.tasks.ChannelIdle(t.Context(), "console:original", checkConversationRetirement); err != nil {
 		t.Fatal(err)
 	}
@@ -153,5 +155,18 @@ func TestTaskDeletionRechecksAnExecutionQuarantinedAfterIdlePreflight(t *testing
 	}
 	if _, found := c.tasks.Get(r.TaskID); !found {
 		t.Fatal("late quarantine guard removed the task")
+	}
+}
+
+func completeFixtureDelivery(t *testing.T, c *Coordinator, id string) {
+	t.Helper()
+	r, err := c.attempts.Get(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewAbandonControl(c).CompleteAbandonDelivery(t.Context(), r, func(ledger.Reader, attempt.Record) (attempt.AbandonDelivery, error) {
+		return attempt.AbandonDeliveryNotRequired, nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

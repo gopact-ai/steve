@@ -3,6 +3,7 @@ package turn
 import (
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/state"
 )
@@ -57,7 +58,16 @@ func TestCommittedAbandonmentReplaysAfterSessionProjectionFails(t *testing.T) {
 		t.Fatal("projection charged usage again")
 	}
 	pending, err = control.PendingAbandonments(t.Context())
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("session projection lost receiver obligation=%v %v", pending, err)
+	}
+	if err := control.CompleteAbandonDelivery(t.Context(), current, func(ledger.Reader, attempt.Record) (attempt.AbandonDelivery, error) {
+		return attempt.AbandonDeliveryNotRequired, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = control.PendingAbandonments(t.Context())
 	if err != nil || len(pending) != 0 {
-		t.Fatalf("projection remains pending=%v %v", pending, err)
+		t.Fatalf("completed obligations remain pending=%v %v", pending, err)
 	}
 }

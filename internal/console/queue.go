@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"strings"
 	"time"
@@ -592,6 +593,13 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	}
 	if s.recoveryStoppedLocked() {
 		s.detachRecoveryLocked(e, context.Canceled)
+		s.mu.Unlock()
+		return
+	}
+	if e.RecoveryAbandon != nil {
+		if err := s.finishAbandonmentLocked(e, *e.RecoveryAbandon); err != nil {
+			slog.Warn("console: abandonment reply remains pending", "exchange", e.ID, "error", err)
+		}
 		s.mu.Unlock()
 		return
 	}

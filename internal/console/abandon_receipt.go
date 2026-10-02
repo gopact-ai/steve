@@ -23,39 +23,18 @@ func (e *queuedExchange) recoveryReply() *consoleapi.Reply {
 // Saving it before interrupting its waiter makes delivery restartable.
 func (s *Service) recordAbandonment(target *queuedExchange, id string) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if target.State.Terminal() {
-		s.mu.Unlock()
 		return nil
 	}
+	if s.recoveryStoppedLocked() {
+		return consoleapi.ErrConsoleClosing
+	}
 	if target.recoveryStopping != nil {
-		s.mu.Unlock()
 		return errors.New("original recovery is still processing its previous stop")
 	}
-	previous := target.RecoveryAbandon
 	text := i18n.New(i18n.FromLang(target.Locale))
-	target.RecoveryAbandon = &consoleapi.Reply{AttemptID: id, Text: text.T(i18n.ConsoleAbandoned)}
-	if err := s.save(); err != nil {
-		target.RecoveryAbandon = previous
-		s.mu.Unlock()
-		return err
-	}
-	cancel := target.cancel
-	if cancel == nil {
-		select {
-		case <-target.done:
-			target.done = make(chan struct{})
-			s.running[target.Conversation]++
-		default:
-		}
-	}
-	reply := *target.RecoveryAbandon
-	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	} else {
-		s.finish(target, reply, nil)
-	}
-	return nil
+	return s.finishAbandonmentLocked(target, consoleapi.Reply{AttemptID: id, Text: text.T(i18n.ConsoleAbandoned)})
 }
 
 func (s *Service) deliverAbandonment(ctx context.Context, r attempt.Record) error {
