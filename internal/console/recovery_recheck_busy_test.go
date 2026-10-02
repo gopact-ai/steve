@@ -46,9 +46,10 @@ func TestRecoveryRecheckAcceptedDuringAStopRunsAfterThatPass(t *testing.T) {
 			driver.setAside(state, "task-1")
 			s.recoveryDriver = driver
 			e := s.exchanges["console:main"][0]
-			e.State, e.ctx, e.cancel = consoleapi.ExchangeAwaitingUser, ctx, cancel
+			exchangeCtx, stopExchange := context.WithCancel(ctx)
+			e.State, e.ctx, e.cancel = consoleapi.ExchangeAwaitingUser, exchangeCtx, stopExchange
 			e.RecoveryStopPending, e.RecoveryStopTask = stopRequested, "task-1"
-			w := &recoveryStopWait{s: s, e: e, ctx: ctx, requester: "owner", reason: stopRequested, changed: make(chan struct{}, 1), base: consoleapi.PendingQuestion{Conversation: e.Conversation, ExchangeID: e.ID}}
+			w := &recoveryStopWait{s: s, e: e, ctx: exchangeCtx, requester: "owner", reason: stopRequested, changed: make(chan struct{}, 1), base: consoleapi.PendingQuestion{Conversation: e.Conversation, ExchangeID: e.ID}}
 			var released sync.Once
 			runDone := make(chan struct{})
 			t.Cleanup(func() {
