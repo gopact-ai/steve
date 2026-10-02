@@ -105,7 +105,7 @@ func (r abandonEvidenceReadFailure) QueryRow(query string, args ...any) *ledger.
 	return r.Reader.QueryRow(query, args...)
 }
 func TestAbandonmentAckRequiresCommittedReceiverFacts(t *testing.T) {
-	for _, mode := range []string{"not committed", "read failure", "missing receiver control", "wrong receipt", "wrong reply", "wrong terminal state", "stale decision"} {
+	for _, mode := range []string{"not committed", "read failure", "missing receiver control", "wrong receipt", "wrong reply", "wrong terminal state", "paired foreign receipt", "stale decision"} {
 		t.Run(mode, func(t *testing.T) {
 			s, book, d, r := durableAbandonFixture(t)
 			if _, err := d.AbandonAttempt(t.Context(), r.ID, "owner", 1); err != nil {
@@ -134,6 +134,9 @@ func TestAbandonmentAckRequiresCommittedReceiverFacts(t *testing.T) {
 				abandonDeliverySQL(t, book, `UPDATE bindings SET data=json_set(data,'$.text','another reply') WHERE kind='console-reply'`)
 			case "wrong terminal state":
 				abandonDeliverySQL(t, book, `UPDATE bindings SET data=json_set(data,'$.state','done') WHERE kind='console-exchange' AND id='original'`)
+			case "paired foreign receipt":
+				abandonDeliverySQL(t, book, `UPDATE bindings SET data=json_set(data,'$.receipt.attempt_id','another') WHERE kind='console-exchange' AND id='original'`)
+				abandonDeliverySQL(t, book, `UPDATE bindings SET data=json_set(data,'$.attempt_id','another') WHERE kind='console-reply'`)
 			case "stale decision":
 				copy := *r.Abandoned
 				copy.ForceStopRevision++
