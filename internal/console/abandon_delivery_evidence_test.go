@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -104,7 +105,7 @@ func (r abandonEvidenceReadFailure) QueryRow(query string, args ...any) *ledger.
 	return r.Reader.QueryRow(query, args...)
 }
 func TestAbandonmentAckRequiresCommittedReceiverFacts(t *testing.T) {
-	for _, mode := range []string{"not committed", "read failure", "missing receiver control", "wrong receipt", "wrong reply", "stale decision"} {
+	for _, mode := range []string{"not committed", "read failure", "missing receiver control", "wrong receipt", "wrong reply", "wrong terminal state", "stale decision"} {
 		t.Run(mode, func(t *testing.T) {
 			s, book, d, r := durableAbandonFixture(t)
 			if _, err := d.AbandonAttempt(t.Context(), r.ID, "owner", 1); err != nil {
@@ -131,6 +132,8 @@ func TestAbandonmentAckRequiresCommittedReceiverFacts(t *testing.T) {
 				abandonDeliverySQL(t, book, `UPDATE bindings SET data=json_set(data,'$.receipt.attempt_id','another') WHERE kind='console-exchange' AND id='original'`)
 			case "wrong reply":
 				abandonDeliverySQL(t, book, `UPDATE bindings SET data=json_set(data,'$.text','another reply') WHERE kind='console-reply'`)
+			case "wrong terminal state":
+				abandonDeliverySQL(t, book, `UPDATE bindings SET data=json_set(data,'$.state','done') WHERE kind='console-exchange' AND id='original'`)
 			case "stale decision":
 				copy := *r.Abandoned
 				copy.ForceStopRevision++
@@ -181,6 +184,9 @@ func TestAbandonmentDeliveryKeepsTheOriginalInputAndDoesNotReappearAfterDeletion
 
 func TestRestoredAbandonmentIntentDoesNotUseUncommittedTerminalMemory(t *testing.T) {
 	s, book, _, r := durableAbandonFixture(t)
+	life, stop := context.WithTimeout(t.Context(), 3*time.Second)
+	defer stop()
+	s.EnableRetainedRecovery(life)
 	s.mu.Lock()
 	target := s.exchanges["console:delivery"][0]
 	target.RecoveryAbandon = &consoleapi.Reply{AttemptID: r.ID, Text: "abandoned"}

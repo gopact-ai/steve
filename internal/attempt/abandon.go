@@ -3,8 +3,9 @@ package attempt
 import "time"
 
 // Abandoned records a decision to stop accounting for an execution without
-// claiming that its process stopped. Projection retires only its session and
-// endpoint capacity; the physical writer remains fenced until exit is proved.
+// claiming that its process stopped. ProjectedAt records only session and
+// endpoint-capacity retirement. DeliveryDoneAt separately records the receiver's
+// durable result; neither releases the physical writer before exit is proved.
 type Abandoned struct {
 	At                time.Time       `json:"at"`
 	By                string          `json:"by"`

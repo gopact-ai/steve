@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -55,7 +56,7 @@ func abandonDeliveryEvidenceTx(tx ledger.Reader, r attempt.Record) (attempt.Aban
 	if e.RecoveryAbandon == nil || e.RecoveryAbandon.AttemptID != r.ID {
 		return attempt.AbandonDeliveryTerminal, nil
 	}
-	if e.Receipt == nil || e.Receipt.ID == "" || e.ReplyID != e.Receipt.ID || e.Receipt.AttemptID != r.ID || e.Receipt.Conversation != e.Conversation || e.Receipt.ExchangeID != e.ID || e.Receipt.Kind != "reply" || e.Receipt.Text != e.RecoveryAbandon.Text {
+	if e.State != consoleapi.ExchangeCancelled || e.Receipt == nil || e.Receipt.ID == "" || e.ReplyID != e.Receipt.ID || e.Receipt.AttemptID != r.ID || e.Receipt.Conversation != e.Conversation || e.Receipt.ExchangeID != e.ID || e.Receipt.Kind != "reply" || e.Receipt.Text != e.RecoveryAbandon.Text {
 		return "", errors.New("abandonment reply differs from its terminal receipt")
 	}
 	// Exact keyed receipts outlive bounded transcript pruning. If its reply is
