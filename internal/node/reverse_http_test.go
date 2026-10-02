@@ -131,6 +131,7 @@ func TestReverseHTTPKeepsTheReceivedCredentialRefusal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	payload := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"steve_context","arguments":{}}}`
+	ctx = context.WithValue(ctx, reverseReadAbortKey{}, reverseReadAbort(func() error { return nil }))
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL(), &reverseBody{strings.NewReader(payload)})
 	if err != nil {
 		t.Fatal(err)

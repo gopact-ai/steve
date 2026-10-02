@@ -128,7 +128,12 @@ func (s *Server) forwardMCP(listener net.Listener) {
 		},
 		Transport:     transport,
 		FlushInterval: -1,
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, cause error) {
+			var tooLarge *http.MaxBytesError
+			if errors.As(cause, &tooLarge) {
+				http.Error(w, "MCP request exceeds the input limit", http.StatusRequestEntityTooLarge)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -144,10 +149,14 @@ func (s *Server) forwardMCP(listener net.Listener) {
 			return
 		}
 		defer done()
+		if err := prepareReverseHTTP(w, r); err != nil {
+			releaseReverseInput(r)
+			proxy.ErrorHandler(w, r, err)
+			return
+		}
 		proxy.ServeHTTP(w, r)
-	}), ReadHeaderTimeout: 10 * time.Second}
+	}), ReadHeaderTimeout: 10 * time.Second, ConnContext: reverseConnectionContext}
 	defer server.Close()
-	defer transport.CloseIdleConnections()
 	// Serve returns once closeMCP closes the listener, reporting that
 	// close as net.ErrClosed. Any other end is the listener dying on its
 	// own: agents would only see their MCP calls refused, so say so. The
