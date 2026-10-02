@@ -550,3 +550,115 @@ func TestRecoveryLandingRechecksRevocationBetweenPreflightAndApplying(t *testing
 		t.Fatalf("revoked new admission wrote original: %v", err)
 	}
 }
+
+type recoveryReleaser interface {
+	ReleaseRecovery(context.Context, string, ledger.Lease) (attempt.WorkspaceRecovery, error)
+}
+
+type resolutionDriverInstaller interface {
+	SetRecoveryResolutionDriver(func(context.Context, string, func(context.Context, ledger.Lease) error) error)
+}
+
+func TestRecoveryResultAndOriginalHoldReleaseCommitAtomically(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	publishBoundRecoveryTurn(t, c, p, ws, "release-authority", map[string]string{"landed": "accepted\n"})
+	episode := captureBoundCopy(t, c, source)
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		_, err := c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	release, ok := any(c.artifacts).(recoveryReleaser)
+	if !ok {
+		t.Fatal("recovery has no canonical-result/hold atomic release consumer")
+	}
+	forceStopTrigger(t, c, `CREATE TRIGGER refuse_released BEFORE UPDATE ON operations WHEN NEW.kind='workspace-recovery' AND NEW.state='released' BEGIN SELECT RAISE(ABORT,'release refused'); END`)
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		if _, err := release.ReleaseRecovery(ctx, episode.ID, driver); err == nil {
+			t.Fatal("refused release became success")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID)
+	if err != nil || current.Phase != "landing" {
+		t.Fatalf("refused result released episode: %+v %v", current, err)
+	}
+	if err := ledgerOf(t, c).Read(t.Context(), func(tx *ledger.ReadTx) error { return attempt.RecoveryHoldTx(tx, p.Home.Node, p.Home.Path) }); !errors.Is(err, attempt.ErrWorkspaceRecovery) {
+		t.Fatalf("result refusal lost original hold: %v", err)
+	}
+	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec("DROP TRIGGER refuse_released"); return err }); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		r, err := release.ReleaseRecovery(ctx, episode.ID, driver)
+		if err == nil && r.Phase != "released" {
+			t.Fatalf("result was not atomically released: %+v", r)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := c.attempts.RecoveryForProject(t.Context(), p.ID); err != nil || found {
+		t.Fatalf("released episode still routes new work to its copy: %v %v", found, err)
+	}
+	if err := ledgerOf(t, c).Read(t.Context(), func(tx *ledger.ReadTx) error { return attempt.RecoveryHoldTx(tx, p.Home.Node, p.Home.Path) }); err != nil {
+		t.Fatalf("released original remains held: %v", err)
+	}
+	if _, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "old-copy-after-release")); !errors.Is(err, attempt.ErrWorkspaceRecovery) {
+		t.Fatalf("released copy admitted another writer: %v", err)
+	}
+}
+
+func TestRecoveryConflictManualResolutionKeepsExactRootAndConsumesPendingOnce(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	publishBoundRecoveryTurn(t, c, p, ws, "conflict-authority", map[string]string{"original": "copy side\n"})
+	if err := os.WriteFile(filepath.Join(p.Home.Path, "original"), []byte("original side\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	episode := captureBoundCopy(t, c, source)
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		_, err := c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver)
+		var conflict artifact.Conflict
+		if !errors.As(err, &conflict) {
+			t.Fatalf("root conflict was not preserved: %v", err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stuck, err := c.artifacts.Stuck(t.Context(), p.ID)
+	if err != nil || len(stuck) != 1 || stuck[0].Marked == "" {
+		t.Fatalf("recovery conflict has no visible exact-root consumer: %+v %v", stuck, err)
+	}
+	install, ok := any(c.artifacts).(resolutionDriverInstaller)
+	if !ok {
+		t.Fatal("recovery resolution has no actual owner/driver sink")
+	}
+	install.SetRecoveryResolutionDriver(NewWorkspaceRecoveryControl(c).Drive)
+	land, err := c.artifacts.ResolveByHand(t.Context(), p, stuck[0], []artifact.Edit{{Path: "original", Text: "resolved by owner\n"}}, "console")
+	if err != nil || land.State != artifact.LandCommitted || land.Committed == nil {
+		t.Fatalf("same-root manual resolution did not commit: %+v %v", land, err)
+	}
+	release, ok := any(c.artifacts).(recoveryReleaser)
+	if !ok {
+		t.Fatal("resolved recovery has no atomic completion consumer")
+	}
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		_, err := release.ReleaseRecovery(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := c.artifacts.Stuck(t.Context(), p.ID); err != nil || len(pending) != 0 {
+		t.Fatalf("released root was not exactly consumed: %+v %v", pending, err)
+	}
+	if _, err := c.artifacts.LandPending(t.Context(), p); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(p.Home.Path, "original")); err != nil || string(raw) != "resolved by owner\n" {
+		t.Fatalf("ordinary pending re-landed old C: %q %v", raw, err)
+	}
+}
