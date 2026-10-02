@@ -383,6 +383,9 @@ func (c *Coordinator) contextFrom(ctx context.Context, conversationID string, de
 			out.Agents = append(out.Agents, AgentChoice{ID: a.ID, Node: nodewire.Place(a.Node), Harness: a.Harness, Model: a.Model, Ready: true, Usable: true, Current: a.ID == active})
 		}
 	}
+	if err := c.describeRecoveryWorkspace(ctx, current, &out); err != nil {
+		return out, err
+	}
 	sort.Slice(out.Agents, func(i, j int) bool {
 		a, b := out.Agents[i], out.Agents[j]
 		if a.Usable != b.Usable {

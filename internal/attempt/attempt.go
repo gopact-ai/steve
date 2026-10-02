@@ -470,6 +470,11 @@ func (s *Service) advance(ctx context.Context, id string, to State, actor string
 					return errors.New("attempt writer has not confirmed stopping")
 				}
 			}
+			if to == Prepared || to == Running {
+				if err := markRecoveryWritingTx(tx, next); err != nil {
+					return err
+				}
+			}
 			if to == Running {
 				if err := checkAdmissionTx(tx, next.Spec); err != nil {
 					return err

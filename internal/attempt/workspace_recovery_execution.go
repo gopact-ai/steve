@@ -69,7 +69,8 @@ func reserveRecoveryProducerTx(tx *ledger.Tx, spec Spec) error {
 	if r.Head.Artifact != spec.Base || r.Head.Version != spec.WorkspaceRecovery.HeadVersion {
 		return ledger.ErrConflict
 	}
-	r.Producer = &RecoveryProducer{Attempt: spec.ID, Execution: *spec.Execution, Base: spec.Base, HeadVersion: r.Head.Version}
+	nativeMayWrite := false
+	r.Producer = &RecoveryProducer{NativeMayWrite: &nativeMayWrite, Attempt: spec.ID, Execution: *spec.Execution, Base: spec.Base, HeadVersion: r.Head.Version}
 	r.Phase = "working"
 	return saveWorkspaceRecoveryTx(tx, &r, spec.By)
 }

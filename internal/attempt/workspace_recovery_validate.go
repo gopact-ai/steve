@@ -65,7 +65,7 @@ func validateWorkspaceRecovery(r WorkspaceRecovery) error {
 	if (r.Phase == "working") != (r.Producer != nil) {
 		return errors.New("recovery writer obligation differs from phase")
 	}
-	if r.Producer != nil && (r.Producer.Attempt == "" || r.Producer.Execution.TaskID == "" || r.Producer.Execution.Epoch == 0 || r.Producer.Base != r.Head.Artifact || r.Producer.HeadVersion != r.Head.Version) {
+	if r.Producer != nil && (r.Producer.NativeMayWrite == nil || r.Producer.Attempt == "" || r.Producer.Execution.TaskID == "" || r.Producer.Execution.Epoch == 0 || r.Producer.Base != r.Head.Artifact || r.Producer.HeadVersion != r.Head.Version) {
 		return errors.New("recovery writer obligation has no exact authority")
 	}
 	return nil

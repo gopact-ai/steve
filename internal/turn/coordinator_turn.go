@@ -161,6 +161,11 @@ func (t *chatTurn) leased(ctx context.Context, e *lifecycle.Execution) (context.
 // place: what the turn changes is measured against it.
 func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*attempt.Record), error) {
 	c, req, workspace := t.c, t.req, t.workspace
+	if e.Record.WorkspaceRecovery != nil {
+		if err := c.attempts.MarkRecoveryWriting(ctx, e.Record.ID); err != nil {
+			return nil, err
+		}
+	}
 	t.clock.mark("admit")
 	if req.OnTurnReady != nil {
 		req.OnTurnReady(t.tracked, e.Record.ID)

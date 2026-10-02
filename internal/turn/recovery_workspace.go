@@ -3,10 +3,10 @@ package turn
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -26,23 +26,23 @@ func (c *Coordinator) sharedRecoveryWorkspace(ctx context.Context, req Request, 
 		return project.Workspace{}, true, attempt.ErrWorkspaceRecovery
 	}
 	if r.Workspace.Path != "" && r.Workspace.Node != selected.Node {
-		return project.Workspace{}, true, fmt.Errorf("project recovery continues on node %s; select an agent there", placeLabel(r.Workspace.Node))
+		return project.Workspace{}, true, UserError{Text: c.text.T(i18n.WorkspaceRecoveryNode, projectID, placeLabel(r.Workspace.Node)), Cause: attempt.ErrWorkspaceRecovery}
 	}
 	planned, err := c.artifacts.PlanRecoveryWorkspace(ctx, r, selected.Node)
 	if err != nil {
-		return project.Workspace{}, true, err
+		return project.Workspace{}, true, UserError{Text: c.text.T(i18n.WorkspaceRecoveryPending, err.Error()), Cause: err}
 	}
 	r, err = c.attempts.SelectRecoveryWorkspace(ctx, r.ID, planned, req.SenderOpenID)
 	if err != nil {
-		return project.Workspace{}, true, err
+		return project.Workspace{}, true, UserError{Text: c.text.T(i18n.WorkspaceRecoveryPending, err.Error()), Cause: err}
 	}
 	r, err = c.attempts.PrepareWorkspaceRecovery(ctx, r, c.artifacts.PrepareRecoveryWorkspace)
 	if err != nil {
-		return project.Workspace{}, true, err
+		return project.Workspace{}, true, UserError{Text: c.text.T(i18n.WorkspaceRecoveryPending, err.Error()), Cause: err}
 	}
 	r, err = c.attempts.PublishRecoveryHead(ctx, r.ID, c.artifacts.RecoveryOutputTx)
 	if err != nil {
-		return project.Workspace{}, true, err
+		return project.Workspace{}, true, UserError{Text: c.text.T(i18n.WorkspaceRecoveryPending, err.Error()), Cause: err}
 	}
 	workspace := r.Workspace
 	workspace.Base = r.Head.Artifact

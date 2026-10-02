@@ -120,6 +120,9 @@ func (s *Service) sessionEvidence(ctx context.Context, id, actor string, settled
 			return errors.New("quarantined writer requires explicit physical stop confirmation")
 		}
 		if !settled {
+			if err := markRecoveryWritingTx(tx, next); err != nil {
+				return err
+			}
 			if err := checkAdmissionTx(tx, next.Spec); err != nil {
 				return err
 			}

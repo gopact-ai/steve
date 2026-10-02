@@ -21,7 +21,8 @@ func (s *Service) PublishRecoveryHead(ctx context.Context, id string, validate R
 	if !producer.State.Terminal() {
 		return r, nil
 	}
-	if producer.Unsettled || producer.SessionSettled == nil || !*producer.SessionSettled || producer.Result == nil || producer.Result.RecoveryOutput == nil || producer.Result.CaptureError != "" {
+	unused := r.Producer.NativeMayWrite != nil && !*r.Producer.NativeMayWrite && producer.Session == "" && producer.NativeContext == "" && producer.Result == nil
+	if producer.Unsettled || producer.SessionSettled == nil || !*producer.SessionSettled || !unused && (producer.Result == nil || producer.Result.RecoveryOutput == nil || producer.Result.CaptureError != "") {
 		return r, ErrWorkspaceRecovery
 	}
 	lease, err := s.l.AcquireIn(ctx, producer.Region, "workspace:"+r.Workspace.ID, "recovery-publication:"+NewID(), s.TTL)
@@ -46,6 +47,13 @@ func (s *Service) PublishRecoveryHead(ctx context.Context, id string, validate R
 			return ledger.ErrConflict
 		}
 		if err := CheckWriterTx(tx, current.Workspace.Node, current.Workspace.Path); err != nil {
+			return err
+		}
+		if unused {
+			if err := releaseUnpreparedRecoveryTx(tx, r, current); err != nil {
+				return err
+			}
+			r, err = recoveryByIDTx(tx, id)
 			return err
 		}
 		var binding *NameBinding
