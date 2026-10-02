@@ -156,6 +156,9 @@ func Open(config Config) (*Service, error) {
 	if config.RaftConfig != nil {
 		*cfg = *config.RaftConfig
 	}
+	// This service owns shutdown and its completion future. Losing a vote only
+	// steps down to follower; Raft must not begin an untracked shutdown itself.
+	cfg.ShutdownOnRemove = false
 	// An application can contain durable initial data before its first command.
 	// Fresh members must install that baseline snapshot, so do not retain a log
 	// prefix that would let them catch up solely by replaying later commands.

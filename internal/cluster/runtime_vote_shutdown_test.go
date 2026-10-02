@@ -44,8 +44,17 @@ func TestDemotedReplicaKeepsFollowingWithoutBusinessAuthority(t *testing.T) {
 	if _, err := second.Remove(t.Context(), coordination.RemoveRequest{ID: "remove-demoted-member", Actor: "owner", NodeID: "node-1"}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 8*time.Second, "removed member is not active", func() bool {
-		return !first.Status().IsActiveReplica("node-1") && !first.Status().Ready
+	state, err = second.ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.IsActiveReplica("node-1") || first.coordinates(state) == nil {
+		t.Fatal("removed member still has coordinator eligibility")
+	}
+	// A removed nonvoter can retain a stale observation; the quorum state,
+	// not that observation, authorizes business work.
+	waitFor(t, 8*time.Second, "removed member has no business generation", func() bool {
+		return !first.Status().Ready
 	})
 	if err := old.Ledger.Document("old-generation-after-removal").Save([]byte("denied")); err == nil {
 		t.Fatal("removed node retained business write authority")
