@@ -51,6 +51,9 @@ func readRetentionCatalog(query retentionQuery) (retentionCatalog, error) {
 			return c, err
 		}
 	}
+	if err := c.readRecoveryOwners(query); err != nil {
+		return c, err
+	}
 	high, err := readUploadClock(query)
 	if err != nil {
 		return c, err

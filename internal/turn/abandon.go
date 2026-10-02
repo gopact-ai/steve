@@ -5,7 +5,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -47,7 +46,7 @@ func (a *AbandonControl) AbandonAttempt(ctx context.Context, id, requester strin
 			if err != nil {
 				return task.RecoveryUsage{}, err
 			}
-			base, err := artifact.RecoveryBaselineTx(tx, p)
+			base, err := c.artifacts.RecoveryBaselineTx(tx, p)
 			if err != nil {
 				return task.RecoveryUsage{}, err
 			}

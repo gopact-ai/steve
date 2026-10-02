@@ -9,7 +9,7 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-type RecoveryArtifactCheck func(ledger.Reader, string, string, string) error
+type RecoveryArtifactCheck func(ledger.Reader, string, string, string) (RecoveryContent, error)
 
 func sameRecoveryWorkspace(a, b project.Workspace) bool {
 	return a.ID == b.ID && a.Project == b.Project && a.Node == b.Node && samePhysicalPath(a.Path, b.Path) && a.Kind == project.KindWorktree && b.Kind == project.KindWorktree && a.RecoveryID == b.RecoveryID
@@ -141,13 +141,17 @@ func completeWorkspaceRecoveryTx(tx *ledger.Tx, record Record, binding *NameBind
 		}
 		artifact = r.Head.Artifact
 	}
-	if err := validate(tx, r.Project, r.Head.Artifact, artifact); err != nil {
+	content, err := validate(tx, r.Project, r.Head.Artifact, artifact)
+	if err != nil {
 		return err
 	}
 	if record.Result.Artifact != "" {
 		r.Head.Artifact = artifact
+		r.Head.ContentID, r.Head.Storage = content.ID, content.Storage
 		r.Head.Version++
-		r.Head.Sources = append(r.Head.Sources, *r.Producer)
+		producer := *r.Producer
+		producer.Artifact, producer.ContentID, producer.Storage = artifact, content.ID, content.Storage
+		r.Head.Sources = append(r.Head.Sources, producer)
 	}
 	r.Producer = nil
 	r.Phase = "ready"

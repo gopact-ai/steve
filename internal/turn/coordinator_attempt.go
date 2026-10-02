@@ -70,7 +70,7 @@ func (c *Coordinator) completion(ctx context.Context, record attempt.Record, res
 		if binding != nil {
 			completion.Result.RecoveryOutput.Name, completion.Result.RecoveryOutput.ExpectedVersion = binding.Name, binding.ExpectedVersion
 		}
-		completion.RecoveryArtifact = validateRecoveryArtifact
+		completion.RecoveryArtifact = c.artifacts.RecoveryOutputTx
 	}
 	return completion, pending, nil
 }

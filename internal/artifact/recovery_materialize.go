@@ -61,7 +61,16 @@ func (s *Store) PrepareRecoveryWorkspace(ctx context.Context, r attempt.Workspac
 	if err != nil {
 		return err
 	}
-	if err := s.ledger.Read(ctx, func(tx *ledger.ReadTx) error { return CheckRecoveryArtifactTx(tx, p, r.Baseline.Artifact) }); err != nil {
+	if err := s.ledger.Read(ctx, func(tx *ledger.ReadTx) error {
+		content, err := s.RecoveryOutputTx(tx, p.ID, r.Baseline.Artifact, r.Baseline.Artifact)
+		if err != nil {
+			return err
+		}
+		if content.ID != r.Baseline.ContentID || content.Storage != r.Baseline.Storage {
+			return errors.New("recovery baseline content identity changed")
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 	hub, err := s.Repo(ctx, p.ID)

@@ -25,10 +25,11 @@ var retentionOwners = struct {
 	// their schemas. A binary without an owner adapter cannot collect a
 	// catalog containing that owner's rows.
 	decoders: map[string]RetentionOwnerDecoder{
-		"artifact":         nil,
-		"artifact-content": nil,
-		"material":         nil,
-		"plugin-package":   nil,
+		"artifact":           nil,
+		"artifact-content":   nil,
+		"material":           nil,
+		"plugin-package":     nil,
+		"workspace-recovery": nil,
 	},
 }
 

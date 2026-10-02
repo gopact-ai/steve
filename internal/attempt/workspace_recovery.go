@@ -32,6 +32,11 @@ type WorkspaceRecovery struct {
 	Producer    *RecoveryProducer `json:"producer,omitempty"`
 }
 
+type RecoveryContent struct {
+	ID      string `json:"id,omitempty"`
+	Storage string `json:"storage"`
+}
+
 type RecoveryBaseline struct {
 	ContentID string `json:"content_id,omitempty"`
 	Storage   string `json:"storage"`

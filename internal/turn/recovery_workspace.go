@@ -6,9 +6,7 @@ import (
 	"fmt"
 
 	"github.com/gopact-ai/steve/internal/agent"
-	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -42,19 +40,11 @@ func (c *Coordinator) sharedRecoveryWorkspace(ctx context.Context, req Request, 
 	if err != nil {
 		return project.Workspace{}, true, err
 	}
-	r, err = c.attempts.PublishRecoveryHead(ctx, r.ID, validateRecoveryArtifact)
+	r, err = c.attempts.PublishRecoveryHead(ctx, r.ID, c.artifacts.RecoveryOutputTx)
 	if err != nil {
 		return project.Workspace{}, true, err
 	}
 	workspace := r.Workspace
 	workspace.Base = r.Head.Artifact
 	return workspace, true, nil
-}
-
-func validateRecoveryArtifact(tx ledger.Reader, projectID, parent, artifactID string) error {
-	p, err := project.ReadTx(tx, projectID)
-	if err != nil {
-		return err
-	}
-	return artifact.CheckRecoveryOutputTx(tx, p, parent, artifactID)
 }
