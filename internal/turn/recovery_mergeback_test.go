@@ -946,3 +946,100 @@ func TestRecoveryResolverAdmittedWALSurvivesTaskCancelAndOwnerChangeWithoutNewAu
 		t.Fatalf("old legal WAL result was not accepted: %+v %v", current, err)
 	}
 }
+
+type recoveryCopyCleaner interface {
+	CleanupRecoveryCopy(context.Context, string, ledger.Lease) (attempt.WorkspaceRecovery, error)
+}
+
+func releasedRecoveryCopy(t *testing.T) (*Coordinator, project.Project, project.Workspace, attempt.WorkspaceRecovery) {
+	t.Helper()
+	c, p, source, ws := sharedCopy(t)
+	publishBoundRecoveryTurn(t, c, p, ws, "cleanup-source", map[string]string{"landed": "keep landed\n"})
+	episode := captureBoundCopy(t, c, source)
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		if _, err := c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver); err != nil {
+			return err
+		}
+		var err error
+		episode, err = c.artifacts.ReleaseRecovery(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return c, p, ws, episode
+}
+
+func TestReleasedRecoveryCopyKeepsItsContainerClaimUntilExactRemovalIsRecorded(t *testing.T) {
+	c, p, ws, episode := releasedRecoveryCopy(t)
+	cleaner, ok := any(c.artifacts).(recoveryCopyCleaner)
+	if !ok {
+		t.Fatal("released recovery has no exact owned-container removal consumer")
+	}
+	other := project.Project{ID: "other", Home: project.Home{Node: ws.Node, Path: filepath.Dir(ws.Path)}}
+	if err := c.projects.Declare(t.Context(), []project.Project{p, other}); !errors.Is(err, attempt.ErrWorkspaceRecovery) {
+		t.Fatalf("another project claimed pending owned container: %v", err)
+	}
+	forceStopTrigger(t, c, `CREATE TRIGGER refuse_copy_removed BEFORE UPDATE ON operations WHEN NEW.kind='workspace-recovery' AND json_extract(NEW.data,'$.copy_removed_at') IS NOT NULL BEGIN SELECT RAISE(ABORT,'copy removed refused'); END`)
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		if _, err := cleaner.CleanupRecoveryCopy(ctx, episode.ID, driver); err == nil {
+			t.Fatal("refused deletion confirmation became success")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Dir(ws.Path)); !os.IsNotExist(err) {
+		t.Fatalf("owned container was not precisely removed: %v", err)
+	}
+	if err := c.projects.Declare(t.Context(), []project.Project{p, other}); !errors.Is(err, attempt.ErrWorkspaceRecovery) {
+		t.Fatalf("physical delete before its Tx released container claim: %v", err)
+	}
+	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec("DROP TRIGGER refuse_copy_removed"); return err }); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		_, err := cleaner.CleanupRecoveryCopy(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.projects.Declare(t.Context(), []project.Project{p, other}); err != nil {
+		t.Fatalf("exact deletion acknowledgement did not end container claim: %v", err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(p.Home.Path, "landed")); err != nil || string(raw) != "keep landed\n" {
+		t.Fatalf("cleanup touched original target: %q %v", raw, err)
+	}
+}
+
+func TestReleasedRecoveryCopyRefusesUnknownMarkerAndKeepsAdjacentContent(t *testing.T) {
+	c, p, ws, episode := releasedRecoveryCopy(t)
+	cleaner, ok := any(c.artifacts).(recoveryCopyCleaner)
+	if !ok {
+		t.Fatal("recovery has no exact marker-controlled cleanup consumer")
+	}
+	marker := filepath.Join(filepath.Dir(ws.Path), ".steve-workspace")
+	if err := os.WriteFile(marker, []byte("another owner\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	adjacent := filepath.Join(filepath.Dir(filepath.Dir(ws.Path)), "adjacent-owned-fixture")
+	if err := os.Mkdir(adjacent, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adjacent, "preserve"), []byte("adjacent\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		_, err := cleaner.CleanupRecoveryCopy(ctx, episode.ID, driver)
+		if err == nil {
+			t.Fatal("wrong marker authorized container deletion")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{marker, filepath.Join(adjacent, "preserve"), filepath.Join(p.Home.Path, "landed")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("marker refusal lost exact protected path %s: %v", path, err)
+		}
+	}
+}
