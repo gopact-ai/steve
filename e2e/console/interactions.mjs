@@ -3087,6 +3087,24 @@ checks["project-remove-confirmed"] = async (f) => {
     assert.ok(await table.evaluate((el) => el.isConnected && el.contains(document.activeElement)) && where.row !== null, `A removed project leaves focus on ${where.tag} instead of the row beside it`);
 };
 
+checks["workspace-recovery-persists-without-live-attempt"] = async (f) => {
+    const recovery = { id: "recovery-original", project: "scratch", phase: "ready", node: "test-node", path: "/isolated/shared/work", base: "1".repeat(40), head: "2".repeat(40), version: 2 };
+    const state = { ...usageState(), attempts: [], projects: [project("scratch"), project("home")] };
+    state.facts = { ...state.facts, recovery_workspaces: [recovery] };
+    await f.page.route("**/state", (route) => route.fulfill({ json: f.snapshot = workState(state) }));
+    await f.page.reload();
+    const banner = f.page.getByRole("status").filter({ hasText: "项目主目录仍处于恢复隔离" });
+    await banner.getByText("后续工作在共享隔离副本中串行继续，尚未自动合回原目录。", { exact: true }).waitFor();
+    await banner.getByText("/isolated/shared/work", { exact: true }).waitFor();
+    recovery.phase = "working";
+    await f.page.reload();
+    await banner.getByText("副本正在执行或等待产物记录，下一位写者必须等待。", { exact: true }).waitFor();
+    recovery.project = "home";
+    await f.page.reload();
+    assert.equal(await banner.count(), 0, "another project's recovery appeared in this conversation");
+    assert.equal(f.calls.filter((call) => call.method !== "GET" && call.path.includes("recovery")).length, 0, "reading a recovery banner changed its lifecycle");
+};
+
 checks["abandon-confirmation-and-pending"] = async (f) => {
     const current = { id: "abandon-original", task_id: "11", kind: "chat", state: "failed", project: "scratch", node: "test-node", agent: "worker", started_at: at, unsettled: true, force_stop: { revision: 4, level: "exhausted", reason: "stop_unproven", by: "owner", requested_at: at, level_since: at } };
     const state = { ...usageState(), tasks: [task("11", A, "scratch")], attempts: [current], projects: [project("scratch"), project("home")] };
