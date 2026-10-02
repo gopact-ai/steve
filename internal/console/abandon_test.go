@@ -9,6 +9,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 type abandonDriverFixture struct {
@@ -116,4 +117,8 @@ func TestAbandoningAChildExecutionDoesNotFinishItsParentsExchange(t *testing.T) 
 	if e.State != consoleapi.ExchangeAwaitingUser || e.RecoveryAbandon != nil {
 		t.Fatal("abandoning a child ended the parent's conversation exchange")
 	}
+}
+
+func (f *abandonDriverFixture) CompleteAbandonDelivery(ctx context.Context, expected attempt.Record, proof func(ledger.Reader, attempt.Record) (attempt.AbandonDelivery, error)) error {
+	return nil
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 type abandonDriver interface {
@@ -16,6 +17,7 @@ type abandonDriver interface {
 	ProjectAbandoned(context.Context, string) error
 	PendingAbandonments(context.Context) ([]attempt.Record, error)
 	ReadAbandoned(context.Context, string) (attempt.Record, error)
+	CompleteAbandonDelivery(context.Context, attempt.Record, func(ledger.Reader, attempt.Record) (attempt.AbandonDelivery, error)) error
 }
 
 var _ consoleapi.Abandons = (*Service)(nil)

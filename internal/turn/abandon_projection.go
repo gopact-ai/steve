@@ -49,3 +49,9 @@ func (a *AbandonControl) PendingAbandonments(ctx context.Context) ([]attempt.Rec
 func (a *AbandonControl) ReadAbandoned(ctx context.Context, id string) (attempt.Record, error) {
 	return a.coordinator.attempts.Get(ctx, id)
 }
+
+// CompleteAbandonDelivery lets the receiving channel prove completion in the
+// same transaction that records the execution's delivery acknowledgement.
+func (a *AbandonControl) CompleteAbandonDelivery(ctx context.Context, expected attempt.Record, proof func(ledger.Reader, attempt.Record) (attempt.AbandonDelivery, error)) error {
+	return a.coordinator.attempts.CompleteAbandonDelivery(ctx, expected, proof)
+}
