@@ -580,6 +580,7 @@
   ],
   "conflicts": [],
   "facts": {
+    "recovery_workspaces": [],
     "reservations": [
       {
         "id": "reservation",
