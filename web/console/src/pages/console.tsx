@@ -37,6 +37,7 @@ import { placeLabel } from "@/lib/workspaces";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
 import { childrenOfTurn, streamWithChildren, withDelegations } from "@/lib/delegations";
 import { ForceStopBanner, needsForceStop } from "@/components/steve/force-stop";
+import { RecoveryWorkspaceNotice } from "@/components/steve/recovery-workspace";
 import { beginSubmission, retrySubmission, failSubmission, finishSubmission, restoreSubmission, updateDraft, useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission, useMaterials, removeDraftMaterial, submissionRefs, useRewind, beginRewind, endRewind, rewindOf } from "@/lib/drafts";
 import { useI18n } from "@/providers/locale-provider";
 import { useMaterial } from "@/providers/material-provider";
@@ -656,6 +657,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
                                 {(!submission.id || submission.rejected) && <button type="button" className="mr-4 underline" onClick={async () => { if (!await restoreSubmission(conversation)) setStatus(t("console.recoveryStorage")); }}>{t("console.restoreDraft")}</button>}
                                 <button type="button" className="underline" onClick={async () => { if (await finishSubmission(conversation, submission.id)) setStatus(""); }}>{t("console.received")}</button>
                             </div>}
+                            {(snap.facts.recovery_workspaces ?? []).filter((recovery) => recovery.project === context?.project?.id).map((recovery) => <RecoveryWorkspaceNotice key={recovery.id} recovery={recovery} />)}
                             <ForceStopBanner onAbandon={abandonExecution} onForce={forceStop} attempts={snap.attempts.filter((a) => needsForceStop(a) && snap.tasks.some((task) => task.id === a.task_id && task.transport === "console" && task.channel === conversation))} retry={() => void stop()} uncertain={!!stopState?.uncertain} error={stopState?.error} />
                             {submissionSupport.interactive_requests && <QuestionPanel key={conversation} conversation={conversation} turnStartedAt={live?.since} />}
                             {draftMaterials.length > 0 && <ul aria-label={t("materials.draftRefs")} className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">{draftMaterials.map((ref) => <li key={refKey(ref)} className="flex max-w-full items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs"><button type="button" className="truncate" onClick={() => setOpenedMaterial(ref)}>{ref.title}{ref.selector?.kind === "lines" ? ` · L${ref.selector.start}–L${ref.selector.end}` : ""}</button><button type="button" aria-label={t("materials.remove", { title: ref.title })} onClick={async () => { if (!await removeDraftMaterial(conversation, ref)) setStatus(t("materials.sourceUnavailable")); }}>×</button></li>)}</ul>}

@@ -132,6 +132,11 @@ func (l Ledger) Facts(ctx context.Context) (Facts, error) {
 	} else {
 		failed("effects", errors.New("intent source is not configured"))
 	}
+	recovery, recoveryErr := l.recoveryWorkspaces(ctx)
+	failed("workspace recoveries", recoveryErr)
+	if recoveryErr == nil && recovery != nil {
+		f.RecoveryWorkspaces = recovery
+	}
 	f.attentionKnown = disclosuresKnown && effectsKnown
 	return f, errors.Join(failures...)
 }
