@@ -33,6 +33,9 @@ func decodeWorkspaceRecovery(e recoveryEnvelope) (WorkspaceRecovery, error) {
 	default:
 		return r, errors.New("workspace recovery phase is invalid")
 	}
+	if err := validateWorkspaceRecovery(r); err != nil {
+		return r, err
+	}
 	return r, nil
 }
 

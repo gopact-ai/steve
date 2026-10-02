@@ -33,9 +33,11 @@ type WorkspaceRecovery struct {
 }
 
 type RecoveryBaseline struct {
-	Name     string `json:"name"`
-	Version  int64  `json:"version"`
-	Artifact string `json:"artifact"`
+	ContentID string `json:"content_id,omitempty"`
+	Storage   string `json:"storage"`
+	Name      string `json:"name"`
+	Version   int64  `json:"version"`
+	Artifact  string `json:"artifact"`
 }
 
 type RecoverySource struct {
@@ -46,9 +48,11 @@ type RecoverySource struct {
 }
 
 type RecoveryHead struct {
-	Artifact string             `json:"artifact"`
-	Version  int64              `json:"version"`
-	Sources  []RecoveryProducer `json:"sources,omitempty"`
+	ContentID string             `json:"content_id,omitempty"`
+	Storage   string             `json:"storage"`
+	Artifact  string             `json:"artifact"`
+	Version   int64              `json:"version"`
+	Sources   []RecoveryProducer `json:"sources,omitempty"`
 }
 
 // Producer is recorded before execution, so a failed result write cannot make
@@ -65,6 +69,9 @@ type RecoveryOutput struct {
 }
 
 type RecoveryProducer struct {
+	Artifact    string              `json:"artifact,omitempty"`
+	ContentID   string              `json:"content_id,omitempty"`
+	Storage     string              `json:"storage,omitempty"`
 	Attempt     string              `json:"attempt"`
 	Execution   task.ExecutionToken `json:"execution"`
 	Base        string              `json:"base"`
