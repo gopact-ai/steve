@@ -3106,6 +3106,15 @@ checks["workspace-recovery-shows-fixed-node"] = async (f) => {
     await f.page.reload();
     await f.page.getByText("项目主目录仍处于恢复隔离", { exact: true }).waitFor();
     assert.ok(!(await banner.innerText()).includes("test-node"), "An unselected recovery showed a fixed node");
+    recovery.phase = "materializing";
+    recovery.node = "test-node";
+    recovery.path = "/isolated/shared/work";
+    await f.page.addInitScript(() => localStorage.setItem("steve.ui.locale", "en"));
+    await f.page.reload();
+    await f.page.getByText("The original project directory remains isolated for recovery", { exact: true }).waitFor();
+    const english = await f.page.getByRole("status").filter({ hasText: "The original project directory remains isolated for recovery" }).innerText();
+    assert.ok(english.includes("Fixed copy node: test-node"), "The English notice omitted its fixed node");
+    assert.ok(english.includes("being prepared at the fixed node and path"), "The English materializing phase was inaccurate");
 };
 
 checks["workspace-recovery-persists-without-live-attempt"] = async (f) => {

@@ -92,6 +92,14 @@ func TestRecoveryRecordsItsLockBeforeWriting(t *testing.T) {
 // is applying it any more.
 func orphanApplying(t *testing.T, store *Store, p project.Project, canonical string, live bool) (Landing, string) {
 	t.Helper()
+	if live {
+		for _, name := range []string{"a", "b", "c"} {
+			write(t, canonical, name, name+"0")
+		}
+		if _, _, err := store.SnapshotCanonical(t.Context(), p, "", "fixture", "accepted initial base"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	lease, err := store.ledger.Acquire(t.Context(), "canonical:"+p.ID, "lost-landing", time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +108,9 @@ func orphanApplying(t *testing.T, store *Store, p project.Project, canonical str
 		if err := store.ledger.Release(t.Context(), lease); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if live {
+		return crashMidApplyAs(t, store, p, canonical, func(l *Landing) { l.Lease = &lease }, lease)
 	}
 	return crashMidApplyAs(t, store, p, canonical, func(l *Landing) { l.Lease = &lease })
 }

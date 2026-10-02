@@ -100,6 +100,14 @@ func TestStartupRecoveryKeepsALentLock(t *testing.T) {
 	ctx := t.Context()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	// Establish the parent's accepted base before lending its canonical lease.
+	// Startup recovery is about retaining that lease, not headless fallback.
+	for _, name := range []string{"a", "b", "c"} {
+		write(t, canonical, name, name+"0")
+	}
+	if _, _, err := store.SnapshotCanonical(ctx, p, "", "parent-turn", "initial parent base"); err != nil {
+		t.Fatal(err)
+	}
 	parent, err := store.ledger.Acquire(ctx, "canonical:p", "parent-turn", time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +115,7 @@ func TestStartupRecoveryKeepsALentLock(t *testing.T) {
 	// The record the landing left: applying, under the lock it was lent.
 	land, _ := crashMidApplyAs(t, store, p, canonical, func(land *Landing) {
 		land.Lease, land.Borrowed = &parent, true
-	})
+	}, parent)
 
 	if _, err := store.RecoverLandings(ctx); err != nil {
 		t.Fatal(err)
