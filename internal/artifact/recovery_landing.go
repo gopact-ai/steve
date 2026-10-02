@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -13,8 +14,9 @@ import (
 // RecoveryLink keeps an ordinary landing's nullable single Source unchanged.
 // The episode owner supplies and validates the complete frozen source chain.
 type RecoveryLink struct {
-	Episode     string `json:"episode"`
-	HeadVersion int64  `json:"head_version"`
+	Episode     string                         `json:"episode"`
+	HeadVersion int64                          `json:"head_version"`
+	Resolution  *attempt.RecoveryResolutionRef `json:"resolution,omitempty"`
 }
 
 type CanonicalCommit struct {
@@ -44,15 +46,30 @@ func (s *Store) LandRecoveryOnce(ctx context.Context, id string, driver ledger.L
 	if !found || p.Home != r.Target || project.RecoveryIdentity(p) != r.Declaration {
 		return Landing{}, attempt.ErrWorkspaceRecovery
 	}
+	if err := s.admits(ctx, p, p.Home.Node); err != nil {
+		return Landing{}, err
+	}
+	if prior, found, err := s.currentRecoveryConflict(ctx, r); err != nil {
+		return Landing{}, err
+	} else if found && prior.ID != attempt.RecoveryLandingID(r) {
+		return prior, Conflict{State: prior.State, Paths: prior.Paths, Marked: prior.Conflict}
+	}
 	link := RecoveryLink{Episode: r.ID, HeadVersion: r.FrozenHeadVersion}
-	ctx = context.WithValue(ctx, recoveryLandingKey{}, &recoveryLandingPermit{link: link, driver: driver, lifetime: ctx})
+	ctx = context.WithValue(ctx, recoveryLandingKey{}, &recoveryLandingPermit{link: link, driver: driver, lifetime: attempt.RecoveryDriverLifetime(ctx)})
 	if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error {
 		_, err := checkRecoveryLandingPermitTx(ctx, tx, p, nil, nil, false)
 		return err
 	}); err != nil {
 		return Landing{}, err
 	}
-	return s.LandOnce(ctx, attempt.RecoveryLandingID(r), p, r.Head.Artifact, "workspace recovery")
+	land, err := s.LandOnce(ctx, attempt.RecoveryLandingID(r), p, r.Head.Artifact, "workspace recovery")
+	var conflict Conflict
+	if errors.As(err, &conflict) {
+		if queued := s.queueRecoveryConflict(ctx, p, land, conflict); queued != nil {
+			return land, errors.Join(err, queued)
+		}
+	}
+	return land, err
 }
 
 func recoveryPermit(ctx context.Context) *recoveryLandingPermit {
@@ -72,8 +89,17 @@ func checkRecoveryLandingPermitTx(ctx context.Context, tx *ledger.Tx, p project.
 	if r.Project != p.ID || r.Target != p.Home || project.RecoveryIdentity(p) != r.Declaration {
 		return r, attempt.ErrWorkspaceRecovery
 	}
-	if land != nil && (land.Recovery == nil || *land.Recovery != permit.link || land.ID != attempt.RecoveryLandingID(r) || land.Artifact != r.Head.Artifact || land.Base != r.Baseline.Artifact || land.Target != r.Target) {
+	if land != nil && (land.Recovery == nil || !sameRecoveryLink(land.Recovery, &permit.link) || land.Target != r.Target) {
 		return r, errors.New("recovery landing differs from its frozen episode")
+	}
+	if land != nil {
+		if permit.link.Resolution == nil {
+			if land.ID != attempt.RecoveryLandingID(r) || land.Artifact != r.Head.Artifact || land.Base != r.Baseline.Artifact {
+				return r, attempt.ErrWorkspaceRecovery
+			}
+		} else if err := checkResolutionLandingTx(tx, r, *land, newAdmission); err != nil {
+			return r, err
+		}
 	}
 	return r, nil
 }
@@ -127,7 +153,11 @@ func (s *Store) recoveryCanonicalTx(ctx context.Context, tx *ledger.Tx, p projec
 		}
 	}
 	land.Committed = &CanonicalCommit{Artifact: target, Version: version, Parent: onto}
-	return nil
+	currentEpisode, err := attempt.CheckRecoveryLandingTx(tx, land.Recovery.Episode, land.Recovery.HeadVersion, recoveryPermit(ctx).driver, land.Lease, false)
+	if err != nil {
+		return err
+	}
+	return recordRecoveryWinnerTx(tx, currentEpisode, *land)
 }
 
 func (s *Store) ensureRecoveryLandingReceipt(ctx context.Context, p project.Project, land Landing) error {
@@ -144,4 +174,10 @@ func (s *Store) ensureRecoveryLandingReceipt(ctx context.Context, p project.Proj
 		return err
 	}})
 	return err
+}
+
+func sameRecoveryLink(a, b *RecoveryLink) bool {
+	ra, _ := json.Marshal(a)
+	rb, _ := json.Marshal(b)
+	return string(ra) == string(rb)
 }

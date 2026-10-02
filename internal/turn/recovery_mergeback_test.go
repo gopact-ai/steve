@@ -6,16 +6,21 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 type residualCapturer interface {
@@ -55,7 +60,7 @@ func drainWithoutCopy(t *testing.T) (*Coordinator, project.Project, attempt.Work
 	}
 	original = retireOriginalRecoverySource(t, c, original)
 	var episode attempt.WorkspaceRecovery
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), original.Abandoned.WorkspaceRecoveryID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), original.Abandoned.WorkspaceRecoveryID, func(ctx context.Context, driver ledger.Lease) error {
 		enrollStoppedOriginals(t, ctx, c, original.Abandoned.WorkspaceRecoveryID, driver)
 		var err error
 		episode, err = c.attempts.BeginRecoveryDrain(ctx, original.Abandoned.WorkspaceRecoveryID, driver)
@@ -85,7 +90,7 @@ func TestRecoveryResidualCaptureKeepsCurrentOriginalContentAndItsName(t *testing
 	if err != nil || !found {
 		t.Fatalf("named base: %+v %v", before, err)
 	}
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		captured, err := capture.CaptureRecoveryResidual(ctx, episode.ID, driver)
 		if err != nil {
 			return err
@@ -145,7 +150,7 @@ func TestRecoveryResidualAndNewArtifactAreAcceptedInOneTransaction(t *testing.T)
 	}
 	before := count()
 	forceStopTrigger(t, c, `CREATE TRIGGER refuse_residual BEFORE UPDATE ON operations WHEN NEW.kind='workspace-recovery' AND json_extract(NEW.data,'$.residual') IS NOT NULL BEGIN SELECT RAISE(ABORT,'residual refused'); END`)
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		if _, err := capture.CaptureRecoveryResidual(ctx, episode.ID, driver); err == nil {
 			t.Fatal("residual refusal became capture success")
 		}
@@ -160,7 +165,7 @@ func TestRecoveryResidualAndNewArtifactAreAcceptedInOneTransaction(t *testing.T)
 	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec("DROP TRIGGER refuse_residual"); return err }); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		_, err := capture.CaptureRecoveryResidual(ctx, episode.ID, driver)
 		return err
 	}); err != nil {
@@ -204,7 +209,7 @@ func TestRecoveryPreparedWithoutNativeIdentityCannotCaptureOrLoseItsObligation(t
 		t.Fatal(err)
 	}
 	source = retireOriginalRecoverySource(t, c, source)
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		enrollStoppedOriginals(t, ctx, c, episode.ID, driver)
 		if _, err := c.attempts.BeginRecoveryDrain(ctx, episode.ID, driver); err != nil {
 			return err
@@ -306,7 +311,7 @@ func captureBoundCopy(t *testing.T, c *Coordinator, source attempt.Record) attem
 	t.Helper()
 	source = retireOriginalRecoverySource(t, c, source)
 	var result attempt.WorkspaceRecovery
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), source.Abandoned.WorkspaceRecoveryID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), source.Abandoned.WorkspaceRecoveryID, func(ctx context.Context, driver ledger.Lease) error {
 		enrollStoppedOriginals(t, ctx, c, source.Abandoned.WorkspaceRecoveryID, driver)
 		episode, err := c.attempts.BeginRecoveryDrain(ctx, source.Abandoned.WorkspaceRecoveryID, driver)
 		if err != nil {
@@ -355,7 +360,7 @@ func TestRecoveryLandingUsesFixedBaselineAndTheActualCurrentOriginal(t *testing.
 		t.Fatal("recovery has no fixed-baseline all-source stable landing consumer")
 	}
 	var landed artifact.Landing
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		var err error
 		landed, err = lander.LandRecoveryOnce(ctx, episode.ID, driver)
 		return err
@@ -370,7 +375,7 @@ func TestRecoveryLandingUsesFixedBaselineAndTheActualCurrentOriginal(t *testing.
 			t.Fatalf("fixed B/R'/C lost %s: %q %v", name, raw, err)
 		}
 	}
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		replay, err := lander.LandRecoveryOnce(ctx, episode.ID, driver)
 		if replay.ID != landed.ID || replay.State != artifact.LandCommitted {
 			t.Fatalf("replay replaced stable landing: %+v", replay)
@@ -393,7 +398,7 @@ func TestRecoveryLandingChecksEveryAcceptedProducerBeforeAdmission(t *testing.T)
 	if _, err := c.tasks.SetAside(first.TaskID, task.StateCancelled); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		_, err := lander.LandRecoveryOnce(ctx, episode.ID, driver)
 		if !errors.Is(err, task.ErrExecutionStopped) {
 			t.Fatalf("last token replaced first producer authorization: %v", err)
@@ -425,7 +430,7 @@ func TestRecoveryLandingDoesNotOverwriteAnIgnoredIncomingPath(t *testing.T) {
 	nodes := &recoveryApplyFixture{Nodes: artifact.LocalNodes{Dir: t.TempDir()}}
 	c.artifacts = artifact.New(c.artifacts.Dir, ledgerOf(t, c), c.projects, nodes)
 	lander = c.artifacts
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		land, err := lander.LandRecoveryOnce(ctx, episode.ID, driver)
 		var conflict artifact.Conflict
 		if !errors.As(err, &conflict) || land.State != artifact.LandApplyConflicted {
@@ -490,7 +495,7 @@ func TestRecoveryLandingReplaysAdmittedWALAndRecordsActualCanonical(t *testing.T
 		return nil
 	}
 	var land artifact.Landing
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		var err error
 		land, err = c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver)
 		return err
@@ -505,7 +510,7 @@ func TestRecoveryLandingReplaysAdmittedWALAndRecordsActualCanonical(t *testing.T
 			t.Fatalf("WAL recovery lost %s: %q %v", name, raw, err)
 		}
 	}
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		again, err := c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver)
 		if again.ID != land.ID || again.Committed == nil || *again.Committed != *land.Committed {
 			t.Fatalf("committed retry guessed a new result: %+v", again)
@@ -534,7 +539,7 @@ func TestRecoveryLandingRechecksRevocationBetweenPreflightAndApplying(t *testing
 		}
 		return nil
 	}
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		_, err := c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver)
 		if !errors.Is(err, task.ErrExecutionStopped) {
 			t.Fatalf("revocation between preflight/applying was ignored: %v", err)
@@ -660,5 +665,284 @@ func TestRecoveryConflictManualResolutionKeepsExactRootAndConsumesPendingOnce(t 
 	}
 	if raw, err := os.ReadFile(filepath.Join(p.Home.Path, "original")); err != nil || string(raw) != "resolved by owner\n" {
 		t.Fatalf("ordinary pending re-landed old C: %q %v", raw, err)
+	}
+}
+
+func recoveryConflictFixture(t *testing.T) (*Coordinator, project.Project, attempt.WorkspaceRecovery, artifact.Stuck) {
+	t.Helper()
+	c, p, source, ws := sharedCopy(t)
+	publishBoundRecoveryTurn(t, c, p, ws, "root-conflict", map[string]string{"original": "copy side\n"})
+	for name, body := range map[string]string{"original": "original side\n", "inputs/ordinary": "keep ordinary input\n"} {
+		full := filepath.Join(p.Home.Path, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	episode := captureBoundCopy(t, c, source)
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		_, err := c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver)
+		var conflict artifact.Conflict
+		if !errors.As(err, &conflict) {
+			t.Fatalf("root merge: %v", err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stuck, err := c.artifacts.Stuck(t.Context(), p.ID)
+	if err != nil || len(stuck) != 1 || stuck[0].Resolution == nil {
+		t.Fatalf("missing exact conflict reference: %+v %v", stuck, err)
+	}
+	c.artifacts.SetRecoveryResolutionDriver(NewWorkspaceRecoveryControl(c).Drive)
+	return c, p, episode, stuck[0]
+}
+
+func acceptedResolverFixture(t *testing.T, c *Coordinator, p project.Project, stuck artifact.Stuck, id, body string) (artifact.Source, string) {
+	t.Helper()
+	ws, err := c.artifacts.Materialize(t.Context(), project.Request{Project: p.ID, Isolated: true, Base: stuck.Marked, Owner: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracked, err := c.tasks.Create(task.Task{Channel: "console:" + id, Transport: "console", Member: "worker", ProjectID: p.ID, Workspace: ws.Path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.tasks.Begin(tracked.ID, "worker", ws.Node, ""); err != nil {
+		t.Fatal(err)
+	}
+	token, err := c.tasks.ExecutionToken(tracked.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := c.attempts.Open(t.Context(), attempt.Spec{ID: id, Kind: attempt.KindStep, TaskID: tracked.ID, TurnID: id, Execution: &token, Project: p.ID, Node: ws.Node, Harness: "mock", Agent: "worker", Scope: attempt.ScopePathSet, Workspace: ws, Base: stuck.Marked})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.tasks.BindAttempt(token, r.ID, r.TurnID); err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []attempt.State{attempt.Prepared, attempt.Running} {
+		if _, err := c.attempts.Advance(t.Context(), r.ID, phase, "fixture", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(ws.Path, "original"), []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	source := artifact.Source{Execution: &token, AttemptID: r.ID}
+	m, _, err := c.artifacts.PublishRecoveryResolution(t.Context(), *stuck.Resolution, ws, stuck.Marked, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.attempts.MarkSessionSettled(t.Context(), r.ID, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []attempt.State{attempt.Snapshotted, attempt.Published, attempt.Durable, attempt.Verifying, attempt.BindReady} {
+		if _, err := c.attempts.Advance(t.Context(), r.ID, phase, "fixture", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := c.attempts.Complete(t.Context(), r.ID, "fixture", attempt.Completion{Result: attempt.Result{Artifact: m.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	return source, m.ID
+}
+
+func TestRecoveryResolverSinkRechecksOwnerMaintenanceAndExactConflictAfterPublication(t *testing.T) {
+	for _, mode := range []string{"owner", "maintenance", "wrong-root", "source-stopped", "valid"} {
+		t.Run(mode, func(t *testing.T) {
+			c, p, episode, stuck := recoveryConflictFixture(t)
+			source, id := acceptedResolverFixture(t, c, p, stuck, "resolver", "resolved agent text\n")
+			ref := *stuck.Resolution
+			switch mode {
+			case "owner":
+				var err error
+				c.owners, err = newChannelOwners("different-owner", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "maintenance":
+				c.maintaining = true
+			case "wrong-root":
+				ref.Root = "another-root"
+			case "source-stopped":
+				if _, err := c.tasks.SetAside(source.Execution.TaskID, task.StateCancelled); err != nil {
+					t.Fatal(err)
+				}
+			}
+			land, err := c.artifacts.LandRecoveryResolutionOnce(t.Context(), ref, id, source)
+			if mode != "valid" {
+				if err == nil {
+					t.Fatalf("late resolver authority %s was ignored: %+v", mode, land)
+				}
+				if raw, err := os.ReadFile(filepath.Join(p.Home.Path, "original")); err != nil || string(raw) != "original side\n" {
+					t.Fatalf("rejected sink changed original: %q %v", raw, err)
+				}
+				return
+			}
+			if err != nil || land.State != artifact.LandCommitted {
+				t.Fatalf("authorized same-root resolver sink: %+v %v", land, err)
+			}
+			if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+				_, err := c.artifacts.ReleaseRecovery(ctx, episode.ID, driver)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			for name, body := range map[string]string{"original": "resolved agent text\n", "inputs/ordinary": "keep ordinary input\n"} {
+				if raw, err := os.ReadFile(filepath.Join(p.Home.Path, name)); err != nil || string(raw) != body {
+					t.Fatalf("resolver dropped %s: %q %v", name, raw, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRecoveryOldResolverSinkCannotRebindAfterAnotherResolutionWins(t *testing.T) {
+	c, p, episode, stuck := recoveryConflictFixture(t)
+	source, id := acceptedResolverFixture(t, c, p, stuck, "old-resolver", "old proposed resolution\n")
+	land, err := c.artifacts.ResolveByHand(t.Context(), p, stuck, []artifact.Edit{{Path: "original", Text: "new owner resolution\n"}}, "console")
+	if err != nil || land.State != artifact.LandCommitted {
+		t.Fatalf("new resolution: %+v %v", land, err)
+	}
+	if _, err := c.artifacts.LandRecoveryResolutionOnce(t.Context(), *stuck.Resolution, id, source); err == nil {
+		t.Fatal("old persisted sink rebound to the winning result")
+	}
+	forceStopTrigger(t, c, `CREATE TRIGGER refuse_winner_release BEFORE UPDATE ON operations WHEN NEW.kind='workspace-recovery' AND NEW.state='released' BEGIN SELECT RAISE(ABORT,'winner release refused'); END`)
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		_, err := c.artifacts.ReleaseRecovery(ctx, episode.ID, driver)
+		if err == nil {
+			t.Fatal("release refusal ignored")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec("DROP TRIGGER refuse_winner_release"); return err }); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		_, err := c.artifacts.ReleaseRecovery(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.artifacts.LandPending(t.Context(), p); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(p.Home.Path, "original")); err != nil || string(raw) != "new owner resolution\n" {
+		t.Fatalf("old C returned after committed winner/release replay: %q %v", raw, err)
+	}
+}
+
+func TestRecoveryFinalizingInputWaitsAndRefreshesOnlyBeforeCanonicalAdmission(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	publishBoundRecoveryTurn(t, c, p, ws, "queued-copy-source", map[string]string{"incoming": "accepted\n"})
+	episode := captureBoundCopy(t, c, source)
+	tracked, err := c.tasks.Create(task.Task{Channel: "console:queued", Transport: "console", Member: "worker", ProjectID: p.ID, Workspace: ws.Path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.tasks.BeginTurn(tracked.ID, "worker", ws.Node, task.TurnInput{TurnID: "queued-turn", Address: channel.Address{Conversation: "console:queued", Channel: "console", Message: "queued-turn"}}); err != nil {
+		t.Fatal(err)
+	}
+	scope, err := c.executions.Begin(t.Context(), execution.Key{TaskID: tracked.ID, InstanceID: "queued-turn"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer scope.Finish(nil)
+	selected := agent.Agent{ID: "worker", Node: ws.Node, Harness: "mock"}
+	waiting := make(chan struct{})
+	var once sync.Once
+	req := Request{ConversationID: "console:queued", MessageID: "queued-turn", SenderOpenID: "owner", OnStage: func(view.Stage) { once.Do(func() { close(waiting) }) }}
+	spec, _, err := c.turnSpec(scope.Context(), req, selected, tracked.ID, project.Binding{ProjectID: p.ID}, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskTurn := &chatTurn{c: c, req: req, selected: selected, tracked: tracked.ID, binding: project.Binding{ProjectID: p.ID}, workspace: ws, clock: newTurnClock(), spent: &turnSpend{resetIdle: func() {}}}
+	admission := recoveryAdmissionAttempts{waitingAttempts: waitingAttempts{Attempts: c.attempts, passes: func(error) bool { return false }}, turn: taskTurn}
+	done := make(chan attempt.Record, 1)
+	failed := make(chan error, 1)
+	go func() {
+		r, err := admission.Open(scope.Context(), spec)
+		if err != nil {
+			failed <- err
+		} else {
+			done <- r
+		}
+	}()
+	select {
+	case <-waiting:
+	case err := <-failed:
+		t.Fatal(err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("finalizing input was not retained as waiting")
+	}
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		if _, err := c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver); err != nil {
+			return err
+		}
+		_, err := c.artifacts.ReleaseRecovery(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-failed:
+		t.Fatal(err)
+	case admitted := <-done:
+		if admitted.Workspace.Kind != project.KindCanonical || admitted.Workspace.Path != p.Home.Path || admitted.WorkspaceRecovery != nil {
+			t.Fatalf("queued old Spec resumed in the retired copy: %+v", admitted.Spec)
+		}
+		if taskTurn.saved.UpstreamID != "" {
+			t.Fatal("native cwd was hot-switched instead of freshly opened")
+		}
+		if _, err := c.attempts.FailWith(t.Context(), admitted.ID, "fixture", "no prompt in fixture", nil); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("released input did not refresh canonical admission")
+	}
+}
+
+func TestRecoveryResolverAdmittedWALSurvivesTaskCancelAndOwnerChangeWithoutNewAuthority(t *testing.T) {
+	c, p, episode, stuck := recoveryConflictFixture(t)
+	source, id := acceptedResolverFixture(t, c, p, stuck, "cancel-after-applying", "accepted resolver text\n")
+	nodes := &recoveryApplyFixture{Nodes: artifact.LocalNodes{Dir: t.TempDir()}}
+	c.artifacts = artifact.New(c.artifacts.Dir, ledgerOf(t, c), c.projects, nodes)
+	c.artifacts.SetExecution(c.executions)
+	c.artifacts.SetRecoveryResolutionDriver(NewWorkspaceRecoveryControl(c).Drive)
+	values, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	nodes.before = func(req ops.Request) error {
+		if req.Op == ops.Apply {
+			if _, err := c.tasks.SetAside(source.Execution.TaskID, task.StateCancelled); err != nil {
+				return err
+			}
+			cancel()
+		}
+		return nil
+	}
+	land, err := c.artifacts.LandRecoveryResolutionOnce(values, *stuck.Resolution, id, source)
+	if err != nil || land.State != artifact.LandCommitted {
+		t.Fatalf("source cancel abandoned admitted resolver WAL: %+v %v", land, err)
+	}
+	c.owners, err = newChannelOwners("new-owner", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.maintaining = true
+	if replayed, err := NewWorkspaceRecoveryControl(c).Replay(t.Context(), episode.ID); err != nil || !replayed {
+		t.Fatalf("old committed decision required fresh owner/task authority: %v %v", replayed, err)
+	}
+	if nodes.applies != 1 {
+		t.Fatalf("replay created another apply under revoked authority: %d", nodes.applies)
+	}
+	current, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID)
+	if err != nil || current.Phase != "released" {
+		t.Fatalf("old legal WAL result was not accepted: %+v %v", current, err)
 	}
 }

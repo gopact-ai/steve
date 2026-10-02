@@ -43,8 +43,14 @@ func (r *applicationWorkspaceRecovery) Reconcile(parent context.Context) error {
 	}
 	var failures []error
 	for _, episode := range all {
+		if episode.Phase == "released" {
+			continue
+		}
 		ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
-		err := r.control.Drive(ctx, episode.ID, func(ctx context.Context, driver ledger.Lease) error { return r.drain(ctx, episode.ID, driver) })
+		replayed, err := r.control.Replay(ctx, episode.ID)
+		if err == nil && !replayed {
+			err = r.control.Drive(ctx, episode.ID, func(ctx context.Context, driver ledger.Lease) error { return r.drain(ctx, episode.ID, driver) })
+		}
 		cancel()
 		if err != nil {
 			failures = append(failures, fmt.Errorf("workspace recovery %s: %w", episode.ID, err))
@@ -64,7 +70,23 @@ func (r *applicationWorkspaceRecovery) drain(ctx context.Context, id string, dri
 				return err
 			}
 		}
-		_, err := r.artifacts.LandRecoveryOnce(ctx, id, driver)
+		_, err := r.artifacts.ReleaseRecovery(ctx, id, driver)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, artifact.ErrRecoveryResultPending) {
+			return err
+		}
+		if resumed, err := r.artifacts.ResumeRecoveryResolution(ctx, id, driver); err != nil {
+			return err
+		} else if resumed {
+			_, err := r.artifacts.ReleaseRecovery(ctx, id, driver)
+			return err
+		}
+		if _, err := r.artifacts.LandRecoveryOnce(ctx, id, driver); err != nil {
+			return err
+		}
+		_, err = r.artifacts.ReleaseRecovery(ctx, id, driver)
 		return err
 	}
 	episode, err = r.attempts.EnrollRecoveryNatives(ctx, id, false, driver)
@@ -95,7 +117,10 @@ func (r *applicationWorkspaceRecovery) drain(ctx context.Context, id string, dri
 	if _, err = r.artifacts.CaptureRecoveryResidual(ctx, id, driver); err != nil {
 		return err
 	}
-	_, err = r.artifacts.LandRecoveryOnce(ctx, id, driver)
+	if _, err = r.artifacts.LandRecoveryOnce(ctx, id, driver); err != nil {
+		return err
+	}
+	_, err = r.artifacts.ReleaseRecovery(ctx, id, driver)
 	return err
 }
 

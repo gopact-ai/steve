@@ -26,7 +26,7 @@ func decodeWorkspaceRecovery(e recoveryEnvelope) (WorkspaceRecovery, error) {
 		return r, errors.New("workspace recovery identity is incomplete or changed")
 	}
 	switch r.Phase {
-	case "recorded", "materializing", "ready", "working", "draining", "capture", "landing":
+	case "recorded", "materializing", "ready", "working", "draining", "capture", "landing", "released":
 	default:
 		return r, errors.New("workspace recovery phase is invalid")
 	}
@@ -120,6 +120,9 @@ func (s *Service) startWorkspaceRecoveryTx(tx *ledger.Tx, r Record, base *Recove
 	source := RecoverySource{Attempt: r.ID, Task: r.TaskID, Revision: r.ForceStop.Revision, At: at}
 	declaration := project.RecoveryIdentity(p)
 	for _, existing := range all {
+		if existing.Phase == "released" {
+			continue
+		}
 		if existing.Target.Node != p.Home.Node || !samePhysicalPath(existing.Target.Path, p.Home.Path) {
 			continue
 		}

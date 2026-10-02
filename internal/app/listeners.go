@@ -52,7 +52,8 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 		// reached are closed once it can be.
 		owed := newApplicationOwedCloses(storage.Store(), attempts, tasks, manager)
 		reconciliations.Go(func() { runReconciler(ctx, "reconcile owed session closes", owed.Reconcile) })
-		recovery := &applicationWorkspaceRecovery{attempts: attempts, artifacts: work.Artifacts(), state: storage.Store(), sessions: manager, control: turn.NewWorkspaceRecoveryControl(coordinator)}
+		control := turn.NewWorkspaceRecoveryControl(coordinator)
+		recovery := &applicationWorkspaceRecovery{attempts: attempts, artifacts: work.Artifacts(), state: storage.Store(), sessions: manager, control: control}
 		reconciliations.Go(func() { runReconciler(ctx, "reconcile workspace recovery", recovery.Reconcile) })
 	}
 	if err := services.Ready(); err != nil {

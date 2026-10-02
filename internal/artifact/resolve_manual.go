@@ -45,6 +45,9 @@ var ErrSealedByHand = errors.New("this project's data stays on its home machine,
 // original queued result merge cleanly on the next pass — exactly what an
 // agent's resolution does, so nothing downstream has to tell them apart.
 func (s *Store) ResolveByHand(ctx context.Context, p project.Project, stuck Stuck, edits []Edit, by string) (Landing, error) {
+	if stuck.Recovery != nil {
+		return s.resolveRecoveryByHand(ctx, p, stuck, edits)
+	}
 	if stuck.Marked == "" {
 		return Landing{}, errors.New("this conflict left no half-merged tree to edit")
 	}

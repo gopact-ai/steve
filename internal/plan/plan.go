@@ -132,8 +132,9 @@ type Step struct {
 // Plan is one revision of how a task will be done. Revisions accumulate;
 // nothing is edited in place.
 type Plan struct {
-	ID     string `json:"id"`
-	TaskID string `json:"task_id"`
+	RecoveryResolution *attempt.RecoveryResolutionRef `json:"recovery_resolution,omitempty"`
+	ID                 string                         `json:"id"`
+	TaskID             string                         `json:"task_id"`
 	// Execution is fixed before creation so recovery between the plan and
 	// its run record cannot obtain a later authorization epoch.
 	Execution *task.ExecutionToken `json:"execution,omitempty"`

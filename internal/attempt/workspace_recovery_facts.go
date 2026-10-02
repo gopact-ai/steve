@@ -44,6 +44,23 @@ func validateWorkspaceRecoveryTx(tx ledger.Reader, r WorkspaceRecovery) error {
 			return err
 		}
 	}
+	if r.Result != nil {
+		if err := check(r.Result.Artifact, r.Result.ID, r.Result.Storage, r.Result.Evidence); err != nil {
+			return err
+		}
+	}
+	for _, resolver := range r.Resolvers {
+		if err := check(resolver.Artifact, resolver.ID, resolver.Storage, resolver.Evidence); err != nil {
+			return err
+		}
+		record, err := GetTx(tx, resolver.Attempt)
+		if err != nil {
+			return err
+		}
+		if record.Execution == nil || *record.Execution != resolver.Execution || record.Result == nil || record.Result.Artifact != resolver.Artifact || record.Project != r.Project {
+			return contentreplica.ErrIntegrity
+		}
+	}
 	for _, source := range r.Head.Sources {
 		if err := check(source.Artifact, source.ContentID, source.Storage, source.Evidence); err != nil {
 			return err

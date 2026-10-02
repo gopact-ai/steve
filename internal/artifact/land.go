@@ -166,6 +166,12 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	var finish func()
 	if recoveryPermit(ctx) != nil {
 		ctx, finish, err = s.admitRecoveryLandingSources(ctx, p, artifactID)
+		if err == nil && source != nil {
+			var sourceFinish func()
+			ctx, sourceFinish, err = s.admitLandingSource(ctx, artifactID, source)
+			prior := finish
+			finish = func() { sourceFinish(); prior() }
+		}
 	} else {
 		ctx, finish, err = s.admitLandingSource(ctx, artifactID, source)
 	}
@@ -329,6 +335,9 @@ func (s *Store) proposeLanding(ctx context.Context, p project.Project, artifactI
 		err = s.ledger.Update(ctx, func(tx *ledger.Tx) error {
 			r, err := checkRecoveryLandingPermitTx(ctx, tx, p, nil, nil, true)
 			base = r.Baseline.Artifact
+			if permit := recoveryPermit(ctx); err == nil && permit.link.Resolution != nil {
+				base = permit.link.Resolution.Canonical
+			}
 			return err
 		})
 	} else {

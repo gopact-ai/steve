@@ -145,7 +145,8 @@ type Store struct {
 	// this process writes the canonical workspace or cuts it under a lock
 	// it shares: a landing under a lent lock and its lender (see
 	// writeCanonical).
-	writing sync.Map
+	writing                  sync.Map
+	recoveryResolutionDriver func(context.Context, string, func(context.Context, ledger.Lease) error) error
 }
 
 func (s *Store) SetExecution(r *execution.Registry) { s.executions = r }
@@ -1143,7 +1144,9 @@ type Pending struct {
 	// Retrying against an unchanged canonical would reach the same
 	// conflict, so the queue waits for the canonical name to move —
 	// which is what resolving the conflict does.
-	Blocked *Blocked `json:"blocked,omitempty"`
+	Blocked    *Blocked                       `json:"blocked,omitempty"`
+	Recovery   *RecoveryLink                  `json:"recovery,omitempty"`
+	Resolution *attempt.RecoveryResolutionRef `json:"resolution,omitempty"`
 }
 
 // Blocked is why a queued artifact is not being retried, and what a
@@ -1186,6 +1189,9 @@ func (s *Store) Defer(ctx context.Context, projectID, artifactID, by string, sou
 		if existing, ok := raw[id]; ok {
 			var prior Pending
 			if err := json.Unmarshal(existing, &prior); err == nil && prior.Project == projectID {
+				if prior.Recovery != nil {
+					return attempt.ErrWorkspaceRecovery
+				}
 				item.At, item.Blocked = prior.At, prior.Blocked
 			}
 		}
@@ -1252,6 +1258,9 @@ func (s *Store) landPending(ctx context.Context, p project.Project, held *ledger
 	}
 	var out []Landing
 	for _, item := range queue {
+		if item.Recovery != nil {
+			continue
+		}
 		if item.Blocked != nil && s.stillBlocked(ctx, p, *item.Blocked, head) {
 			continue
 		}
@@ -1337,17 +1346,19 @@ func pendingFor(raw map[string]json.RawMessage, projectID string) []Pending {
 // Stuck is a queued result whose landing stopped at a conflict and is
 // waiting for it to be resolved or for the canonical to move.
 type Stuck struct {
-	Project   string    `json:"project"`
-	State     string    `json:"state,omitempty"`
-	Artifact  string    `json:"artifact"`
-	By        string    `json:"by"`
-	Landing   string    `json:"landing"`
-	Canonical string    `json:"canonical"`
-	Marked    string    `json:"marked,omitempty"`
-	Paths     []string  `json:"paths,omitempty"`
-	At        time.Time `json:"at"`
-	Attempt   string    `json:"attempt,omitempty"`
-	Reason    string    `json:"reason,omitempty"`
+	Project    string                         `json:"project"`
+	State      string                         `json:"state,omitempty"`
+	Artifact   string                         `json:"artifact"`
+	By         string                         `json:"by"`
+	Landing    string                         `json:"landing"`
+	Canonical  string                         `json:"canonical"`
+	Marked     string                         `json:"marked,omitempty"`
+	Paths      []string                       `json:"paths,omitempty"`
+	At         time.Time                      `json:"at"`
+	Attempt    string                         `json:"attempt,omitempty"`
+	Reason     string                         `json:"reason,omitempty"`
+	Recovery   *RecoveryLink                  `json:"recovery,omitempty"`
+	Resolution *attempt.RecoveryResolutionRef `json:"resolution,omitempty"`
 }
 
 // Resolvable says whether an agent can be handed a checkout of this
@@ -1424,6 +1435,9 @@ func (s *Store) Unblock(ctx context.Context, projectID, artifactID, landingID st
 		var item Pending
 		if err := json.Unmarshal(data, &item); err != nil {
 			return err
+		}
+		if item.Recovery != nil {
+			return attempt.ErrWorkspaceRecovery
 		}
 		if item.Blocked == nil || item.Blocked.Landing != landingID {
 			return fmt.Errorf("%w: artifact %s, landing %s", ErrNotBlocked, short(artifactID), landingID)
@@ -1540,7 +1554,7 @@ func (s *Store) blocked(ctx context.Context, projectID string) ([]Stuck, error) 
 			Project: item.Project, Artifact: item.Artifact, By: item.By,
 			Landing: item.Blocked.Landing, State: item.Blocked.State, Canonical: item.Blocked.Canonical,
 			Marked: item.Blocked.Marked, Paths: item.Blocked.Paths, At: item.Blocked.At, Attempt: item.Blocked.Attempt,
-			Reason: item.Blocked.Reason,
+			Reason: item.Blocked.Reason, Recovery: item.Recovery, Resolution: item.Resolution,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

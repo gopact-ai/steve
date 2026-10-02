@@ -15,6 +15,9 @@ func (c *Coordinator) sharedRecoveryWorkspace(ctx context.Context, req Request, 
 	if err != nil || !found {
 		return project.Workspace{}, found, err
 	}
+	if r.Phase == "draining" || r.Phase == "capture" || r.Phase == "landing" {
+		return project.Workspace{}, true, recoveryWaiting{id: r.ID}
+	}
 	p, exists, err := c.projects.Get(ctx, projectID)
 	if err != nil || !exists {
 		return project.Workspace{}, true, errors.Join(project.ErrUnknown, err)

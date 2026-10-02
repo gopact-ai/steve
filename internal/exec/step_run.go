@@ -21,6 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -393,7 +394,14 @@ func (r *stepRun) publish(ctx context.Context) (artifact.Manifest, error) {
 	published := artifact.Manifest{ID: r.result.Artifact}
 	if stepPhase(record.State) < stepPhase(attempt.Snapshotted) || published.ID == "" {
 		var err error
-		published, _, err = r.deps.Artifacts.Publish(ctx, record.Workspace, record.Base, record.ID, "step "+step.ID+" of plan "+p.ID)
+		if p.RecoveryResolution != nil {
+			if record.Execution == nil {
+				return published, r.blocked("publish", task.ErrExecutionStopped)
+			}
+			published, _, err = r.deps.Artifacts.PublishRecoveryResolution(ctx, *p.RecoveryResolution, record.Workspace, record.Base, artifact.Source{Execution: record.Execution, AttemptID: record.ID})
+		} else {
+			published, _, err = r.deps.Artifacts.Publish(ctx, record.Workspace, record.Base, record.ID, "step "+step.ID+" of plan "+p.ID)
+		}
 		if err != nil {
 			return published, r.blocked("publish", err)
 		}

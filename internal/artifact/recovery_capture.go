@@ -27,6 +27,9 @@ func (s *Store) CaptureRecoveryResidual(ctx context.Context, id string, driver l
 	if !found || project.RecoveryIdentity(p) != r.Declaration {
 		return r, attempt.ErrWorkspaceRecovery
 	}
+	if err := s.admits(ctx, p, p.Home.Node); err != nil {
+		return r, err
+	}
 	if r.Phase == "draining" {
 		if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error { _, err := attempt.CheckRecoveryFreezeTx(tx, id, driver); return err }); err != nil {
 			return r, err

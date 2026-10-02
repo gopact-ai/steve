@@ -3,6 +3,7 @@ package turn
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 )
@@ -30,5 +31,17 @@ func (a *WorkspaceRecoveryControl) Drive(ctx context.Context, id string, step fu
 	if c.maintaining || owner == "" || owner != r.RequestedBy {
 		return errors.New("workspace recovery awaits its current owner outside maintenance")
 	}
-	return c.attempts.DriveWorkspaceRecovery(ctx, id, step)
+	lifetime := c.executions.Detached(ctx)
+	lifetime, end := context.WithTimeout(lifetime, 5*time.Minute)
+	defer end()
+	return c.attempts.DriveWorkspaceRecovery(ctx, lifetime, id, step)
+}
+
+// Replay consumes only a durable applying/committed decision, not fresh work.
+// A later owner or maintenance change cannot turn it into new authorization.
+func (a *WorkspaceRecoveryControl) Replay(ctx context.Context, id string) (bool, error) {
+	c := a.coordinator
+	c.requestMu.RLock()
+	defer c.requestMu.RUnlock()
+	return c.artifacts.ReplayAdmittedRecovery(ctx, id)
 }

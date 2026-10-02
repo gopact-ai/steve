@@ -28,12 +28,20 @@ func checkRecoveryDriverTx(tx *ledger.Tx, id string, driver ledger.Lease) (Works
 
 // DriveWorkspaceRecovery serializes draining and preparation on the same
 // renewable fencing row. Its context is cancelled on driver lease loss.
-func (s *Service) DriveWorkspaceRecovery(parent context.Context, id string, run func(context.Context, ledger.Lease) error) error {
+type recoveryDriverLifetimeKey struct{}
+type recoveryDriverLifetime struct{ context.Context }
+
+// DriveWorkspaceRecovery keeps work cancellation separate from the actual
+// service/lease lifetime. Only an admitted WAL consumes the detached lifetime.
+func (s *Service) DriveWorkspaceRecovery(parent, lifetime context.Context, id string, run func(context.Context, ledger.Lease) error) error {
 	lease, err := s.l.Acquire(parent, "workspace-recovery-driver:"+id, NewID(), s.TTL)
 	if err != nil {
 		return err
 	}
+	life, endLife := context.WithCancelCause(lifetime)
 	ctx, cancel := context.WithCancelCause(parent)
+	stopWork := context.AfterFunc(life, func() { cancel(context.Cause(life)) })
+	ctx = context.WithValue(ctx, recoveryDriverLifetimeKey{}, recoveryDriverLifetime{life})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -41,18 +49,31 @@ func (s *Service) DriveWorkspaceRecovery(parent context.Context, id string, run 
 		defer tick.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-life.Done():
 				return
 			case <-tick.C:
-				if _, err := s.l.RenewAny(ctx, lease, s.TTL); err != nil {
-					cancel(err)
+				if _, err := s.l.RenewAny(life, lease, s.TTL); err != nil {
+					endLife(err)
 					return
 				}
 			}
 		}
 	}()
-	defer func() { cancel(context.Canceled); <-done; s.release(context.WithoutCancel(parent), lease) }()
+	defer func() {
+		endLife(context.Canceled)
+		<-done
+		stopWork()
+		cancel(context.Canceled)
+		s.release(context.WithoutCancel(parent), lease)
+	}()
 	return run(ctx, lease)
+}
+
+func RecoveryDriverLifetime(ctx context.Context) context.Context {
+	if lifetime, ok := ctx.Value(recoveryDriverLifetimeKey{}).(recoveryDriverLifetime); ok {
+		return lifetime.Context
+	}
+	return ctx
 }
 
 func originalRecoveryStoppedTx(tx *ledger.Tx, r WorkspaceRecovery) error {

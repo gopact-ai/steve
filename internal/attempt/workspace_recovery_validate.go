@@ -51,7 +51,7 @@ func validateWorkspaceRecovery(r WorkspaceRecovery) error {
 		}
 		seen[s.Attempt] = true
 	}
-	if r.Phase != "recorded" && !((r.Phase == "draining" || r.Phase == "capture" || r.Phase == "landing") && r.Workspace.ID == "") && (r.Workspace.ID == "" || r.Workspace.RecoveryID != r.ID || r.Workspace.Project != r.Project || r.Workspace.Kind != project.KindWorktree || !path.IsAbs(r.Workspace.Path) || path.Base(r.Workspace.Path) != "work" || r.Workspace.Base != r.Baseline.Artifact) {
+	if r.Phase != "recorded" && !((r.Phase == "draining" || r.Phase == "capture" || r.Phase == "landing" || r.Phase == "released") && r.Workspace.ID == "") && (r.Workspace.ID == "" || r.Workspace.RecoveryID != r.ID || r.Workspace.Project != r.Project || r.Workspace.Kind != project.KindWorktree || !path.IsAbs(r.Workspace.Path) || path.Base(r.Workspace.Path) != "work" || r.Workspace.Base != r.Baseline.Artifact) {
 		return errors.New("workspace recovery has no exact prepared location")
 	}
 	if (r.Phase == "recorded" || r.Phase == "materializing") && r.Head.Version != 1 {
@@ -102,11 +102,14 @@ func validateWorkspaceRecovery(r WorkspaceRecovery) error {
 }
 
 func validateRecoveryCapture(r WorkspaceRecovery) error {
-	frozen := r.Phase == "capture" || r.Phase == "landing"
+	if (r.Phase == "released") != (r.Result != nil && !r.ReleasedAt.IsZero()) {
+		return errors.New("recovery release lacks its exact result")
+	}
+	frozen := r.Phase == "capture" || r.Phase == "landing" || r.Phase == "released"
 	if frozen && (r.FrozenHeadVersion != r.Head.Version || r.Producer != nil) || !frozen && r.FrozenHeadVersion != 0 {
 		return errors.New("recovery frozen head differs from phase")
 	}
-	if (r.Phase == "landing") != (r.Residual != nil) {
+	if (r.Phase == "landing" || r.Phase == "released") != (r.Residual != nil) {
 		return errors.New("recovery residual differs from capture phase")
 	}
 	if r.Residual != nil {

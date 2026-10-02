@@ -120,7 +120,7 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 		}}
 	}
 	return lifecycle.Options{
-		Attempts: attempts, Roster: fleet, Sessions: c.runtime, Actor: "turn",
+		Attempts: recoveryAdmissionAttempts{waitingAttempts: attempts, turn: t}, Roster: fleet, Sessions: c.runtime, Actor: "turn",
 		Spec: spec,
 		// A lost lease cancels the turn, because nothing done after it
 		// could be recorded.

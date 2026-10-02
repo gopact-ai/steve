@@ -437,7 +437,7 @@ func TestRecoveryUnchangedNativeContextRetainsTaskAndRequiresExactMachineExit(t 
 	if err := ledgerOf(t, c).Read(t.Context(), func(tx *ledger.ReadTx) error { return attempt.CheckTaskDeletionTx(tx, []string{writer.TaskID}) }); !errors.Is(err, task.ErrRetirementPending) {
 		t.Fatalf("unchanged task authority was deletable before native retirement: %v", err)
 	}
-	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+	if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		native := episode.NativeRetirements[0]
 		proof := attempt.RetainedEvidence{ObservedAt: time.Now().UTC(), Session: nodewire.SessionState{ID: native.Session, ContextID: native.Context, Harness: native.Harness, Binding: native.Binding, State: nodewire.SessionClosed}}
 		if err := c.attempts.AcceptRecoveryNativeStop(ctx, episode, native, driver, proof); !errors.Is(err, attempt.ErrStopConfirmationRequired) {
@@ -483,7 +483,7 @@ func TestRecoveryDrainWaitsForEveryOriginalAndEveryPhysicalWriter(t *testing.T) 
 				t.Fatal(err)
 			}
 			first = retireOriginalRecoverySource(t, c, first)
-			if err := c.attempts.DriveWorkspaceRecovery(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+			if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 				current, err := c.attempts.EnrollRecoveryNatives(ctx, episode.ID, false, driver)
 				if err != nil {
 					return err
@@ -545,7 +545,7 @@ func TestRecoveryDrainSerializesBothOrdersWithProducerReservation(t *testing.T) 
 			c, p, source, ws := sharedCopy(t)
 			source = retireOriginalRecoverySource(t, c, source)
 			spec := recoveryCopySpec(t, c, p, ws, "reserved-at-boundary")
-			if err := c.attempts.DriveWorkspaceRecovery(t.Context(), source.Abandoned.WorkspaceRecoveryID, func(ctx context.Context, driver ledger.Lease) error {
+			if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), source.Abandoned.WorkspaceRecoveryID, func(ctx context.Context, driver ledger.Lease) error {
 				episode := enrollStoppedOriginals(t, ctx, c, source.Abandoned.WorkspaceRecoveryID, driver)
 				var writer attempt.Record
 				var err error
