@@ -58,6 +58,12 @@ func writerRefusal(r Record) error { return StopUnconfirmed{Holder: r.ID} }
 // transaction that arms a new prompt or command. Healthy parallel attempts
 // can share a task and use spare endpoint slots; a physical writer cannot.
 func checkAdmissionTx(tx *ledger.Tx, spec Spec) error {
+	if err := RecoveryHoldTx(tx, spec.Workspace.Node, spec.Workspace.Path); err != nil {
+		return err
+	}
+	if err := checkRecoveryWriterTx(tx, spec); err != nil {
+		return err
+	}
 	ops, err := tx.Operations(kind, "")
 	if err != nil {
 		return err
@@ -126,6 +132,9 @@ func (s *Service) checkUnsettled(ctx context.Context, spec Spec) error {
 // lease the caller explicitly borrows and validates in the same transition.
 // Source metadata is not authority to supply an authorizedAttemptID.
 func CheckWriterTx(tx *ledger.Tx, node, path string, authorizedAttemptID ...string) error {
+	if err := RecoveryHoldTx(tx, node, path); err != nil {
+		return err
+	}
 	allowed := ""
 	if len(authorizedAttemptID) > 0 {
 		allowed = authorizedAttemptID[0]

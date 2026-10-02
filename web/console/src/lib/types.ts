@@ -96,7 +96,9 @@ export interface Replica { artifact: string; node: string; generation: number; s
 export interface Disclosure { id: string; project: string; task_id?: string; requester: string; bytes: number; at: string }
 export interface Effect { id: string; tool: string; task_id: string; attempt: string; error?: string; at: string }
 export interface Grant { project: string; principal: string; role: string; by: string }
+export interface RecoveryWorkspace { id: string; project: string; phase: string; node: string; path: string; base: string; head: string; version: number }
 export interface Facts {
+    recovery_workspaces?: RecoveryWorkspace[];
     reservations: Reservation[]; attestations: Attestation[]; replicas: Replica[]; disclosures: Disclosure[]; effects: Effect[]; grants: Grant[];
 }
 export interface HumanRequestChoice { label: string; command: string; danger?: boolean }

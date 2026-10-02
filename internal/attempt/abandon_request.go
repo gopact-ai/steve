@@ -70,7 +70,11 @@ func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, ro
 	if err != nil {
 		return task.RecoveryUsage{}, err
 	}
-	r.Abandoned = &Abandoned{SlotState: source.State, SlotFingerprint: source.Fingerprint, ImportFingerprint: source.ImportFingerprint, At: at, By: owner, ForceStopRevision: revision, Reason: r.ForceStop.Reason, Conversation: tracked.Channel, MessageID: input, Session: r.Session}
+	recoveryID, err := s.startWorkspaceRecoveryTx(tx, r, source.RecoveryBaseline, at, owner)
+	if err != nil {
+		return task.RecoveryUsage{}, err
+	}
+	r.Abandoned = &Abandoned{WorkspaceRecoveryID: recoveryID, SlotState: source.State, SlotFingerprint: source.Fingerprint, ImportFingerprint: source.ImportFingerprint, At: at, By: owner, ForceStopRevision: revision, Reason: r.ForceStop.Reason, Conversation: tracked.Channel, MessageID: input, Session: r.Session}
 	if r.EndedAt.IsZero() {
 		r.EndedAt = at
 	}
@@ -81,6 +85,13 @@ func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, ro
 	}
 	if err := tx.RecordTransition(op, string(r.State), owner); err != nil {
 		return task.RecoveryUsage{}, err
+	}
+	// The episode is written before this AB record in the same task Tx.
+	// Validate only after both owner facts are complete; refusal rolls back all.
+	if recoveryID != "" {
+		if _, err := recoveryByIDTx(tx, recoveryID); err != nil {
+			return task.RecoveryUsage{}, err
+		}
 	}
 	return usage, nil
 }

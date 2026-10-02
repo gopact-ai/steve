@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 
 	"github.com/gopact-ai/steve/internal/contentreplica"
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 func init() {
 	contentreplica.MustRegisterRetentionOwner(materialKind, materialRetentionRoots)
 }
 
-func materialRetentionRoots(key string, raw json.RawMessage, lookup contentreplica.RetentionLookup) ([]string, error) {
+func materialRetentionRoots(key string, raw json.RawMessage, lookup contentreplica.RetentionLookup, _ ledger.Reader) ([]string, error) {
 	var m *Material
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil, err

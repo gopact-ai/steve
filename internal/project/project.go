@@ -211,11 +211,12 @@ const (
 // resolved place, as an attempt records it. What a copy is and how it
 // came to be lives on the project (Copy); a worktree's base is here.
 type Workspace struct {
-	ID      string `json:"id"`
-	Project string `json:"project"`
-	Node    string `json:"node"`
-	Path    string `json:"path"`
-	Kind    Kind   `json:"kind"`
+	RecoveryID string `json:"recovery_id,omitempty"`
+	ID         string `json:"id"`
+	Project    string `json:"project"`
+	Node       string `json:"node"`
+	Path       string `json:"path"`
+	Kind       Kind   `json:"kind"`
 	// Base is the artifact an isolated workspace was materialised from.
 	Base string `json:"base,omitempty"`
 }

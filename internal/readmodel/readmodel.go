@@ -75,12 +75,13 @@ type Snapshot struct {
 
 // Facts is the ledger seen from the outside.
 type Facts struct {
-	Reservations []Reservation `json:"reservations"`
-	Attestations []Attestation `json:"attestations"`
-	Replicas     []Replica     `json:"replicas"`
-	Disclosures  []Disclosure  `json:"disclosures"`
-	Effects      []Effect      `json:"effects"`
-	Grants       []Grant       `json:"grants"`
+	RecoveryWorkspaces []RecoveryWorkspace `json:"recovery_workspaces"`
+	Reservations       []Reservation       `json:"reservations"`
+	Attestations       []Attestation       `json:"attestations"`
+	Replicas           []Replica           `json:"replicas"`
+	Disclosures        []Disclosure        `json:"disclosures"`
+	Effects            []Effect            `json:"effects"`
+	Grants             []Grant             `json:"grants"`
 	// attentionKnown preserves the completeness of the two inbox queries
 	// independently of failures in unrelated fact groups.
 	attentionKnown bool

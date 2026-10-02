@@ -1,6 +1,9 @@
 package i18n
 
 var zh = map[Key]string{
+	RecoveryCopyNode:          "项目 %s 的共享恢复副本位于 %s，请选择该节点上的 Agent；原目录仍隔离，尚未自动合回。",
+	RecoveryCopyPending:       "项目恢复副本尚未就绪，或仍有未确认的写入和产物：%s。原目录保持隔离，请处理后重试。",
+	RecoveryCopyPreparing:     "项目 %s 已固定恢复基线；新工作将使用共享隔离副本，不会写原目录。",
 	NativeHistoryImported:     "已导入历史会话\n工具：%s\n机器：%s\n原会话：%s\n目录：%s\n\n发送下一条消息后将恢复此上下文。",
 	HubMaintenance:            "Hub 正在维护，暂不接受新请求。",
 	TurnCanceled:              "任务已取消",
@@ -1434,6 +1437,9 @@ var zh = map[Key]string{
 }
 
 var en = map[Key]string{
+	RecoveryCopyNode:          "Project %s has its shared recovery copy on %s. Select an agent there; the original directory remains isolated and has not been merged back automatically.",
+	RecoveryCopyPending:       "The recovery copy is not ready, or a writer or output remains unconfirmed: %s. The original directory stays isolated; resolve this before retrying.",
+	RecoveryCopyPreparing:     "Project %s has a pinned recovery base. New work uses a shared isolated copy without writing the original directory.",
 	NativeHistoryImported:     "History imported\nTool: %s\nMachine: %s\nOriginal session: %s\nWorkspace: %s\n\nSend your next message to continue this context.",
 	HubMaintenance:            "The Hub is under maintenance; new requests are temporarily unavailable.",
 	TurnCanceled:              "Task canceled",

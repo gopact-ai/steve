@@ -64,3 +64,27 @@ func TestReadTransactionCannotExecuteMutationsThroughQueryMethods(t *testing.T) 
 		t.Fatal(err)
 	}
 }
+
+func TestReadOnlyReaderCannotMutateAnOwningWriteTransaction(t *testing.T) {
+	book, err := Open(t.TempDir(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	if err := book.Update(t.Context(), func(tx *Tx) error {
+		reader := ReadOnlyReader(tx)
+		var count int
+		if err := reader.QueryRow(`SELECT count(*) FROM bindings`).Scan(&count); err != nil {
+			return err
+		}
+		if err := reader.QueryRow(`INSERT INTO bindings(kind,id,data) VALUES('bad','bad','null') RETURNING id`).Scan(new(string)); !errors.Is(err, ErrReplicaWriteBypass) {
+			t.Fatalf("read-only callback mutated writer Tx: %v", err)
+		}
+		if err := reader.QueryRow(`SELECT count(*) FROM missing_owner_table`).Scan(&count); err == nil {
+			t.Fatal("owner read error was hidden")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -12,7 +12,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -406,6 +408,91 @@ func TestNativeHistoryReadAndWriteCostDoNotScaleWithTaskHistory(t *testing.T) {
 				t.Fatalf("history-dependent query/write: allocations %.0f -> %.0f, bytes %d -> %d", baseline, allocations, bytes, len(replica.payload))
 			}
 			t.Logf("history=%d query allocations=%.0f replicated mutation bytes=%d", n, allocations, len(replica.payload))
+		})
+	}
+}
+
+func TestRecoveryOperationSaveKeepsItsTypedKindRevisionAndEventBoundary(t *testing.T) {
+	for _, ordinary := range []bool{false, true} {
+		t.Run(map[bool]string{false: "recovery", true: "ordinary attempt"}[ordinary], func(t *testing.T) {
+			s, clock := newService(t)
+			base := strings.Repeat("1", 40)
+			r := WorkspaceRecovery{ID: "workspace-recovery-" + strings.Repeat("a", 32), Revision: 1, Phase: "recorded", CreatedAt: clock.t.UTC(), RequestedBy: "owner", Project: "p", Declaration: "fixed", Target: project.Home{Path: "/canonical"}, Baseline: RecoveryBaseline{Name: "project/p/canonical", Version: 1, Artifact: base, Storage: "standalone"}, Head: RecoveryHead{Artifact: base, Version: 1, Storage: "standalone"}, Sources: []RecoverySource{{Attempt: "source", Task: "1", Revision: 1, At: clock.t.UTC()}}}
+			r.ID = workspaceRecoverySourceID("source", r.Target)
+			original := Record{Spec: Spec{ID: "source", TaskID: "1", Project: r.Project, Workspace: project.Workspace{Project: r.Project, Path: r.Target.Path, Kind: project.KindCanonical}}, State: Failed, Revision: 1, Abandoned: &Abandoned{WorkspaceRecoveryID: r.ID, At: r.CreatedAt, By: r.RequestedBy, ForceStopRevision: 1}}
+			if _, err := s.l.Begin(t.Context(), original.ID, "attempt", string(original.State), "fixture", original); err != nil {
+				t.Fatal(err)
+			}
+			proof := contentreplica.GitStorageEvidence{Project: r.Project, Artifact: base, Storage: "standalone", Level: "internal"}
+			r.Baseline.Evidence, r.Head.Evidence = proof.ID(), proof.ID()
+			if err := s.l.PutBinding(t.Context(), contentreplica.GitStorageEvidenceKind, proof.ID(), proof); err != nil {
+				t.Fatal(err)
+			}
+			if ordinary {
+				historyOpen(t, s, r.ID, "ordinary-task")
+			} else if _, err := s.l.Begin(t.Context(), r.ID, workspaceRecoveryKind, r.Phase, "owner", r); err != nil {
+				t.Fatal(err)
+			}
+			before, _, err := s.l.Operation(t.Context(), r.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proposed := r
+			proposed.Phase = "materializing"
+			proposed.Workspace = project.Workspace{RecoveryID: r.ID, ID: "copy", Project: r.Project, Path: "/copy/work", Kind: project.KindWorktree, Base: base}
+			err = s.l.Update(t.Context(), func(tx *ledger.Tx) error { return saveWorkspaceRecoveryTx(tx, &proposed, "fixture") })
+			if ordinary {
+				if err == nil {
+					t.Fatal("recovery save overwrote an ordinary attempt with the same ID")
+				}
+				after, _, err := s.l.Operation(t.Context(), r.ID)
+				if err != nil || after.Kind != before.Kind || after.Revision != before.Revision || string(after.Data) != string(before.Data) {
+					t.Fatalf("wrong-kind refusal changed the original operation: %+v %v", after, err)
+				}
+				events, err := s.l.Events(t.Context(), r.ID)
+				if err != nil || len(events) != 1 {
+					t.Fatalf("wrong-kind refusal added an event: %v %v", events, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			current, err := s.WorkspaceRecovery(t.Context(), r.ID)
+			if err != nil || current.Revision != 2 || current.Phase != "materializing" {
+				t.Fatalf("typed recovery save did not commit its exact revision: %+v %v", current, err)
+			}
+			events, err := s.l.Events(t.Context(), r.ID)
+			if err != nil || len(events) != 2 || events[1].Revision != 2 || events[1].From != r.Phase || events[1].To != proposed.Phase || events[1].Actor != "fixture" {
+				t.Fatalf("recovery save omitted its exact event: %+v %v", events, err)
+			}
+			stale := r
+			if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error { return saveWorkspaceRecoveryTx(tx, &stale, "stale") }); !errors.Is(err, ledger.ErrConflict) {
+				t.Fatalf("stale recovery revision was accepted: %v", err)
+			}
+			committed, _, err := s.l.Operation(t.Context(), r.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error {
+				_, err := tx.Exec(`CREATE TRIGGER refuse_recovery_save BEFORE UPDATE ON operations WHEN NEW.kind='workspace-recovery' BEGIN SELECT RAISE(ABORT,'recovery save refused'); END`)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			refused := current
+			refused.Phase = "ready"
+			if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error { return saveWorkspaceRecoveryTx(tx, &refused, "refused") }); err == nil {
+				t.Fatal("rejected recovery write returned success")
+			}
+			after, _, err := s.l.Operation(t.Context(), r.ID)
+			if err != nil || after.Revision != committed.Revision || string(after.Data) != string(committed.Data) {
+				t.Fatalf("rejected recovery write changed its durable data: %+v %v", after, err)
+			}
+			events, err = s.l.Events(t.Context(), r.ID)
+			if err != nil || len(events) != 2 {
+				t.Fatalf("rejected recovery write appended an event: %+v %v", events, err)
+			}
 		})
 	}
 }

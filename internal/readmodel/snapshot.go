@@ -460,6 +460,9 @@ func (b *snapshotBuilder) taskAxes() {
 }
 
 func normalizeFacts(f *Facts) {
+	if f.RecoveryWorkspaces == nil {
+		f.RecoveryWorkspaces = []RecoveryWorkspace{}
+	}
 	if f.Reservations == nil {
 		f.Reservations = []Reservation{}
 	}

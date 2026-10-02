@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"slices"
 	"sort"
 
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -65,7 +66,7 @@ func Record(tx *ledger.Tx, m Manifest) (Manifest, error) {
 	return m, tx.PutBinding(ManifestKind, m.ID, m)
 }
 
-func lookupTx(tx *ledger.Tx, id string) (Manifest, bool, error) {
+func lookupTx(tx ledger.Reader, id string) (Manifest, bool, error) {
 	var raw string
 	err := tx.QueryRow(`SELECT data FROM bindings WHERE kind = ? AND id = ?`, ManifestKind, id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -92,6 +93,33 @@ func Lookup(ctx context.Context, book *ledger.Ledger, id string) (Manifest, bool
 	}
 	if m.ID != id {
 		return Manifest{}, false, ErrIntegrity
+	}
+	return m, true, nil
+}
+
+// LookupTx verifies current durable publication facts in the caller's snapshot.
+// Embedded receipts are not a substitute for their current owner records.
+func LookupTx(tx ledger.Reader, id string) (Manifest, bool, error) {
+	m, found, err := lookupTx(tx, id)
+	if err != nil || !found {
+		return m, found, err
+	}
+	for _, receipt := range m.Receipts {
+		upload, found, err := loadUpload(tx, receipt.UploadID)
+		if err != nil {
+			return Manifest{}, false, err
+		}
+		if !found || upload.State != "published" || upload.Upload.Object != m.Object || !slices.ContainsFunc(upload.Receipts, func(issued Receipt) bool { return equalReceipt(issued, receipt) }) {
+			return Manifest{}, false, ErrIntegrity
+		}
+		var raw string
+		if err := tx.QueryRow(`SELECT data FROM bindings WHERE kind=? AND id=?`, receiptKind, receipt.Key()).Scan(&raw); err != nil {
+			return Manifest{}, false, ErrIntegrity
+		}
+		var claim receiptRecord
+		if json.Unmarshal([]byte(raw), &claim) != nil || claim.Released || claim.Object != m.Object || !equalReceipt(claim.Receipt, receipt) {
+			return Manifest{}, false, ErrIntegrity
+		}
 	}
 	return m, true, nil
 }

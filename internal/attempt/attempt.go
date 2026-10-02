@@ -107,8 +107,9 @@ const (
 
 // Spec is what an attempt is fixed to when it opens.
 type Spec struct {
-	NativeImport  *nativehistory.Reference `json:"native_import,omitempty"`
-	PluginRuntime *plugins.RuntimeRef      `json:"plugin_runtime,omitempty"`
+	WorkspaceRecovery *RecoveryExecution       `json:"workspace_recovery,omitempty"`
+	NativeImport      *nativehistory.Reference `json:"native_import,omitempty"`
+	PluginRuntime     *plugins.RuntimeRef      `json:"plugin_runtime,omitempty"`
 	// WorkID is the caller-owned specification identity used by recovery.
 	WorkID    string               `json:"work_id,omitempty"`
 	Execution *task.ExecutionToken `json:"execution,omitempty"`
@@ -159,9 +160,10 @@ type SessionPreferences struct {
 
 // Result is what a finished attempt produced.
 type Result struct {
-	Summary  string   `json:"summary,omitempty"`
-	Artifact string   `json:"artifact,omitempty"`
-	Refs     []string `json:"refs,omitempty"`
+	RecoveryOutput *RecoveryOutput `json:"recovery_output,omitempty"`
+	Summary        string          `json:"summary,omitempty"`
+	Artifact       string          `json:"artifact,omitempty"`
+	Refs           []string        `json:"refs,omitempty"`
 	// Output is the caller-owned recovery document committed with this result.
 	Output json.RawMessage `json:"output,omitempty"`
 	// CaptureError keeps a successful turn's missing snapshot visible.
@@ -424,6 +426,10 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 			return Record{}, NoSlot{Endpoint: endpoint, Slots: spec.Slots}
 		}
 	}
+	if err := s.recoveryBaseAfterLease(ctx, &spec); err != nil {
+		release()
+		return Record{}, err
+	}
 	settled := true
 	record := Record{SessionSettled: &settled, Spec: spec, State: Leased, Revision: 1, Leases: held, StartedAt: s.now().UTC()}
 	if _, err := s.l.BeginGuarded(ctx, spec.ID, kind, string(Leased), spec.By, record, func(tx *ledger.Tx) error {
@@ -438,10 +444,10 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 // Advance moves an attempt. Every lease it holds is a fencing on the
 // transition; a terminal state releases them afterwards.
 func (s *Service) Advance(ctx context.Context, id string, to State, actor string, mutate func(*Record)) (Record, error) {
-	return s.advance(ctx, id, to, actor, mutate, nil)
+	return s.advance(ctx, id, to, actor, mutate, nil, nil)
 }
 
-func (s *Service) advance(ctx context.Context, id string, to State, actor string, mutate func(*Record), bind *NameBinding) (Record, error) {
+func (s *Service) advance(ctx context.Context, id string, to State, actor string, mutate func(*Record), bind *NameBinding, validate RecoveryArtifactCheck) (Record, error) {
 	current, err := s.Get(ctx, id)
 	if err != nil {
 		return Record{}, err
@@ -464,6 +470,11 @@ func (s *Service) advance(ctx context.Context, id string, to State, actor string
 					return errors.New("attempt writer has not confirmed stopping")
 				}
 			}
+			if to == Prepared || to == Running {
+				if err := markRecoveryWritingTx(tx, next); err != nil {
+					return err
+				}
+			}
 			if to == Running {
 				if err := checkAdmissionTx(tx, next.Spec); err != nil {
 					return err
@@ -478,6 +489,11 @@ func (s *Service) advance(ctx context.Context, id string, to State, actor string
 			}
 			if to.Terminal() {
 				next.EndedAt = s.now().UTC()
+			}
+			if to == Bound {
+				if err := completeWorkspaceRecoveryTx(tx, next, bind, validate); err != nil {
+					return err
+				}
 			}
 			if bind != nil {
 				if _, err := tx.CompareAndSetName(bind.Name, bind.ExpectedVersion, next.Result.Artifact); err != nil {
@@ -547,10 +563,11 @@ type NameBinding struct {
 // Completion is the result and spend to record together with a result name.
 // A nil Binding completes an attempt without publishing a name.
 type Completion struct {
-	Result      Result
-	Usage       *Usage
-	Binding     *NameBinding
-	NodeReceipt *nodewire.SessionReceipt
+	RecoveryArtifact RecoveryArtifactCheck
+	Result           Result
+	Usage            *Usage
+	Binding          *NameBinding
+	NodeReceipt      *nodewire.SessionReceipt
 }
 
 // Complete commits a prepared result from BindReady to Bound. A stale lease
@@ -565,7 +582,7 @@ func (s *Service) Complete(ctx context.Context, id, actor string, completion Com
 			r.Usage = completion.Usage
 		}
 		r.NodeReceipt = completion.NodeReceipt
-	}, completion.Binding)
+	}, completion.Binding, completion.RecoveryArtifact)
 }
 
 // RejectCompletion closes an uncommitted execution without deleting its

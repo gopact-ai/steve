@@ -8,6 +8,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -39,6 +40,17 @@ func (a *AbandonControl) AbandonAttempt(ctx context.Context, id, requester strin
 		source, err := abandonContextTx(tx, original.ID)
 		if err != nil {
 			return task.RecoveryUsage{}, err
+		}
+		if original.Workspace.Kind == project.KindCanonical && original.Abandoned == nil {
+			p, err := project.ReadTx(tx, original.Project)
+			if err != nil {
+				return task.RecoveryUsage{}, err
+			}
+			base, err := c.artifacts.RecoveryBaselineTx(tx, p)
+			if err != nil {
+				return task.RecoveryUsage{}, err
+			}
+			source.RecoveryBaseline = &base
 		}
 		return c.attempts.AbandonTx(tx, original.ID, requester, revision, row, at, source)
 	})

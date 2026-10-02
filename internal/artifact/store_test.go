@@ -2,15 +2,21 @@ package artifact
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/artifact/ops"
+	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -219,4 +225,71 @@ func canonicalOf(t *testing.T, store *Store, projectID string) string {
 		t.Fatal(err)
 	}
 	return head
+}
+
+func TestRecoveryPreparationUsesTypedNodeOperationsAndRespectsDataPlacement(t *testing.T) {
+	for _, level := range []datalevel.Level{datalevel.Internal, datalevel.Sealed} {
+		t.Run(string(level), func(t *testing.T) {
+			nodes := &localNode{root: t.TempDir(), state: t.TempDir(), level: string(level)}
+			store, p := newStore(t, nodes, project.Home{Node: "home", Path: t.TempDir()})
+			p.Level = level
+			if err := store.projects.Declare(t.Context(), []project.Project{p}); err != nil {
+				t.Fatal(err)
+			}
+			p, _, _ = store.projects.Get(t.Context(), p.ID)
+			write(t, p.Home.Path, "original", "pinned node base")
+			if _, _, err := store.SnapshotCanonical(t.Context(), p, "", "fixture", "baseline"); err != nil {
+				t.Fatal(err)
+			}
+			var baseline attempt.RecoveryBaseline
+			if err := store.ledger.Update(t.Context(), func(tx *ledger.Tx) error { var err error; baseline, err = store.RecoveryBaselineTx(tx, p); return err }); err != nil {
+				t.Fatal(err)
+			}
+			r := attempt.WorkspaceRecovery{ID: "workspace-recovery-" + strings.Repeat("b", 32), Revision: 1, Phase: "recorded", CreatedAt: time.Now().UTC(), RequestedBy: "owner", Project: p.ID, Declaration: project.RecoveryIdentity(p), Target: p.Home, Baseline: baseline, Sources: []attempt.RecoverySource{{Attempt: "source", Task: "1", Revision: 1, At: time.Now().UTC()}}, Head: attempt.RecoveryHead{Artifact: baseline.Artifact, ContentID: baseline.ContentID, Storage: baseline.Storage, Evidence: baseline.Evidence, Version: 1}}
+			r.Sources[0].At = r.CreatedAt
+			identity := sha256.Sum256([]byte(r.Sources[0].Attempt + "\x00" + r.Target.Node + "\x00" + path.Clean(r.Target.Path)))
+			r.ID = "workspace-recovery-" + hex.EncodeToString(identity[:16])
+			if level == datalevel.Sealed {
+				if _, err := store.PlanRecoveryWorkspace(t.Context(), r, "elsewhere"); err == nil {
+					t.Fatal("sealed recovery was placed away from its home")
+				}
+			} else {
+				nodes.level = "public"
+				if _, err := store.PlanRecoveryWorkspace(t.Context(), r, "elsewhere"); err == nil {
+					t.Fatal("recovery data was placed on a lower-grade node")
+				}
+				nodes.level = "restricted"
+			}
+			ws, err := store.PlanRecoveryWorkspace(t.Context(), r, "home")
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.Workspace, r.Phase = ws, "materializing"
+
+			original := attempt.Record{Spec: attempt.Spec{ID: r.Sources[0].Attempt, TaskID: r.Sources[0].Task, Project: r.Project, Workspace: project.Workspace{Project: r.Project, Node: r.Target.Node, Path: r.Target.Path, Kind: project.KindCanonical}}, State: attempt.Failed, Revision: 1, Abandoned: &attempt.Abandoned{WorkspaceRecoveryID: r.ID, At: r.CreatedAt, By: r.RequestedBy, ForceStopRevision: r.Sources[0].Revision}}
+			if _, err := store.ledger.Begin(t.Context(), original.ID, "attempt", string(original.State), "fixture", original); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.ledger.Begin(t.Context(), r.ID, "workspace-recovery", r.Phase, "owner", r); err != nil {
+				t.Fatal(err)
+			}
+			write(t, p.Home.Path, "original", "unsettled current node directory")
+			if err := store.PrepareRecoveryWorkspace(t.Context(), r); err != nil {
+				t.Fatal(err)
+			}
+			if read(t, ws.Path, "original") != "pinned node base" {
+				t.Fatal("node preparation copied unsettled disk rather than the fixed artifact")
+			}
+			if read(t, p.Home.Path, "original") != "unsettled current node directory" {
+				t.Fatal("node preparation changed the original directory")
+			}
+			write(t, ws.Path, "original", "working copy data")
+			if err := store.PrepareRecoveryWorkspace(t.Context(), r); err == nil {
+				t.Fatal("late node preparation reset a working copy")
+			}
+			if read(t, ws.Path, "original") != "working copy data" {
+				t.Fatal("rejected preparation overwrote working node data")
+			}
+		})
+	}
 }

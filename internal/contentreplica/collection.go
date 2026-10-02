@@ -10,7 +10,7 @@ func ConfirmCollection(tx *ledger.Tx, node string, keys []string) error {
 	if !validID(node) || len(keys) > 256 {
 		return ErrInvalid
 	}
-	c, err := readRetentionCatalog(func(q string, args ...any) retentionRow { return tx.QueryRow(q, args...) })
+	c, err := readRetentionCatalog(tx)
 	if err != nil {
 		return err
 	}

@@ -13,6 +13,9 @@ import (
 // CheckTaskDeletionTx retains authority needed by native stopping or its
 // projection. The owner predicate excludes completed history from this check.
 func CheckTaskDeletionTx(tx ledger.Reader, taskIDs []string) error {
+	if err := checkRecoveryTaskDeletionTx(tx, taskIDs); err != nil {
+		return err
+	}
 	if err := checkIdentityRows(tx); err != nil {
 		return err
 	}

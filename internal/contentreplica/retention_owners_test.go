@@ -23,6 +23,7 @@ import (
 type retentionOwnerFixture struct {
 	book     *ledger.Ledger
 	receiver *contentreplica.Store
+	client   *contentreplica.Client
 	key      string
 	raw      string
 	content  contentreplica.Manifest
@@ -33,7 +34,7 @@ func newRetentionOwnerFixture(t *testing.T, kind string) retentionOwnerFixture {
 	t.Helper()
 	book := openBook(t)
 	_, remote, client := newCluster(t, book, "internal", "a")
-	f := retentionOwnerFixture{book: book, receiver: remote.stores["a"]}
+	f := retentionOwnerFixture{book: book, receiver: remote.stores["a"], client: client("a")}
 	switch kind {
 	case "artifact":
 		data := []byte("durable artifact content")

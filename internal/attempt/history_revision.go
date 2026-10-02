@@ -16,6 +16,9 @@ import (
 const historyRevisionKind = "attempt-history-revision"
 
 func guardRecordOpenTx(tx *ledger.Tx, spec Spec) error {
+	if err := RecoveryHoldTx(tx, spec.Workspace.Node, spec.Workspace.Path); err != nil {
+		return err
+	}
 	if err := task.CheckExecutionTx(tx, spec.Execution); err != nil {
 		return err
 	}
@@ -23,6 +26,9 @@ func guardRecordOpenTx(tx *ledger.Tx, spec Spec) error {
 		if err := task.CheckChatAdmissionTx(tx, spec.TaskID, spec.TurnID, spec.Execution); err != nil {
 			return err
 		}
+	}
+	if err := reserveRecoveryProducerTx(tx, spec); err != nil {
+		return err
 	}
 	return touchHistoryRevisionTx(tx, spec.TaskID)
 }

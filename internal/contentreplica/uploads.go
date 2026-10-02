@@ -41,7 +41,7 @@ type receiptRecord struct {
 	Released bool    `json:"released"`
 }
 
-func loadUpload(tx *ledger.Tx, id string) (uploadRecord, bool, error) {
+func loadUpload(tx ledger.Reader, id string) (uploadRecord, bool, error) {
 	var raw string
 	err := tx.QueryRow(`SELECT data FROM bindings WHERE kind = ? AND id = ?`, uploadKind, id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {

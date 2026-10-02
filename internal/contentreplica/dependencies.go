@@ -44,3 +44,11 @@ func closure(id string, load func(string) (Manifest, bool, error)) ([]Manifest, 
 	slices.Reverse(out)
 	return out, nil
 }
+
+// ClosureTx checks every current dependency and publication without leaving Tx.
+func ClosureTx(tx ledger.Reader, id string) ([]Manifest, error) {
+	if !digest(id, 64) {
+		return nil, ErrInvalid
+	}
+	return closure(id, func(id string) (Manifest, bool, error) { return LookupTx(tx, id) })
+}

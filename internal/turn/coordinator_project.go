@@ -72,6 +72,9 @@ func (c *Coordinator) workspaceFor(ctx context.Context, req Request, selected ag
 	if err := c.require(ctx, binding.ProjectID, req.SenderOpenID, project.RoleWrite); err != nil {
 		return project.Workspace{}, err
 	}
+	if workspace, recovered, err := c.sharedRecoveryWorkspace(ctx, req, selected, binding.ProjectID); recovered || err != nil {
+		return workspace, err
+	}
 	if tracked, ok := c.tasks.RecoveryOn(req.ConversationID, selected.ID, req.Origin); ok {
 		recovered := tracked.RecoveryWorkspace
 		if recovered.ProjectID == binding.ProjectID && recovered.NodeID == selected.Node && recovered.HarnessID == selected.Harness {

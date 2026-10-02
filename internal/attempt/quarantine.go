@@ -34,6 +34,9 @@ func (s *Service) Unsettled(ctx context.Context) ([]Record, error) {
 // declaration transaction. A still-unconfirmed writer cannot lose its directory
 // assignment or have that physical path reused by another project.
 func CheckDeclarationsTx(tx *ledger.Tx, desired []project.Project) error {
+	if err := checkRecoveryDeclarationsTx(tx, desired); err != nil {
+		return err
+	}
 	ops, err := tx.Operations(kind, "")
 	if err != nil {
 		return err

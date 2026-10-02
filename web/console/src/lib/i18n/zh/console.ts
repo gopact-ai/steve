@@ -1,4 +1,11 @@
 export const consoleZh = {
+    "console.recoveryWorkspaceNode": "固定副本机器：{node}",
+    "console.recoveryWorkspaceHub": "协调节点",
+    "console.recoveryWorkspaceMaterializing": "副本正在以下已固定机器和路径准备，仅使用已固定恢复产物；原目录仍保持隔离。",
+    "console.recoveryWorkspaceTitle": "项目主目录仍处于恢复隔离",
+    "console.recoveryWorkspaceReady": "后续工作在共享隔离副本中串行继续，尚未自动合回原目录。",
+    "console.recoveryWorkspaceWorking": "副本正在执行或等待产物记录，下一位写者必须等待。",
+    "console.recoveryWorkspacePreparing": "恢复基线已固定，下一回合会在合格节点准备安全副本；原目录不会被读取或重置。",
     "console.abandon": "放弃这次执行",
     "console.abandonTitle": "确认放弃任务 #{task} 的执行？",
     "console.abandonBody": "原执行 {attempt} 可能仍在运行、占用资源或继续写原工作区。任务及其后代保持取消，原上下文不再续接；只冻结这次执行此刻已知的用量，之后不再累计。原目录保持隔离，不会立即清理或切换副本。其他未停止执行仍可能阻挡工作。此决定不能撤销。",

@@ -72,6 +72,9 @@ func (c *Coordinator) turnSpec(ctx context.Context, req Request, selected agent.
 	if workspace.Kind == project.KindWorktree {
 		spec.Scope = attempt.ScopePathSet
 		spec.Base = workspace.Base
+		if workspace.RecoveryID != "" {
+			spec.WorkspaceRecovery = &attempt.RecoveryExecution{ID: workspace.RecoveryID}
+		}
 	}
 	var cand roster.Candidate
 	if c.fleet != nil {
@@ -104,6 +107,13 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 	attempts := waitingAttempts{Attempts: c.attempts, passes: snapshotPasses, limit: snapshotWaitLimit, waiting: func() {
 		req.stage(view.StageAwaitSnapshot)
 	}}
+	if spec.WorkspaceRecovery != nil {
+		attempts.passes = func(err error) bool {
+			var busy attempt.Busy
+			return errors.As(err, &busy) && busy.Resource == "workspace:"+spec.Workspace.ID
+		}
+		attempts.limit = 0
+	}
 	if req.ExpectedTask != "" {
 		attempts = waitingAttempts{Attempts: c.attempts, passes: continuationPasses, waiting: func() {
 			slog.Info("turn: parent continuation waiting for a workspace or endpoint", "task", req.ExpectedTask, "conversation", req.ConversationID)
@@ -151,6 +161,11 @@ func (t *chatTurn) leased(ctx context.Context, e *lifecycle.Execution) (context.
 // place: what the turn changes is measured against it.
 func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*attempt.Record), error) {
 	c, req, workspace := t.c, t.req, t.workspace
+	if e.Record.WorkspaceRecovery != nil {
+		if err := c.attempts.MarkRecoveryWriting(ctx, e.Record.ID); err != nil {
+			return nil, err
+		}
+	}
 	t.clock.mark("admit")
 	if req.OnTurnReady != nil {
 		req.OnTurnReady(t.tracked, e.Record.ID)
@@ -158,6 +173,10 @@ func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*a
 	defer t.clock.mark("before")
 	if workspace.Kind == project.KindWorktree {
 		base := workspace.Base
+		if e.Record.WorkspaceRecovery != nil {
+			base = e.Record.Base
+			t.workspace = e.Record.Workspace
+		}
 		return func(r *attempt.Record) { r.Base = base }, nil
 	}
 	p, ok, perr := c.projects.Get(ctx, t.binding.ProjectID)

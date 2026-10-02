@@ -1,6 +1,13 @@
 import type { consoleZh } from "../zh/console.ts";
 
 export const consoleEn = {
+    "console.recoveryWorkspaceNode": "Fixed copy node: {node}",
+    "console.recoveryWorkspaceHub": "the coordinator",
+    "console.recoveryWorkspaceMaterializing": "The copy is being prepared at the fixed node and path below from the pinned recovery artifact. The original directory remains isolated.",
+    "console.recoveryWorkspaceTitle": "The original project directory remains isolated for recovery",
+    "console.recoveryWorkspaceReady": "New work continues serially in the shared isolated copy. It has not been merged back automatically.",
+    "console.recoveryWorkspaceWorking": "The copy has a writer or an output awaiting recording. The next writer must wait.",
+    "console.recoveryWorkspacePreparing": "The recovery base is pinned. The next turn prepares a safe copy on an eligible node, without reading or resetting the original directory.",
     "console.abandon": "Abandon this execution",
     "console.abandonTitle": "Abandon the execution of task #{task}?",
     "console.abandonBody": "Execution {attempt} may still be running, using resources or writing its original workspace. The task and descendants stay cancelled and the original context will not resume. Only this execution's currently known usage is frozen; later usage is not counted. Its directory stays quarantined, without immediate cleanup or switching to a copy. Other unresolved executions may still block work. This decision cannot be undone.",

@@ -22,20 +22,37 @@ func crashMidApply(t *testing.T, store *Store, p project.Project, canonical stri
 
 // crashMidApplyAs is crashMidApply with the landing record adjusted before
 // it is written.
-func crashMidApplyAs(t *testing.T, store *Store, p project.Project, canonical string, adjust func(*Landing)) (Landing, string) {
+func crashMidApplyAs(t *testing.T, store *Store, p project.Project, canonical string, adjust func(*Landing), snapshotLease ...ledger.Lease) (Landing, string) {
 	t.Helper()
 	ctx := context.Background()
 	write(t, canonical, "a", "a0")
 	write(t, canonical, "b", "b0")
 	write(t, canonical, "c", "c0")
-	ws, _ := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-1"})
+	ws, err := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	base := canonicalOf(t, store, "p")
 	write(t, ws.Path, "a", "a1")
 	write(t, ws.Path, "b", "b1")
 	write(t, ws.Path, "c", "c1")
-	result, _, _ := store.Publish(ctx, ws, base, "att-1", "step")
-	now, _, _ := store.SnapshotCanonical(ctx, p, base, "test", "now")
-	repo, _ := store.Repo(ctx, "p")
+	result, _, err := store.Publish(ctx, ws, base, "att-1", "step")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var now Manifest
+	if len(snapshotLease) > 0 {
+		now, _, err = store.SnapshotCanonicalUnder(ctx, p, snapshotLease[0], base, "test", "now")
+	} else {
+		now, _, err = store.SnapshotCanonical(ctx, p, base, "test", "now")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Repo(ctx, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
 	merged, conflicts, err := repo.Merge(ctx, base, now.ID, result.ID, "land")
 	if err != nil || len(conflicts) > 0 {
 		t.Fatal(err, conflicts)
