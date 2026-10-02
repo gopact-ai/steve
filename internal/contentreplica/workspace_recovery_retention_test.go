@@ -2,8 +2,11 @@ package contentreplica_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,6 +44,13 @@ func recoveryRetentionFixture(t *testing.T) (retentionOwnerFixture, attempt.Work
 		Baseline: baseline,
 		Sources:  []attempt.RecoverySource{{Attempt: "source", Task: "1", Revision: 1, At: time.Now().UTC()}},
 		Head:     attempt.RecoveryHead{Artifact: f.content.Object.Key, Version: 1, ContentID: f.content.ID, Storage: "replicated", Evidence: baseline.Evidence}}
+	r.Sources[0].At = r.CreatedAt
+	identity := sha256.Sum256([]byte(r.Sources[0].Attempt + "\x00" + r.Target.Node + "\x00" + path.Clean(r.Target.Path)))
+	r.ID = "workspace-recovery-" + hex.EncodeToString(identity[:16])
+	original := attempt.Record{Spec: attempt.Spec{ID: r.Sources[0].Attempt, TaskID: r.Sources[0].Task, Project: r.Project, Workspace: project.Workspace{Project: r.Project, Node: r.Target.Node, Path: r.Target.Path, Kind: project.KindCanonical}}, State: attempt.Failed, Revision: 1, Abandoned: &attempt.Abandoned{WorkspaceRecoveryID: r.ID, At: r.CreatedAt, By: r.RequestedBy, ForceStopRevision: r.Sources[0].Revision}}
+	if _, err := f.book.Begin(t.Context(), original.ID, "attempt", string(original.State), "fixture", original); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.book.Begin(t.Context(), r.ID, "workspace-recovery", r.Phase, "owner", r); err != nil {
 		t.Fatal(err)
 	}
@@ -402,5 +412,52 @@ func TestRecoveryBaselineRejectsARealMissingBundleDependency(t *testing.T) {
 	}
 	if err := f.book.Update(t.Context(), func(tx *ledger.Tx) error { _, err := store.RecoveryBaselineTx(tx, p); return err }); !errors.Is(err, contentreplica.ErrIncomplete) {
 		t.Fatalf("missing real prerequisite was accepted: %v", err)
+	}
+}
+
+func TestRecoveryOriginalSourceMismatchClosesRetirementAndRealGC(t *testing.T) {
+	for _, which := range []string{"task", "revision", "at", "missing record", "broken record", "wrong episode"} {
+		t.Run(which, func(t *testing.T) {
+			f, r := recoveryRetentionFixture(t)
+			if err := f.book.Update(t.Context(), func(tx *ledger.Tx) error { return contentreplica.Retire(tx, f.content.ID) }); !errors.Is(err, contentreplica.ErrReferenced) {
+				t.Fatalf("normal original owner did not retain content: %v", err)
+			}
+			if err := f.book.Update(t.Context(), func(tx *ledger.Tx) error {
+				switch which {
+				case "missing record":
+					_, err := tx.Exec(`DELETE FROM operations WHERE id=?`, r.Sources[0].Attempt)
+					return err
+				case "broken record":
+					_, err := tx.Exec(`UPDATE operations SET data='{' WHERE id=?`, r.Sources[0].Attempt)
+					return err
+				case "wrong episode":
+					_, err := tx.Exec(`UPDATE operations SET data=json_set(data,'$.abandoned.workspace_recovery_id','other') WHERE id=?`, r.Sources[0].Attempt)
+					return err
+				case "task":
+					r.Sources[0].Task = "other"
+				case "revision":
+					r.Sources[0].Revision++
+				case "at":
+					r.Sources[0].At = r.Sources[0].At.Add(time.Second)
+				}
+				raw, err := json.Marshal(r)
+				if err != nil {
+					return err
+				}
+				_, err = tx.Exec(`UPDATE operations SET data=? WHERE id=?`, string(raw), r.ID)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.book.Update(t.Context(), func(tx *ledger.Tx) error { return contentreplica.Retire(tx, f.content.ID) }); !errors.Is(err, contentreplica.ErrIntegrity) {
+				t.Fatalf("mismatched original source allowed retirement: %v", err)
+			}
+			if _, err := f.receiver.GC(t.Context(), f.book); !errors.Is(err, contentreplica.ErrIntegrity) {
+				t.Fatalf("mismatched original source allowed actual collection: %v", err)
+			}
+			if err := f.receiver.Get(t.Context(), f.content.Object, &bytes.Buffer{}); err != nil {
+				t.Fatal("broken original source removed retained bytes")
+			}
+		})
 	}
 }

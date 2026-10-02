@@ -418,6 +418,11 @@ func TestRecoveryOperationSaveKeepsItsTypedKindRevisionAndEventBoundary(t *testi
 			s, clock := newService(t)
 			base := strings.Repeat("1", 40)
 			r := WorkspaceRecovery{ID: "workspace-recovery-" + strings.Repeat("a", 32), Revision: 1, Phase: "recorded", CreatedAt: clock.t.UTC(), RequestedBy: "owner", Project: "p", Declaration: "fixed", Target: project.Home{Path: "/canonical"}, Baseline: RecoveryBaseline{Name: "project/p/canonical", Version: 1, Artifact: base, Storage: "standalone"}, Head: RecoveryHead{Artifact: base, Version: 1, Storage: "standalone"}, Sources: []RecoverySource{{Attempt: "source", Task: "1", Revision: 1, At: clock.t.UTC()}}}
+			r.ID = workspaceRecoverySourceID("source", r.Target)
+			original := Record{Spec: Spec{ID: "source", TaskID: "1", Project: r.Project, Workspace: project.Workspace{Project: r.Project, Path: r.Target.Path, Kind: project.KindCanonical}}, State: Failed, Revision: 1, Abandoned: &Abandoned{WorkspaceRecoveryID: r.ID, At: r.CreatedAt, By: r.RequestedBy, ForceStopRevision: 1}}
+			if _, err := s.l.Begin(t.Context(), original.ID, "attempt", string(original.State), "fixture", original); err != nil {
+				t.Fatal(err)
+			}
 			proof := contentreplica.GitStorageEvidence{Project: r.Project, Artifact: base, Storage: "standalone", Level: "internal"}
 			r.Baseline.Evidence, r.Head.Evidence = proof.ID(), proof.ID()
 			if err := s.l.PutBinding(t.Context(), contentreplica.GitStorageEvidenceKind, proof.ID(), proof); err != nil {
@@ -433,7 +438,8 @@ func TestRecoveryOperationSaveKeepsItsTypedKindRevisionAndEventBoundary(t *testi
 				t.Fatal(err)
 			}
 			proposed := r
-			proposed.RequestedBy = "updated"
+			proposed.Phase = "materializing"
+			proposed.Workspace = project.Workspace{RecoveryID: r.ID, ID: "copy", Project: r.Project, Path: "/copy/work", Kind: project.KindWorktree, Base: base}
 			err = s.l.Update(t.Context(), func(tx *ledger.Tx) error { return saveWorkspaceRecoveryTx(tx, &proposed, "fixture") })
 			if ordinary {
 				if err == nil {
@@ -453,11 +459,11 @@ func TestRecoveryOperationSaveKeepsItsTypedKindRevisionAndEventBoundary(t *testi
 				t.Fatal(err)
 			}
 			current, err := s.WorkspaceRecovery(t.Context(), r.ID)
-			if err != nil || current.Revision != 2 || current.RequestedBy != "updated" {
+			if err != nil || current.Revision != 2 || current.Phase != "materializing" {
 				t.Fatalf("typed recovery save did not commit its exact revision: %+v %v", current, err)
 			}
 			events, err := s.l.Events(t.Context(), r.ID)
-			if err != nil || len(events) != 2 || events[1].Revision != 2 || events[1].From != r.Phase || events[1].To != r.Phase || events[1].Actor != "fixture" {
+			if err != nil || len(events) != 2 || events[1].Revision != 2 || events[1].From != r.Phase || events[1].To != proposed.Phase || events[1].Actor != "fixture" {
 				t.Fatalf("recovery save omitted its exact event: %+v %v", events, err)
 			}
 			stale := r
@@ -475,7 +481,7 @@ func TestRecoveryOperationSaveKeepsItsTypedKindRevisionAndEventBoundary(t *testi
 				t.Fatal(err)
 			}
 			refused := current
-			refused.RequestedBy = "refused"
+			refused.Phase = "ready"
 			if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error { return saveWorkspaceRecoveryTx(tx, &refused, "refused") }); err == nil {
 				t.Fatal("rejected recovery write returned success")
 			}

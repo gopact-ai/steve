@@ -1,12 +1,9 @@
 package attempt
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -132,8 +129,7 @@ func (s *Service) startWorkspaceRecoveryTx(tx *ledger.Tx, r Record, base *Recove
 		existing.Sources = append(existing.Sources, source)
 		return existing.ID, saveWorkspaceRecoveryTx(tx, &existing, owner)
 	}
-	sum := sha256.Sum256([]byte(r.ID + "\x00" + p.Home.Node + "\x00" + path.Clean(p.Home.Path)))
-	id := "workspace-recovery-" + hex.EncodeToString(sum[:16])
+	id := workspaceRecoverySourceID(r.ID, p.Home)
 	next := WorkspaceRecovery{ID: id, Revision: 1, Phase: "recorded", CreatedAt: at, RequestedBy: owner, Project: r.Project, Declaration: declaration, Target: p.Home, Baseline: *base, Sources: []RecoverySource{source}, Head: RecoveryHead{Artifact: base.Artifact, ContentID: base.ContentID, Storage: base.Storage, Evidence: base.Evidence, Version: 1}}
 	data, err := json.Marshal(next)
 	if err != nil {

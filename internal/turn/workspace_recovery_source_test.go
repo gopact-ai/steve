@@ -71,7 +71,7 @@ func TestRecoveryOriginalSourceTaskMustMatchItsAbandonedAttempt(t *testing.T) {
 // Multiple historical unconfirmed writers can already exist before recovery.
 // The second record is installed as an old owner fact, not by bypassing a new
 // writer's admission; both AB decisions use the normal task/attempt transaction.
-func twoOriginalRecoverySources(t *testing.T) (*Coordinator, attempt.Record, attempt.Record, attempt.WorkspaceRecovery) {
+func twoOriginalRecoverySources(t *testing.T, abandonAdded ...bool) (*Coordinator, attempt.Record, attempt.Record, attempt.WorkspaceRecovery) {
 	t.Helper()
 	c, _, first, _ := recoveryCopyFixture(t, true)
 	tracked, err := c.tasks.Create(task.Task{Channel: "console:source-two", Transport: "console", Member: first.Agent, ProjectID: first.Project})
@@ -109,7 +109,11 @@ func twoOriginalRecoverySources(t *testing.T) (*Coordinator, attempt.Record, att
 	if _, err := c.attempts.RecordForceStopResult(t.Context(), second.ID, 1, true, "stop_unproven"); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{first.ID, second.ID} {
+	ids := []string{first.ID}
+	if len(abandonAdded) == 0 || abandonAdded[0] {
+		ids = append(ids, second.ID)
+	}
+	for _, id := range ids {
 		if _, err := NewAbandonControl(c).AbandonAttempt(t.Context(), id, "owner", 1); err != nil {
 			t.Fatal(err)
 		}
@@ -117,7 +121,7 @@ func twoOriginalRecoverySources(t *testing.T) (*Coordinator, attempt.Record, att
 	first, _ = c.attempts.Get(t.Context(), first.ID)
 	second, _ = c.attempts.Get(t.Context(), second.ID)
 	episode, err := c.attempts.WorkspaceRecovery(t.Context(), first.Abandoned.WorkspaceRecoveryID)
-	if err != nil || second.Abandoned.WorkspaceRecoveryID != episode.ID || len(episode.Sources) != 2 {
+	if err != nil || len(episode.Sources) != len(ids) || len(ids) == 2 && (second.Abandoned == nil || second.Abandoned.WorkspaceRecoveryID != episode.ID) {
 		t.Fatalf("two original AB decisions did not share one episode: %+v %v", episode, err)
 	}
 	return c, first, second, episode
@@ -221,5 +225,99 @@ func TestRecoveryOriginalSourceSetAllowsReorderingAndRetiredFacts(t *testing.T) 
 		return attempt.CheckTaskDeletionTx(tx, []string{first.TaskID, second.TaskID})
 	}); !errors.Is(err, task.ErrRetirementPending) {
 		t.Fatalf("retirement released the original recovery authority: %v", err)
+	}
+}
+
+func TestRecoveryOriginalSourceFinalValidationSharesTheEntireABTransaction(t *testing.T) {
+	for _, joining := range []bool{false, true} {
+		t.Run(map[bool]string{false: "new", true: "join"}[joining], func(t *testing.T) {
+			var c *Coordinator
+			var source attempt.Record
+			var previous attempt.WorkspaceRecovery
+			if joining {
+				var first attempt.Record
+				c, first, source, previous = twoOriginalRecoverySources(t, false)
+				_ = first
+			} else {
+				c, _, source, _ = recoveryCopyFixture(t, true)
+			}
+			before, _ := c.tasks.Get(source.TaskID)
+			recordBefore, err := c.attempts.Get(t.Context(), source.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			eventsBefore, err := ledgerOf(t, c).Events(t.Context(), source.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error {
+				_, err := tx.Exec(`CREATE TRIGGER corrupt_ab_decision AFTER UPDATE ON operations WHEN NEW.kind='attempt' AND NEW.id='` + source.ID + `' AND json_extract(OLD.data,'$.abandoned') IS NULL AND json_extract(NEW.data,'$.abandoned') IS NOT NULL BEGIN UPDATE operations SET data=json_set(data,'$.abandoned.force_stop_revision',99) WHERE id=NEW.id; END`)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NewAbandonControl(c).AbandonAttempt(t.Context(), source.ID, "owner", 1); err == nil {
+				t.Fatal("mismatched final AB source was committed")
+			}
+			after, _ := c.tasks.Get(source.TaskID)
+			if !sameAbandonJSON(before, after) {
+				t.Fatal("rejected final source validation installed partial task cache")
+			}
+			fresh, err := task.OpenLedger(ledgerOf(t, c))
+			if err != nil {
+				t.Fatal(err)
+			}
+			disk, _ := fresh.Get(source.TaskID)
+			if !sameAbandonJSON(before, disk) {
+				t.Fatal("rejected final source validation committed accounting")
+			}
+			recordAfter, err := c.attempts.Get(t.Context(), source.ID)
+			if err != nil || !sameAbandonJSON(recordBefore, recordAfter) {
+				t.Fatal("rejected final validation partially installed AB")
+			}
+			eventsAfter, err := ledgerOf(t, c).Events(t.Context(), source.ID)
+			if err != nil || len(eventsAfter) != len(eventsBefore) {
+				t.Fatal("rejected final validation appended an AB event")
+			}
+			recovery, found, err := c.attempts.RecoveryForProject(t.Context(), source.Project)
+			if err != nil || found != joining || joining && !sameAbandonJSON(previous, recovery) {
+				t.Fatalf("rejected final validation changed episode: %+v %v %v", recovery, found, err)
+			}
+			if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec(`DROP TRIGGER corrupt_ab_decision`); return err }); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NewAbandonControl(c).AbandonAttempt(t.Context(), source.ID, "owner", 1); err != nil {
+				t.Fatalf("exact retry did not commit after removing fixture fault: %v", err)
+			}
+		})
+	}
+}
+
+func TestRecoveryCreationSourceAnchorCannotBeReplacedByAnotherAssociatedSource(t *testing.T) {
+	c, first, second, episode := twoOriginalRecoverySources(t)
+	for _, source := range []attempt.Record{first, second} {
+		if err := NewAbandonControl(c).ProjectAbandoned(t.Context(), source.ID); err != nil {
+			t.Fatal(err)
+		}
+		retireOriginalRecoverySource(t, c, source)
+	}
+	// Removing both directions of the creation association cannot turn the
+	// remaining added writer into the source which defined the episode ID.
+	episode.Sources = episode.Sources[1:]
+	raw, err := json.Marshal(episode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error {
+		if _, err := tx.Exec(`UPDATE operations SET data=? WHERE id=?`, string(raw), episode.ID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`UPDATE operations SET data=json_remove(data,'$.abandoned.workspace_recovery_id') WHERE id=?`, first.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID); err == nil {
+		t.Fatal("remaining source replaced the missing immutable creation anchor")
 	}
 }

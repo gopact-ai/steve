@@ -1,7 +1,10 @@
 package readmodel
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +26,13 @@ func TestWorkspaceRecoveryRemainsVisibleWithoutALiveExecution(t *testing.T) {
 	proof := contentreplica.GitStorageEvidence{Project: r.Project, Artifact: base, Storage: "standalone", Level: "internal", HomeNode: r.Target.Node}
 	r.Baseline.Evidence, r.Head.Evidence = proof.ID(), proof.ID()
 	if err := book.PutBinding(t.Context(), contentreplica.GitStorageEvidenceKind, proof.ID(), proof); err != nil {
+		t.Fatal(err)
+	}
+	r.Sources[0].At = r.CreatedAt
+	identity := sha256.Sum256([]byte(r.Sources[0].Attempt + "\x00" + r.Target.Node + "\x00" + path.Clean(r.Target.Path)))
+	r.ID = "workspace-recovery-" + hex.EncodeToString(identity[:16])
+	original := attempt.Record{Spec: attempt.Spec{ID: r.Sources[0].Attempt, TaskID: r.Sources[0].Task, Project: r.Project, Workspace: project.Workspace{Project: r.Project, Node: r.Target.Node, Path: r.Target.Path, Kind: project.KindCanonical}}, State: attempt.Failed, Revision: 1, Abandoned: &attempt.Abandoned{WorkspaceRecoveryID: r.ID, At: r.CreatedAt, By: r.RequestedBy, ForceStopRevision: r.Sources[0].Revision}}
+	if _, err := book.Begin(t.Context(), original.ID, "attempt", string(original.State), "fixture", original); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := book.Begin(t.Context(), r.ID, "workspace-recovery", r.Phase, "owner", r); err != nil {

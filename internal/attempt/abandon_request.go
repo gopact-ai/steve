@@ -86,6 +86,13 @@ func (s *Service) AbandonTx(tx *ledger.Tx, id, owner string, revision uint64, ro
 	if err := tx.RecordTransition(op, string(r.State), owner); err != nil {
 		return task.RecoveryUsage{}, err
 	}
+	// The episode is written before this AB record in the same task Tx.
+	// Validate only after both owner facts are complete; refusal rolls back all.
+	if recoveryID != "" {
+		if _, err := recoveryByIDTx(tx, recoveryID); err != nil {
+			return task.RecoveryUsage{}, err
+		}
+	}
 	return usage, nil
 }
 

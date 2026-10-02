@@ -2,6 +2,7 @@ package attempt
 
 import (
 	"fmt"
+
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
@@ -9,6 +10,9 @@ import (
 // These are historical accepted producer facts, not permission to run or land.
 // Current token epochs and project authorization remain with their own owners.
 func validateWorkspaceRecoveryTx(tx ledger.Reader, r WorkspaceRecovery) error {
+	if err := validateOriginalRecoverySourcesTx(tx, r); err != nil {
+		return err
+	}
 	check := func(artifact, content, storage, evidence string) error {
 		e, err := contentreplica.LookupGitStorageEvidence(tx, evidence)
 		if err != nil {

@@ -2,9 +2,12 @@ package artifact
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -243,6 +246,9 @@ func TestRecoveryPreparationUsesTypedNodeOperationsAndRespectsDataPlacement(t *t
 				t.Fatal(err)
 			}
 			r := attempt.WorkspaceRecovery{ID: "workspace-recovery-" + strings.Repeat("b", 32), Revision: 1, Phase: "recorded", CreatedAt: time.Now().UTC(), RequestedBy: "owner", Project: p.ID, Declaration: project.RecoveryIdentity(p), Target: p.Home, Baseline: baseline, Sources: []attempt.RecoverySource{{Attempt: "source", Task: "1", Revision: 1, At: time.Now().UTC()}}, Head: attempt.RecoveryHead{Artifact: baseline.Artifact, ContentID: baseline.ContentID, Storage: baseline.Storage, Evidence: baseline.Evidence, Version: 1}}
+			r.Sources[0].At = r.CreatedAt
+			identity := sha256.Sum256([]byte(r.Sources[0].Attempt + "\x00" + r.Target.Node + "\x00" + path.Clean(r.Target.Path)))
+			r.ID = "workspace-recovery-" + hex.EncodeToString(identity[:16])
 			if level == datalevel.Sealed {
 				if _, err := store.PlanRecoveryWorkspace(t.Context(), r, "elsewhere"); err == nil {
 					t.Fatal("sealed recovery was placed away from its home")
@@ -259,6 +265,11 @@ func TestRecoveryPreparationUsesTypedNodeOperationsAndRespectsDataPlacement(t *t
 				t.Fatal(err)
 			}
 			r.Workspace, r.Phase = ws, "materializing"
+
+			original := attempt.Record{Spec: attempt.Spec{ID: r.Sources[0].Attempt, TaskID: r.Sources[0].Task, Project: r.Project, Workspace: project.Workspace{Project: r.Project, Node: r.Target.Node, Path: r.Target.Path, Kind: project.KindCanonical}}, State: attempt.Failed, Revision: 1, Abandoned: &attempt.Abandoned{WorkspaceRecoveryID: r.ID, At: r.CreatedAt, By: r.RequestedBy, ForceStopRevision: r.Sources[0].Revision}}
+			if _, err := store.ledger.Begin(t.Context(), original.ID, "attempt", string(original.State), "fixture", original); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := store.ledger.Begin(t.Context(), r.ID, "workspace-recovery", r.Phase, "owner", r); err != nil {
 				t.Fatal(err)
 			}
