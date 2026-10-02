@@ -74,13 +74,14 @@ type RecoveryOutput struct {
 }
 
 type RecoveryProducer struct {
-	Artifact    string              `json:"artifact,omitempty"`
-	ContentID   string              `json:"content_id,omitempty"`
-	Storage     string              `json:"storage,omitempty"`
-	Attempt     string              `json:"attempt"`
-	Execution   task.ExecutionToken `json:"execution"`
-	Base        string              `json:"base"`
-	HeadVersion int64               `json:"head_version"`
+	NativeMayWrite *bool               `json:"native_may_write"`
+	Artifact       string              `json:"artifact,omitempty"`
+	ContentID      string              `json:"content_id,omitempty"`
+	Storage        string              `json:"storage,omitempty"`
+	Attempt        string              `json:"attempt"`
+	Execution      task.ExecutionToken `json:"execution"`
+	Base           string              `json:"base"`
+	HeadVersion    int64               `json:"head_version"`
 }
 
 func (s *Service) WorkspaceRecovery(ctx context.Context, id string) (WorkspaceRecovery, error) {
