@@ -626,3 +626,45 @@ func TestRecoveryLateSameSHASnapshotPreservesItsEarlierAcceptedAuthority(t *test
 		t.Fatal("refusing a late candidate removed a legitimate explicit base", err)
 	}
 }
+
+func TestRecoverySameArtifactKeepsDifferentProducerAuthoritiesDistinct(t *testing.T) {
+	c, p, source, ws := sharedCopy(t)
+	var accepted string
+	for index := range 2 {
+		r := runCopyAttempt(t, c, recoveryCopySpec(t, c, p, ws, fmt.Sprintf("same-artifact-%d", index)))
+		if index == 0 {
+			if err := os.WriteFile(filepath.Join(ws.Path, "result"), []byte("shared bytes"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := c.attempts.MarkSessionSettled(t.Context(), r.ID, "fixture"); err != nil {
+			t.Fatal(err)
+		}
+		r, _ = c.attempts.Get(t.Context(), r.ID)
+		completion, _, err := c.completion(t.Context(), r, Result{Text: "done"}, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			accepted = completion.Result.Artifact
+		} else {
+			// A nonempty exact candidate may reuse an already accepted SHA.
+			// Its result-name decision still belongs to this new producer.
+			name := "steve/" + r.TaskID + "/turn/" + r.TurnID
+			completion.Result.Artifact = accepted
+			completion.Result.RecoveryOutput = &attempt.RecoveryOutput{Name: name}
+			completion.Binding = &attempt.NameBinding{Name: name}
+		}
+		if _, err := c.attempts.FinishCompletion(t.Context(), r.ID, "fixture", completion); err != nil {
+			t.Fatal(err)
+		}
+	}
+	episode, err := c.attempts.WorkspaceRecovery(t.Context(), source.Abandoned.WorkspaceRecoveryID)
+	if err != nil || len(episode.Head.Sources) != 2 || episode.Head.Version != 3 {
+		t.Fatalf("content reuse lost distinct sources: %+v %v", episode, err)
+	}
+	a, b := episode.Head.Sources[0], episode.Head.Sources[1]
+	if a.Artifact != b.Artifact || a.Evidence != b.Evidence || a.Attempt == b.Attempt || a.Execution == b.Execution || a.HeadVersion == b.HeadVersion {
+		t.Fatal("content evidence was confused with producing authority")
+	}
+}
