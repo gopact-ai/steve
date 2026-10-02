@@ -230,3 +230,33 @@ func TestAbandonmentReceiverErrorIsNotGone(t *testing.T) {
 		t.Fatalf("wrong read failure=%v", err)
 	}
 }
+
+// Terminal keyed receipts survive the bounded transcript's normal pruning.
+// Replaying only the acknowledgement must not put pruned history back.
+func TestAbandonmentAcknowledgesItsReceiptAfterTranscriptPruning(t *testing.T) {
+	s, book, d, r := durableAbandonFixture(t)
+	abandonDeliverySQL(t, book, `CREATE TRIGGER refuse_pruned_abandon_ack BEFORE UPDATE ON operations WHEN NEW.id='abandon-delivery' AND json_extract(NEW.data,'$.abandoned.delivery_done_at') IS NOT NULL BEGIN SELECT RAISE(ABORT,'ack refused'); END`)
+	out, err := s.Abandon(t.Context(), r.ID, 1)
+	if err != nil || !out.Pending || len(s.Replies("delivery")) != 1 {
+		t.Fatalf("reply was not saved before ack refusal: %+v %v", out, err)
+	}
+	s.mu.Lock()
+	s.replies["console:delivery"] = nil
+	err = s.save()
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	abandonDeliverySQL(t, book, `DROP TRIGGER refuse_pruned_abandon_ack`)
+	s, _ = reopenAbandonReceiver(t, book, d)
+	if err := s.ReconcileAbandonments(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Replies("delivery")) != 0 {
+		t.Fatal("ack retry republished pruned history")
+	}
+	current, err := d.attempts.Get(t.Context(), r.ID)
+	if err != nil || current.Abandoned.DeliveryDoneAt.IsZero() || current.Abandoned.DeliveryResult != attempt.AbandonDelivered {
+		t.Fatalf("durable terminal receipt was not acknowledged: %+v %v", current.Abandoned, err)
+	}
+}
