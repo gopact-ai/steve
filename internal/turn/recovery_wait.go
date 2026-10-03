@@ -67,7 +67,7 @@ func (a recoveryAdmissionAttempts) Open(ctx context.Context, spec attempt.Spec) 
 		if err := a.turn.prepareSession(ctx); err != nil {
 			return record, err
 		}
-		fresh, _, err := a.turn.c.turnSpec(ctx, a.turn.req, a.turn.selected, a.turn.tracked, a.turn.binding, ws)
+		fresh, candidate, err := a.turn.c.turnSpec(ctx, a.turn.req, a.turn.selected, a.turn.tracked, a.turn.binding, ws)
 		if err != nil {
 			return record, err
 		}
@@ -82,6 +82,7 @@ func (a recoveryAdmissionAttempts) Open(ctx context.Context, spec attempt.Spec) 
 			a.waitingAttempts.passes = snapshotPasses
 			a.waitingAttempts.limit = snapshotWaitLimit
 		}
+		a.turn.recoveryRefreshed, a.turn.recoveryCandidate = true, candidate
 		spec = fresh
 	}
 }
