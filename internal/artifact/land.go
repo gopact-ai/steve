@@ -166,19 +166,20 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	var finish func()
 	if recoveryPermit(ctx) != nil {
 		ctx, finish, err = s.admitRecoveryLandingSources(ctx, p, artifactID)
-		if err == nil && source != nil {
-			var sourceFinish func()
-			ctx, sourceFinish, err = s.admitLandingSource(ctx, artifactID, source)
-			prior := finish
-			finish = func() { sourceFinish(); prior() }
+		if finish != nil {
+			defer finish()
 		}
-	} else {
-		ctx, finish, err = s.admitLandingSource(ctx, artifactID, source)
+		if err != nil {
+			return Landing{}, err
+		}
+	}
+	ctx, finish, err = s.admitLandingSource(ctx, artifactID, source)
+	if finish != nil {
+		defer finish()
 	}
 	if err != nil {
 		return Landing{}, err
 	}
-	defer finish()
 	land, err = s.proposeLanding(ctx, p, artifactID, by, borrowedHolder, source, resume)
 	if err != nil {
 		return Landing{}, err

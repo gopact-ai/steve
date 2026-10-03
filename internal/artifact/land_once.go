@@ -52,8 +52,16 @@ func (s *Store) LandOnce(ctx context.Context, id string, p project.Project, arti
 		switch land.State {
 		case LandCommitted:
 			return land, s.ensureLandingReceipt(ctx, p, land)
-		case LandMergeConflicted, LandApplyConflicted:
+		case LandMergeConflicted:
 			return land, Conflict{State: land.State, Paths: land.Paths}
+		case LandApplyConflicted:
+			if !retryableRecoveryPreapply(land) {
+				return land, Conflict{State: land.State, Paths: land.Paths}
+			}
+			land, err = s.retryRecoveryPreapply(ctx, p, land)
+			if err != nil {
+				return land, err
+			}
 		case LandApplying, LandRecoveryPending:
 			cleanup, cancel := landingApplyContext(ctx)
 			defer cancel()
