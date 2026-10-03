@@ -102,8 +102,7 @@ func TestRecoveryVerificationRefusesRootMetadataAndNonDirectoryRemainders(t *tes
 }
 
 func TestRecoveryContainerInspectionStaysInsideInstallationRoot(t *testing.T) {
-	repo, root, id, base, work := recoveryIntegrityFixture(t)
-	_ = repo
+	_, root, id, base, work := recoveryIntegrityFixture(t)
 	container := filepath.Dir(work)
 	observed, err := RecoveryContainer(t.Context(), root, container, id, base, "", "", false)
 	if err != nil || !observed.Has {
