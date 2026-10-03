@@ -6,9 +6,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -1301,5 +1303,51 @@ func TestNeverMaterializedCopyCanFinishWithoutReadingANonexistentWorkspace(t *te
 	}
 	if raw, err := os.ReadFile(filepath.Join(p.Home.Path, "original")); err != nil || string(raw) != "named base\n" {
 		t.Fatalf("unmaterialized finish changed original: %q %v", raw, err)
+	}
+}
+
+func TestRecoveryDiagnosticRemainsReadableWithinUTF8ByteBudget(t *testing.T) {
+	for _, tc := range []struct{ name, input, want string }{
+		{"empty", "", ""},
+		{"ascii-exact", strings.Repeat("a", 2048), strings.Repeat("a", 2048)},
+		{"ascii-over", strings.Repeat("a", 2049), strings.Repeat("a", 2048)},
+		{"chinese-over", strings.Repeat("错", 683), strings.Repeat("错", 682)},
+		{"rune-exact", strings.Repeat("a", 2044) + "😀", strings.Repeat("a", 2044) + "😀"},
+		{"rune-split", strings.Repeat("a", 2045) + "😀", strings.Repeat("a", 2045)},
+		{"invalid", "a\xff\xfeb", "a�b"},
+		{"invalid-at-budget", strings.Repeat("a", 2047) + "\xff", strings.Repeat("a", 2047)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, p, episode := drainWithoutCopy(t)
+			if err := c.attempts.DriveWorkspaceRecovery(t.Context(), t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+				return c.attempts.RecordRecoveryWait(ctx, episode.ID, driver, errors.New(tc.input))
+			}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID)
+			if err != nil {
+				t.Fatalf("persisted diagnostic poisoned its episode: %v", err)
+			}
+			if got.Error != tc.want || !utf8.ValidString(got.Error) || len(got.Error) > 2048 {
+				t.Fatalf("diagnostic is not a valid bounded prefix: got=%q bytes=%d want=%q", got.Error, len(got.Error), tc.want)
+			}
+			raw, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var roundtrip attempt.WorkspaceRecovery
+			if err := json.Unmarshal(raw, &roundtrip); err != nil || roundtrip.Error != tc.want {
+				t.Fatalf("diagnostic roundtrip: %q %v", roundtrip.Error, err)
+			}
+			if _, err := c.attempts.WorkspaceRecoveries(t.Context()); err != nil {
+				t.Fatalf("diagnostic poisoned other episode guards: %v", err)
+			}
+			if err := ledgerOf(t, c).Read(t.Context(), func(tx *ledger.ReadTx) error { return attempt.RecoveryHoldTx(tx, p.Home.Node, p.Home.Path) }); !errors.Is(err, attempt.ErrWorkspaceRecovery) {
+				t.Fatalf("diagnostic lost the actual target hold: %v", err)
+			}
+			if got.Phase != episode.Phase || got.Head.Artifact != episode.Head.Artifact || got.Result != nil {
+				t.Fatal("diagnostic changed recovery facts")
+			}
+		})
 	}
 }
