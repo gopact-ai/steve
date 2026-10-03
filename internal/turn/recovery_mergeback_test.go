@@ -1351,3 +1351,89 @@ func TestRecoveryDiagnosticRemainsReadableWithinUTF8ByteBudget(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoveryObsoleteConflictedSinkCannotRewindItsSuccessor(t *testing.T) {
+	c, p, episode, root := recoveryConflictFixture(t)
+	firstSource, firstID := acceptedResolverFixture(t, c, p, root, "first-resolution", "first proposal\n")
+	if err := os.WriteFile(filepath.Join(p.Home.Path, "original"), []byte("first external edit\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	forceStopTrigger(t, c, `CREATE TRIGGER refuse_conflict_queue BEFORE UPDATE ON bindings WHEN NEW.kind='pending-landing' BEGIN SELECT RAISE(ABORT,'conflict queue refused'); END`)
+	first, err := c.artifacts.LandRecoveryResolutionOnce(t.Context(), *root.Resolution, firstID, firstSource)
+	if err == nil || !strings.Contains(err.Error(), "conflict queue refused") || first.State != artifact.LandMergeConflicted {
+		t.Fatalf("terminal conflict did not reach refused queue: %+v %v", first, err)
+	}
+	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec("DROP TRIGGER refuse_conflict_queue"); return err }); err != nil {
+		t.Fatal(err)
+	}
+	first, err = c.artifacts.LandRecoveryResolutionOnce(t.Context(), *root.Resolution, firstID, firstSource)
+	var conflict artifact.Conflict
+	if !errors.As(err, &conflict) || first.State != artifact.LandMergeConflicted {
+		t.Fatalf("first conflict: %+v %v", first, err)
+	}
+	stuck, err := c.artifacts.Stuck(t.Context(), p.ID)
+	if err != nil || len(stuck) != 1 || stuck[0].Landing != first.ID {
+		t.Fatalf("first pending: %+v %v", stuck, err)
+	}
+	secondRef := *stuck[0].Resolution
+	secondSource, secondID := acceptedResolverFixture(t, c, p, stuck[0], "second-resolution", "second proposal\n")
+	if err := os.WriteFile(filepath.Join(p.Home.Path, "original"), []byte("second external edit\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := c.artifacts.LandRecoveryResolutionOnce(t.Context(), secondRef, secondID, secondSource)
+	if !errors.As(err, &conflict) || second.State != artifact.LandMergeConflicted {
+		t.Fatalf("second conflict: %+v %v", second, err)
+	}
+	stuck, err = c.artifacts.Stuck(t.Context(), p.ID)
+	if err != nil || len(stuck) != 1 || stuck[0].Landing != second.ID {
+		t.Fatalf("second pending: %+v %v", stuck, err)
+	}
+	newestRef := *stuck[0].Resolution
+	thirdSource, thirdID := acceptedResolverFixture(t, c, p, stuck[0], "third-resolution", "final accepted text\n")
+	winner, err := c.artifacts.LandRecoveryResolutionOnce(t.Context(), newestRef, thirdID, thirdSource)
+	if err != nil || winner.State != artifact.LandCommitted {
+		t.Fatalf("third committed: %+v %v", winner, err)
+	}
+	currentReplay, replayErr := c.artifacts.LandRecoveryResolutionOnce(t.Context(), newestRef, thirdID, thirdSource)
+	if replayErr != nil || currentReplay.ID != winner.ID || currentReplay.State != artifact.LandCommitted {
+		t.Fatalf("exact committed winner replay: %+v %v", currentReplay, replayErr)
+	}
+	controlPending, controlErr := c.artifacts.Stuck(t.Context(), p.ID)
+	if controlErr != nil || len(controlPending) != 1 || controlPending[0].Landing != second.ID {
+		t.Fatalf("current winner disturbed exact conflict: %+v %v", controlPending, controlErr)
+	}
+	if _, err = c.artifacts.LandRecoveryResolutionOnce(t.Context(), *root.Resolution, firstID, firstSource); err == nil {
+		t.Fatal("obsolete conflicted sink unexpectedly returned success")
+	}
+	stuck, err = c.artifacts.Stuck(t.Context(), p.ID)
+	if err != nil || len(stuck) != 1 || stuck[0].Landing != second.ID || *stuck[0].Resolution != newestRef {
+		releaseErr := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+			_, err := c.artifacts.ReleaseRecovery(ctx, episode.ID, driver)
+			return err
+		})
+		replayDone, admittedReplayErr := NewWorkspaceRecoveryControl(c).Replay(t.Context(), episode.ID)
+		exactAgain, exactAgainErr := c.artifacts.LandRecoveryResolutionOnce(t.Context(), newestRef, thirdID, thirdSource)
+		releaseAgainErr := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+			_, err := c.artifacts.ReleaseRecovery(ctx, episode.ID, driver)
+			return err
+		})
+		t.Fatalf("obsolete sink rewound exact pending after a later winner: expected=%s actual=%s release=%v admittedReplay=%v/%v exactWinnerReplay=%s/%v finalRelease=%v", second.ID, func() string {
+			if len(stuck) == 0 {
+				return "missing"
+			}
+			return stuck[0].Landing
+		}(), releaseErr, replayDone, admittedReplayErr, exactAgain.State, exactAgainErr, releaseAgainErr)
+	}
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		_, err := c.artifacts.ReleaseRecovery(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatalf("committed winner cannot release: %v", err)
+	}
+	if done, err := NewWorkspaceRecoveryControl(c).Replay(t.Context(), episode.ID); err != nil || done {
+		t.Fatalf("released replay: %v %v", done, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(p.Home.Path, "original")); err != nil || string(data) != "final accepted text\n" {
+		t.Fatalf("obsolete C was applied again: %q %v", data, err)
+	}
+}
