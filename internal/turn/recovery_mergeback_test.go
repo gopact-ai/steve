@@ -1366,7 +1366,9 @@ func TestRecoveryObsoleteConflictedSinkCannotRewindItsSuccessor(t *testing.T) {
 	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec("DROP TRIGGER refuse_conflict_queue"); return err }); err != nil {
 		t.Fatal(err)
 	}
-	first, err = c.artifacts.LandRecoveryResolutionOnce(t.Context(), *root.Resolution, firstID, firstSource)
+	reopened := artifact.New(t.TempDir(), ledgerOf(t, c), c.projects, nil)
+	reopened.SetRecoveryResolutionDriver(NewWorkspaceRecoveryControl(c).Drive)
+	first, err = reopened.LandRecoveryResolutionOnce(t.Context(), *root.Resolution, firstID, firstSource)
 	var conflict artifact.Conflict
 	if !errors.As(err, &conflict) || first.State != artifact.LandMergeConflicted {
 		t.Fatalf("first conflict: %+v %v", first, err)

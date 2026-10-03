@@ -248,10 +248,55 @@ func (s *Store) queueRecoveryConflict(ctx context.Context, p project.Project, la
 		if err != nil {
 			return err
 		}
+		publish, err := recoveryConflictPublicationTx(tx, r, land)
+		if err != nil || !publish {
+			return err
+		}
 		ref := &attempt.RecoveryResolutionRef{Episode: r.ID, HeadVersion: r.FrozenHeadVersion, Root: attempt.RecoveryLandingID(r), Conflict: land.ID, Marked: land.Conflict, Canonical: land.Now}
 		item := Pending{Project: p.ID, Artifact: r.Head.Artifact, By: "workspace recovery", At: s.now().UTC(), Recovery: land.Recovery, Resolution: ref, Blocked: &Blocked{Landing: land.ID, State: land.State, Canonical: land.Now, Marked: land.Conflict, Paths: conflict.Paths, At: s.now().UTC(), Reason: conflict.Reason}}
 		return tx.PutBinding(pendingKind, p.ID+"/"+r.Head.Artifact, item)
 	})
+}
+
+// A conflict may publish only over its exact predecessor. A terminal retry
+// acknowledges the old outcome without rewinding a successor or a winner.
+func recoveryConflictPublicationTx(tx *ledger.Tx, r attempt.WorkspaceRecovery, land Landing) (bool, error) {
+	stored, err := recoveryLandingTx(tx, land.ID)
+	if err != nil {
+		return false, err
+	}
+	if stored.State != LandMergeConflicted && stored.State != LandApplyConflicted || stored.Project != r.Project || stored.Target != r.Target || stored.Now != land.Now || stored.Conflict != land.Conflict || !sameRecoveryLink(stored.Recovery, land.Recovery) {
+		return false, ErrNotBlocked
+	}
+	if _, err := recoveryWinnerTx(tx, r); err == nil {
+		return false, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	var raw []byte
+	err = tx.QueryRow(`SELECT data FROM bindings WHERE kind=? AND id=?`, pendingKind, r.Project+"/"+r.Head.Artifact).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return land.Recovery.Resolution == nil, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var item Pending
+	if json.Unmarshal(raw, &item) != nil || item.Project != r.Project || item.Artifact != r.Head.Artifact || item.Recovery == nil || item.Recovery.Episode != r.ID || item.Recovery.HeadVersion != r.FrozenHeadVersion || item.Resolution == nil || item.Blocked == nil {
+		return false, ErrNotBlocked
+	}
+	current, err := recoveryLandingTx(tx, item.Blocked.Landing)
+	if err != nil {
+		return false, err
+	}
+	expected := attempt.RecoveryResolutionRef{Episode: r.ID, HeadVersion: r.FrozenHeadVersion, Root: attempt.RecoveryLandingID(r), Conflict: current.ID, Marked: current.Conflict, Canonical: current.Now}
+	if current.State != LandMergeConflicted && current.State != LandApplyConflicted || current.Project != r.Project || current.Target != r.Target || !sameRecoveryLink(item.Recovery, current.Recovery) || *item.Resolution != expected || item.Blocked.State != current.State || item.Blocked.Marked != current.Conflict || item.Blocked.Canonical != current.Now {
+		return false, ErrNotBlocked
+	}
+	if current.ID == land.ID || land.Recovery.Resolution == nil {
+		return false, nil
+	}
+	return *land.Recovery.Resolution == *item.Resolution, nil
 }
 
 func recordRecoveryWinnerTx(tx *ledger.Tx, r attempt.WorkspaceRecovery, land Landing) error {
