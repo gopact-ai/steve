@@ -23,12 +23,14 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/state"
@@ -1604,5 +1606,108 @@ func TestRecoveryWaitingRefreshUpdatesEveryLifecycleSessionInput(t *testing.T) {
 	}
 	if taskTurn.saved.UpstreamID != "" || got != "" || !strings.Contains(servers, taskTurn.saved.AgentToken) {
 		t.Fatalf("new canonical native received stale captured inputs: cachedUpstream=%q lifecycleUpstream=%q newBoundToken=%q actualServers=%s", taskTurn.saved.UpstreamID, got, taskTurn.saved.AgentToken, servers)
+	}
+}
+
+func TestRecoveryCommittedSinkAcknowledgementDoesNotRequireFreshOwner(t *testing.T) {
+	for _, mode := range []string{"owner", "maintenance"} {
+		t.Run(mode, func(t *testing.T) {
+			c, p, episode, stuck := recoveryConflictFixture(t)
+			nodes := &recoveryApplyFixture{Nodes: artifact.LocalNodes{Dir: t.TempDir()}}
+			c.artifacts = artifact.New(c.artifacts.Dir, ledgerOf(t, c), c.projects, nodes)
+			c.artifacts.SetExecution(c.executions)
+			c.artifacts.SetRecoveryResolutionDriver(NewWorkspaceRecoveryControl(c).Drive)
+			source, id := acceptedResolverFixture(t, c, p, stuck, "accepted-sink", "accepted text\n")
+			original, err := c.artifacts.LandRecoveryResolutionOnce(t.Context(), *stuck.Resolution, id, source)
+			if err != nil || original.State != artifact.LandCommitted {
+				t.Fatalf("commit: %+v %v", original, err)
+			}
+			if replayed, err := NewWorkspaceRecoveryControl(c).Replay(t.Context(), episode.ID); err != nil || !replayed {
+				t.Fatalf("release: %v %v", replayed, err)
+			}
+			if nodes.applies != 1 {
+				t.Fatalf("fixture did not apply its committed result exactly once: %d", nodes.applies)
+			}
+			if err := os.WriteFile(filepath.Join(p.Home.Path, "later-canonical"), []byte("later accepted canonical edit\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			later, _, err := c.artifacts.SnapshotCanonical(t.Context(), p, "", "fixture", "later canonical")
+			if err != nil || later.ID == original.Committed.Artifact {
+				t.Fatalf("later canonical control: %+v %v", later, err)
+			}
+			stored, err := c.plans.Create(plan.Plan{TaskID: source.Execution.TaskID, Execution: source.Execution, ProjectID: p.ID, Goal: "finish resolver sink", Base: stuck.Marked, Fixed: true, RecoveryResolution: stuck.Resolution, Steps: []plan.Step{{ID: "resolve", Goal: "resolve", Agent: "worker", Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "already accepted resolver output"}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := exec.RunRecord{Target: p.Home, Base: stuck.Marked, ID: "plan-run/" + stored.ID, PlanID: stored.ID, Rev: stored.Rev, TaskID: stored.TaskID, ProjectID: p.ID, RunID: "accepted-resolver-run", Phase: exec.RunLanding, Execution: source.Execution, OpenedAt: time.Now().UTC(), Owner: "fixture", Sinks: []exec.Sink{{StepID: "resolve", Artifact: id, LandingID: "plan-sink/" + stored.ID + "/resolve/" + source.AttemptID, Source: &source, RecoveryResolution: stuck.Resolution}}}
+			if _, err := ledgerOf(t, c).Begin(t.Context(), rec.ID, "plan-run", exec.RunLanding, "fixture", rec); err != nil {
+				t.Fatal(err)
+			}
+			supervisor := exec.NewSupervisor(nil, exec.Deps{Artifacts: c.artifacts, Attempts: c.attempts, Executions: c.executions}, nil)
+			supervisor.SetLedger(ledgerOf(t, c), "fixture")
+			supervisor.SetPlans(c.plans)
+			supervisor.SetTasks(c.tasks)
+			forceStopTrigger(t, c, `CREATE TRIGGER refuse_sink_completion BEFORE UPDATE ON operations WHEN NEW.kind='plan-run' AND NEW.state='completed' BEGIN SELECT RAISE(ABORT,'sink completion refused'); END`)
+			if _, err := supervisor.Resume(t.Context(), rec); err == nil || !strings.Contains(err.Error(), "sink completion refused") {
+				t.Fatalf("exact committed sink did not reach real refused completion: %v", err)
+			}
+			switch mode {
+			case "owner":
+				c.owners, err = newChannelOwners("next-owner", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "maintenance":
+				c.maintaining = true
+			}
+			for _, change := range []string{"source", "root", "frozen", "artifact", "conflict"} {
+				ref, wrongSource, wrongArtifact := *stuck.Resolution, source, id
+				switch change {
+				case "source":
+					token := *source.Execution
+					token.Epoch++
+					wrongSource.Execution = &token
+				case "root":
+					ref.Root += "-wrong"
+				case "frozen":
+					ref.HeadVersion++
+				case "artifact":
+					wrongArtifact = stuck.Marked
+				case "conflict":
+					ref.Conflict += "-wrong"
+				}
+				if _, err := c.artifacts.LandRecoveryResolutionOnce(t.Context(), ref, wrongArtifact, wrongSource); err == nil {
+					t.Fatalf("%s mismatch used a committed acknowledgement as new authority", change)
+				}
+			}
+			if _, err := supervisor.Resume(t.Context(), rec); err == nil || !strings.Contains(err.Error(), "sink completion refused") {
+				t.Fatalf("changed-owner retry did not preserve the committed result through another ack refusal: %v", err)
+			}
+			if nodes.applies != 1 {
+				t.Fatalf("ack retry applied again: %d", nodes.applies)
+			}
+			if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec("DROP TRIGGER refuse_sink_completion"); return err }); err != nil {
+				t.Fatal(err)
+			}
+			_, err = supervisor.Resume(t.Context(), rec)
+			if err != nil {
+				t.Fatalf("real RunLanding cannot consume committed sink after %s: %v", mode, err)
+			}
+			current, found, err := ledgerOf(t, c).Operation(t.Context(), rec.ID)
+			if err != nil || !found || current.State != exec.RunCompleted {
+				t.Fatalf("real sink did not record completion: %+v %v", current, err)
+			}
+			revision := current.Revision
+			if _, err := supervisor.Resume(t.Context(), rec); err != nil {
+				t.Fatalf("completed acknowledgement replay: %v", err)
+			}
+			current, found, err = ledgerOf(t, c).Operation(t.Context(), rec.ID)
+			if err != nil || !found || current.Revision != revision || nodes.applies != 1 {
+				t.Fatalf("ack repeated completion or Apply: %+v applies=%d %v", current, nodes.applies, err)
+			}
+			if data, err := os.ReadFile(filepath.Join(p.Home.Path, "later-canonical")); err != nil || string(data) != "later accepted canonical edit\n" {
+				t.Fatalf("ack changed later canonical content: %q %v", data, err)
+			}
+		})
 	}
 }
