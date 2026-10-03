@@ -139,9 +139,8 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	} else {
 		slog.Info("steve: isolated runtimes; skills=none")
 	}
-	{
-		slog.Info(fmt.Sprintf("steve: serving at most %d conversations at once", gateway.PoolSize()))
-	}
+	slog.Info(fmt.Sprintf("steve: serving at most %d conversations at once", gateway.PoolSize()))
+	artifacts.SetRecoveryResolutionDriver(turn.NewWorkspaceRecoveryControl(coordinator).Drive)
 	gw := gateway.New(coordinator)
 	gw.SetCatalog(catalogText)
 	return &executionValues{artifacts: artifacts, catalogText: catalogText, coordinator: coordinator, executions: executions, gw: gw, intents: intents, memories: memories, plans: plans, scheduler: scheduler, schedules: schedules, tasks: tasks}, nil

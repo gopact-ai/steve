@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 
@@ -11,11 +12,12 @@ import (
 )
 
 type recordGuard struct {
-	check func(*ledger.Tx) error
-	lease *ledger.Lease
+	check    func(*ledger.Tx) error
+	accepted func(*ledger.Tx, Manifest) error
+	lease    *ledger.Lease
 }
 
-func (s *Store) canonicalAcceptance(expected project.Project, held ledger.Lease, artifact string, named bool, actor string) recordGuard {
+func (s *Store) canonicalAcceptance(ctx context.Context, expected project.Project, held ledger.Lease, artifact string, named bool, actor string) recordGuard {
 	return recordGuard{lease: &held, check: func(tx *ledger.Tx) error {
 		if held.Key != canonicalLock(expected.ID) {
 			return contentreplica.ErrIntegrity
@@ -38,7 +40,11 @@ func (s *Store) canonicalAcceptance(expected project.Project, held ledger.Lease,
 		if project.RecoveryIdentity(current) != project.RecoveryIdentity(expected) {
 			return contentreplica.ErrIntegrity
 		}
-		if err := attempt.RecoveryHoldTx(tx, expected.Home.Node, expected.Home.Path); err != nil {
+		if recoveryPermit(ctx) != nil {
+			if _, err := checkRecoveryLandingPermitTx(ctx, tx, expected, nil, &held, false); err != nil {
+				return err
+			}
+		} else if err := attempt.RecoveryHoldTx(tx, expected.Home.Node, expected.Home.Path); err != nil {
 			return err
 		}
 		if !named {

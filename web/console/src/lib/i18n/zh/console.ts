@@ -1,4 +1,10 @@
 export const consoleZh = {
+    "console.recoveryWorkspaceDraining": "正在排空共享副本：只允许已准入的旧写者收尾，新输入保留等待，所有原生上下文须有真实退出证明。",
+    "console.recoveryWorkspaceCapture": "正在保存原目录当前内容；不会重置基线、清空目录或删除忽略及嵌套内容。",
+    "console.recoveryWorkspaceLanding": "副本相对固定基线安全合回执行时的当前原目录；冲突或未完成写入仍保持隔离。",
+    "console.recoveryWorkspaceReleasedTitle": "项目恢复合回已完成",
+    "console.recoveryWorkspaceCleanup": "原目录已解封，下一回合安全切回；自有副本仍受保护，等待精确清理确认。",
+    "console.recoveryWorkspaceReleased": "已保存并合回当前原目录，自有副本清理已确认；历史内容证据继续保留。",
     "console.recoveryWorkspaceNode": "固定副本机器：{node}",
     "console.recoveryWorkspaceHub": "协调节点",
     "console.recoveryWorkspaceMaterializing": "副本正在以下已固定机器和路径准备，仅使用已固定恢复产物；原目录仍保持隔离。",

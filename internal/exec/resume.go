@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/gopact/runlog"
 	"github.com/gopact-ai/gopact/workflow"
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -27,10 +28,11 @@ const (
 )
 
 type Sink struct {
-	StepID    string           `json:"step_id"`
-	Artifact  string           `json:"artifact"`
-	LandingID string           `json:"landing_id"`
-	Source    *artifact.Source `json:"source,omitempty"`
+	RecoveryResolution *attempt.RecoveryResolutionRef `json:"recovery_resolution,omitempty"`
+	StepID             string                         `json:"step_id"`
+	Artifact           string                         `json:"artifact"`
+	LandingID          string                         `json:"landing_id"`
+	Source             *artifact.Source               `json:"source,omitempty"`
 }
 
 // RunRecord keeps execution responsibility until all promised landings and
@@ -389,7 +391,7 @@ func runSinks(p plan.Plan, out Outcome) ([]Sink, error) {
 		if r.Artifact == "" || r.Artifact == p.Base {
 			continue
 		}
-		sink := Sink{StepID: step.ID, Artifact: r.Artifact, LandingID: "plan-sink/" + p.ID + "/" + step.ID + "/" + r.AttemptID}
+		sink := Sink{StepID: step.ID, Artifact: r.Artifact, LandingID: "plan-sink/" + p.ID + "/" + step.ID + "/" + r.AttemptID, RecoveryResolution: p.RecoveryResolution}
 		if r.ExecutionToken != nil {
 			sink.Source = &artifact.Source{Execution: r.ExecutionToken, AttemptID: r.AttemptID}
 		}
@@ -426,7 +428,19 @@ func (s *Supervisor) finishRun(ctx context.Context, rec RunRecord, p plan.Plan, 
 		if sink.Source != nil {
 			sources = []artifact.Source{*sink.Source}
 		}
-		land, err := s.deps.Artifacts.LandOnce(ctx, sink.LandingID, proj, sink.Artifact, "plan "+p.ID, sources...)
+		var land artifact.Landing
+		var err error
+		if sink.RecoveryResolution != nil {
+			if p.RecoveryResolution == nil || *p.RecoveryResolution != *sink.RecoveryResolution || sink.Source == nil {
+				return out, ErrRecovery
+			}
+			land, err = s.deps.Artifacts.LandRecoveryResolutionOnce(ctx, *sink.RecoveryResolution, sink.Artifact, *sink.Source)
+		} else {
+			if p.RecoveryResolution != nil {
+				return out, ErrRecovery
+			}
+			land, err = s.deps.Artifacts.LandOnce(ctx, sink.LandingID, proj, sink.Artifact, "plan "+p.ID, sources...)
+		}
 		out.Landings = append(out.Landings, land)
 		if err != nil {
 			rec.Error = err.Error()

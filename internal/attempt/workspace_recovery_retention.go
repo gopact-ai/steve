@@ -45,6 +45,21 @@ func workspaceRecoveryContentRoots(key string, raw json.RawMessage, lookup conte
 	if err := protect(r.Head.Artifact, r.Head.ContentID, r.Head.Storage); err != nil {
 		return nil, err
 	}
+	if r.Residual != nil {
+		if err := protect(r.Residual.Artifact, r.Residual.ID, r.Residual.Storage); err != nil {
+			return nil, err
+		}
+	}
+	if r.Result != nil {
+		if err := protect(r.Result.Artifact, r.Result.ID, r.Result.Storage); err != nil {
+			return nil, err
+		}
+	}
+	for _, resolver := range r.Resolvers {
+		if err := protect(resolver.Artifact, resolver.ID, resolver.Storage); err != nil {
+			return nil, err
+		}
+	}
 	for _, source := range r.Head.Sources {
 		if err := protect(source.Artifact, source.ContentID, source.Storage); err != nil {
 			return nil, err

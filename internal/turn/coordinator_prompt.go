@@ -72,7 +72,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}
 	// The directory is settled before the task opens: a turn that has
 	// nowhere to run has not started and spends nothing.
-	workspace, err := c.workspaceFor(ctx, req, selected, binding)
+	workspace, err := c.awaitRecoveryWorkspace(ctx, req, selected, binding, touch)
 	if err != nil {
 		return Result{}, err
 	}

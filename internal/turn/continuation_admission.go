@@ -46,6 +46,13 @@ func snapshotPasses(err error) bool {
 	return errors.As(err, &busy) && artifact.Snapshotting(busy.Holder)
 }
 
+func recoveryCopyPasses(workspaceID string) func(error) bool {
+	return func(err error) bool {
+		var busy attempt.Busy
+		return errors.As(err, &busy) && busy.Resource == "workspace:"+workspaceID
+	}
+}
+
 func (a waitingAttempts) Open(ctx context.Context, spec attempt.Spec) (attempt.Record, error) {
 	if spec.ID == "" {
 		spec.ID = attempt.NewID()

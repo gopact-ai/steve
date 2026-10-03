@@ -223,7 +223,7 @@ func (c *Coordinator) runResolution(ctx context.Context, p project.Project, stuc
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
 	stored, err := c.plans.Create(plan.Plan{
-		TaskID: tracked.ID, ProjectID: p.ID, Goal: goal,
+		TaskID: tracked.ID, ProjectID: p.ID, Goal: goal, RecoveryResolution: stuck.Resolution,
 		By: "resolve", Because: "merge conflict in landing " + stuck.Landing, Fixed: true,
 		Base: stuck.Marked,
 		Steps: []plan.Step{{

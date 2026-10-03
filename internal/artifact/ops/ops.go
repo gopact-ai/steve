@@ -9,22 +9,32 @@ import "time"
 type Kind string
 
 const (
-	Init            Kind = "init"
-	Snapshot        Kind = "snapshot"
-	Checkout        Kind = "checkout"
-	VerifyCheckout  Kind = "verify_checkout"
-	PrepareRecovery Kind = "prepare_recovery"
-	Has             Kind = "has"
-	Bundle          Kind = "bundle"
-	Unbundle        Kind = "unbundle"
-	Merge           Kind = "merge"
-	Apply           Kind = "apply"
-	Changed         Kind = "changed"
-	Remove          Kind = "remove"
-	ListWorktrees   Kind = "list_worktrees"
-	PathState       Kind = "path_state"
-	WritePath       Kind = "write_path"
+	Init              Kind = "init"
+	Snapshot          Kind = "snapshot"
+	Checkout          Kind = "checkout"
+	VerifyCheckout    Kind = "verify_checkout"
+	PrepareRecovery   Kind = "prepare_recovery"
+	Has               Kind = "has"
+	Bundle            Kind = "bundle"
+	Unbundle          Kind = "unbundle"
+	Merge             Kind = "merge"
+	MergeRecovery     Kind = "merge_recovery"
+	Apply             Kind = "apply"
+	Changed           Kind = "changed"
+	Remove            Kind = "remove"
+	InspectRecovery   Kind = "inspect_recovery_scoped"
+	RemoveRecovery    Kind = "remove_recovery_scoped"
+	ListWorktrees     Kind = "list_worktrees"
+	PathState         Kind = "path_state"
+	RecoveryPathState Kind = "recovery_path_state"
+	WritePath         Kind = "write_path"
 )
+
+// Scoped names require the executing node's rooted entity and generation
+// checks. A node without that contract rejects them instead of using an older
+// cleanup implementation under the same protocol version.
+const VerifyRecoveryContent Kind = "verify_recovery_content_scoped"
+const VerifyRecoveryRemainder Kind = "verify_recovery_remainder_scoped"
 
 type Limits struct {
 	MaxFiles     int64 `json:"max_files,omitempty"`
@@ -36,34 +46,41 @@ type Limits struct {
 // relative tree entry for recovery. Before is the
 // worktree sweep cutoff. LegacyMerge keeps the pre-2.38 merge fallback.
 type Request struct {
-	Recovery    string    `json:"recovery,omitempty"`
-	Op          Kind      `json:"op"`
-	Repo        string    `json:"repo,omitempty"`
-	WorkTree    string    `json:"work_tree,omitempty"`
-	Commit      string    `json:"commit,omitempty"`
-	Parent      string    `json:"parent,omitempty"`
-	From        string    `json:"from,omitempty"`
-	Base        string    `json:"base,omitempty"`
-	Ours        string    `json:"ours,omitempty"`
-	Theirs      string    `json:"theirs,omitempty"`
-	Message     string    `json:"message,omitempty"`
-	Flatten     bool      `json:"flatten,omitempty"`
-	Limits      Limits    `json:"limits,omitempty"`
-	Have        []string  `json:"have,omitempty"`
-	Path        string    `json:"path,omitempty"`
-	Before      time.Time `json:"before,omitzero"`
-	LegacyMerge bool      `json:"legacy_merge,omitempty"`
+	// Generation pins execution to the selected node connection. Removal of a
+	// recovery container always supplies it, including on the local endpoint.
+	Generation   int64     `json:"generation,omitempty"`
+	RootIdentity string    `json:"root_identity,omitempty"`
+	Recovery     string    `json:"recovery,omitempty"`
+	Identity     string    `json:"identity,omitempty"`
+	Op           Kind      `json:"op"`
+	Repo         string    `json:"repo,omitempty"`
+	WorkTree     string    `json:"work_tree,omitempty"`
+	Commit       string    `json:"commit,omitempty"`
+	Parent       string    `json:"parent,omitempty"`
+	From         string    `json:"from,omitempty"`
+	Base         string    `json:"base,omitempty"`
+	Ours         string    `json:"ours,omitempty"`
+	Theirs       string    `json:"theirs,omitempty"`
+	Message      string    `json:"message,omitempty"`
+	Flatten      bool      `json:"flatten,omitempty"`
+	Limits       Limits    `json:"limits,omitempty"`
+	Have         []string  `json:"have,omitempty"`
+	Path         string    `json:"path,omitempty"`
+	Before       time.Time `json:"before,omitzero"`
+	LegacyMerge  bool      `json:"legacy_merge,omitempty"`
 }
 
 // Result is an operation's outcome. Nested, for a snapshot of a user's
 // directory, lists the nested git repositories the snapshot left out.
 type Result struct {
-	Commit  string   `json:"commit,omitempty"`
-	Changed bool     `json:"changed,omitempty"`
-	Has     bool     `json:"has,omitempty"`
-	Paths   []string `json:"paths,omitempty"`
-	State   string   `json:"state,omitempty"`
-	Nested  []string `json:"nested,omitempty"`
+	RootIdentity string   `json:"root_identity,omitempty"`
+	Commit       string   `json:"commit,omitempty"`
+	Changed      bool     `json:"changed,omitempty"`
+	Has          bool     `json:"has,omitempty"`
+	Identity     string   `json:"identity,omitempty"`
+	Paths        []string `json:"paths,omitempty"`
+	State        string   `json:"state,omitempty"`
+	Nested       []string `json:"nested,omitempty"`
 }
 
 // Failure is the serializable form of an operation error. Callers use its

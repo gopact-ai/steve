@@ -84,6 +84,12 @@ func checkRecoveryWriterTx(tx ledger.Reader, spec Spec) error {
 		if r.Workspace.Path == "" || r.Workspace.Node != spec.Workspace.Node || !samePhysicalPath(r.Workspace.Path, spec.Workspace.Path) {
 			continue
 		}
+		if !r.CopyRemovedAt.IsZero() {
+			if spec.WorkspaceRecovery != nil && spec.WorkspaceRecovery.ID == r.ID || spec.Workspace.RecoveryID == r.ID {
+				return ErrWorkspaceRecovery
+			}
+			continue
+		}
 		if spec.WorkspaceRecovery == nil || spec.WorkspaceRecovery.ID != r.ID || !sameRecoveryWorkspace(spec.Workspace, r.Workspace) {
 			return ErrWorkspaceRecovery
 		}
@@ -103,7 +109,7 @@ func checkRecoveryWriterTx(tx ledger.Reader, spec Spec) error {
 		if err := checkRecoveryDeclarationTx(tx, r); err != nil {
 			return err
 		}
-		if r.Phase != "ready" && r.Phase != "working" {
+		if r.Phase != "ready" && r.Phase != "working" && !(r.Phase == "draining" && r.Producer != nil && r.Producer.Attempt == spec.ID) {
 			return ErrWorkspaceRecovery
 		}
 	}
@@ -118,7 +124,7 @@ func completeWorkspaceRecoveryTx(tx *ledger.Tx, record Record, binding *NameBind
 	if err != nil {
 		return err
 	}
-	if r.Phase != "working" || r.Producer == nil || r.Producer.Attempt != record.ID || record.Execution == nil || r.Producer.Execution != *record.Execution || record.Base != r.Head.Artifact || record.WorkspaceRecovery.HeadVersion != r.Head.Version {
+	if r.Phase != "working" && r.Phase != "draining" || r.Producer == nil || r.Producer.Attempt != record.ID || record.Execution == nil || r.Producer.Execution != *record.Execution || record.Base != r.Head.Artifact || record.WorkspaceRecovery.HeadVersion != r.Head.Version {
 		return ErrWorkspaceRecovery
 	}
 	if err := checkRecoveryDeclarationTx(tx, r); err != nil {
@@ -155,6 +161,8 @@ func completeWorkspaceRecoveryTx(tx *ledger.Tx, record Record, binding *NameBind
 		r.Head.Sources = append(r.Head.Sources, producer)
 	}
 	r.Producer = nil
-	r.Phase = "ready"
+	if r.Phase != "draining" {
+		r.Phase = "ready"
+	}
 	return saveWorkspaceRecoveryTx(tx, &r, "recovery-output")
 }

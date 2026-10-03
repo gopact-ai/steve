@@ -201,3 +201,44 @@ func latestSessionIdentity(tx sessionIdentityReader, key string) (string, error)
 	}
 	return latest, rows.Err()
 }
+
+// LatestForSessionTx is the exact same creation-order identity read used by
+// native retirement inside its deletion/proof transaction.
+func LatestForSessionTx(tx ledger.Reader, node, harness, session string) (Record, bool, error) {
+	if err := checkIdentityRows(tx); err != nil {
+		return Record{}, false, err
+	}
+	var raw string
+	query := `SELECT json_group_array(json_object('id',id,'seq',seq,'from',first_state)) FROM
+ (SELECT id,(SELECT seq FROM events INDEXED BY events_operation WHERE operation_id=operations.id ORDER BY seq LIMIT 1) seq,
+ (SELECT from_state FROM events INDEXED BY events_operation WHERE operation_id=operations.id ORDER BY seq LIMIT 1) first_state
+ FROM operations INDEXED BY operations_attempt_session WHERE kind='attempt' AND ` + identitySession + `=?)`
+	if err := tx.QueryRow(query, sessionIdentityKey(node, harness, session)).Scan(&raw); err != nil {
+		return Record{}, false, err
+	}
+	var identities []struct {
+		ID   string  `json:"id"`
+		Seq  int64   `json:"seq"`
+		From *string `json:"from"`
+	}
+	if err := json.Unmarshal([]byte(raw), &identities); err != nil {
+		return Record{}, false, err
+	}
+	latest := ""
+	var last int64
+	for _, one := range identities {
+		if one.Seq <= 0 || one.From == nil || *one.From != "" {
+			return Record{}, false, errors.New("native session lacks its committed creation order")
+		}
+		if latest == "" || one.Seq > last {
+			latest, last = one.ID, one.Seq
+		} else if one.Seq == last && one.ID != latest {
+			return Record{}, false, errors.New("native session has ambiguous execution history")
+		}
+	}
+	if latest == "" {
+		return Record{}, false, nil
+	}
+	record, err := GetTx(tx, latest)
+	return record, err == nil, err
+}

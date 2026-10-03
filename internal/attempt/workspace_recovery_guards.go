@@ -3,13 +3,12 @@ package attempt
 import (
 	"context"
 	"fmt"
-	"path"
 	"slices"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/workspacepath"
 )
 
 func checkRecoveryDeclarationsTx(tx ledger.Reader, desired []project.Project) error {
@@ -24,14 +23,14 @@ func checkRecoveryDeclarationsTx(tx ledger.Reader, desired []project.Project) er
 				kept = true
 			}
 			for _, w := range p.Workspaces() {
-				if r.Workspace.Path != "" && w.Node == r.Workspace.Node && recoveryPathsOverlap(w.Path, path.Dir(r.Workspace.Path)) {
+				if r.CopyRemovedAt.IsZero() && r.Workspace.Path != "" && w.Node == r.Workspace.Node && recoveryPathsOverlap(w.Path, workspacepath.Dir(r.Workspace.Path)) {
 					return ErrWorkspaceRecovery
 				}
-				if w.Node != r.Target.Node {
+				if r.Phase == "released" || w.Node != r.Target.Node {
 					continue
 				}
-				a, b := path.Clean(w.Path), path.Clean(r.Target.Path)
-				if a == b && p.ID == r.Project && w.Kind == project.KindCanonical {
+				a, b := w.Path, r.Target.Path
+				if samePhysicalPath(a, b) && p.ID == r.Project && w.Kind == project.KindCanonical {
 					continue
 				}
 				if recoveryPathsOverlap(a, b) {
@@ -39,7 +38,7 @@ func checkRecoveryDeclarationsTx(tx ledger.Reader, desired []project.Project) er
 				}
 			}
 		}
-		if !kept {
+		if !kept && r.Phase != "released" {
 			return fmt.Errorf("%w: project %s still owns its recovery target", ErrWorkspaceRecovery, r.Project)
 		}
 	}
@@ -52,6 +51,9 @@ func checkRecoveryTaskDeletionTx(tx ledger.Reader, ids []string) error {
 		return err
 	}
 	for _, r := range all {
+		if r.Phase == "released" {
+			continue
+		}
 		for _, source := range r.Sources {
 			if slices.Contains(ids, source.Task) {
 				return fmt.Errorf("%w: workspace recovery %s", task.ErrRetirementPending, r.ID)
@@ -62,8 +64,16 @@ func checkRecoveryTaskDeletionTx(tx ledger.Reader, ids []string) error {
 				return fmt.Errorf("%w: recovery output %s", task.ErrRetirementPending, r.ID)
 			}
 		}
+		for _, resolver := range r.Resolvers {
+			if slices.Contains(ids, resolver.Execution.TaskID) {
+				return fmt.Errorf("%w: recovery resolution %s", task.ErrRetirementPending, r.ID)
+			}
+		}
 		if r.Producer != nil && slices.Contains(ids, r.Producer.Execution.TaskID) {
 			return fmt.Errorf("%w: unpublished recovery output %s", task.ErrRetirementPending, r.ID)
+		}
+		if err := recoveryNativeTasksTx(tx, r, ids); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -76,10 +86,10 @@ func RecoveryCopyHoldTx(tx ledger.Reader, node, directory string) error {
 		return err
 	}
 	for _, r := range all {
-		if r.Workspace.Path == "" || r.Workspace.Node != node {
+		if !r.CopyRemovedAt.IsZero() || r.Workspace.Path == "" || r.Workspace.Node != node {
 			continue
 		}
-		container := path.Dir(r.Workspace.Path)
+		container := workspacepath.Dir(r.Workspace.Path)
 		if samePhysicalPath(container, directory) || samePhysicalPath(r.Workspace.Path, directory) {
 			return ErrWorkspaceRecovery
 		}
@@ -97,7 +107,7 @@ func (s *Service) RecoveryWorkspaces(ctx context.Context) ([]project.Workspace, 
 			return err
 		}
 		for _, r := range all {
-			if r.Workspace.Path != "" {
+			if r.Workspace.Path != "" && r.CopyRemovedAt.IsZero() {
 				out = append(out, r.Workspace)
 			}
 		}
@@ -107,6 +117,5 @@ func (s *Service) RecoveryWorkspaces(ctx context.Context) ([]project.Workspace, 
 }
 
 func recoveryPathsOverlap(a, b string) bool {
-	a, b = path.Clean(a), path.Clean(b)
-	return a == b || strings.HasPrefix(a, strings.TrimSuffix(b, "/")+"/") || strings.HasPrefix(b, strings.TrimSuffix(a, "/")+"/")
+	return workspacepath.Overlap(a, b)
 }

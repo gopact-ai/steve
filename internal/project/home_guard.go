@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
 
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/workspacepath"
 )
 
 // CheckHomeTx verifies a physical write target in the transaction that admits
@@ -24,7 +24,7 @@ func CheckHomeTx(tx *ledger.Tx, id string, expected Home) error {
 	if err := json.Unmarshal(data, &current); err != nil {
 		return err
 	}
-	if expected.Path == "" || current.Home.Node != expected.Node || path.Clean(current.Home.Path) != path.Clean(expected.Path) {
+	if expected.Path == "" || current.Home.Node != expected.Node || !workspacepath.Same(current.Home.Path, expected.Path) {
 		return fmt.Errorf("project %s canonical directory changed before write admission", id)
 	}
 	return nil

@@ -45,6 +45,8 @@ type chatTurn struct {
 	capabilities      capability.Capabilities
 	contextChanged    bool
 	credentialRefresh *nodewire.MCPAuthorizationRefresh
+	recoveryRefreshed bool
+	recoveryCandidate roster.Candidate
 
 	// session is the conversation's record of the open session; managed
 	// says a node owns it, or that its open may still be pending there.
@@ -108,10 +110,7 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 		req.stage(view.StageAwaitSnapshot)
 	}}
 	if spec.WorkspaceRecovery != nil {
-		attempts.passes = func(err error) bool {
-			var busy attempt.Busy
-			return errors.As(err, &busy) && busy.Resource == "workspace:"+spec.Workspace.ID
-		}
+		attempts.passes = recoveryCopyPasses(spec.Workspace.ID)
 		attempts.limit = 0
 	}
 	if req.ExpectedTask != "" {
@@ -120,7 +119,7 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 		}}
 	}
 	return lifecycle.Options{
-		Attempts: attempts, Roster: fleet, Sessions: c.runtime, Actor: "turn",
+		Attempts: recoveryAdmissionAttempts{waitingAttempts: attempts, turn: t}, Roster: fleet, Sessions: c.runtime, Actor: "turn",
 		Spec: spec,
 		// A lost lease cancels the turn, because nothing done after it
 		// could be recorded.
@@ -145,6 +144,12 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 // leased binds the attempt to the task's accounting.
 func (t *chatTurn) leased(ctx context.Context, e *lifecycle.Execution) (context.Context, error) {
 	c := t.c
+	if t.recoveryRefreshed {
+		if err := e.UseLeasedSessionInputs(t.recoveryCandidate, placement(t.selected), t.workspace.Path, t.saved.UpstreamID, t.capabilities.MCPServers); err != nil {
+			return ctx, err
+		}
+		t.recoveryRefreshed = false
+	}
 	t.clock.mark("lease")
 	if t.scope != nil {
 		t.scope.SetAttempt(e.Record.ID)

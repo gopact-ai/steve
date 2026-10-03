@@ -253,6 +253,7 @@ func (one *ownedSession) prompt(req nodewire.SessionRequest) (nodewire.SessionSt
 	next := one.copyLocked()
 	next.CommandHashes[req.CommandID] = hash
 	next.Commands[req.CommandID] = nodewire.SessionCommand{ID: req.CommandID, InputSequence: req.InputSequence, State: nodewire.SessionCommandAccepted, DispatchState: "not-dispatched"}
+	next.Consumed = nil
 	next.CurrentCommand = req.CommandID
 	next.State.State = nodewire.SessionRunning
 	next.State.InputAccepted = req.InputSequence
@@ -363,6 +364,12 @@ func (one *ownedSession) stop(ctx context.Context, req nodewire.SessionRequest) 
 	if err := one.admitLocked(req); err != nil {
 		one.mu.Unlock()
 		return nodewire.SessionState{}, err
+	}
+	if req.Action == nodewire.SessionActionClose {
+		if err := checkCloseIdentity(req, one.record); err != nil {
+			one.mu.Unlock()
+			return nodewire.SessionState{}, err
+		}
 	}
 	host, id, generation := one.host, one.record.UpstreamID, one.record.Generation
 	runDone := one.runDone

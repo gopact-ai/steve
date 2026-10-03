@@ -71,6 +71,7 @@ func (s *SessionService) AcknowledgeReceipt(ctx context.Context, principal strin
 		one.record.State.Progress = view.Progress{}
 		one.record.State.Questions = nil
 	}
+	one.record.Consumed = header.Consumed
 	one.record.State.Sequence = header.State.Sequence
 	close(one.changed)
 	one.changed = make(chan struct{})
@@ -162,6 +163,10 @@ func (s *sessionRecords) acknowledge(ctx context.Context, request nodewire.Sessi
 	}
 	if frozenReceipt != receipt {
 		return fail(errors.New("terminal command or question evidence changed after receipt"))
+	}
+	if receipt.Binding == header.State.Binding && receipt.ContextID == header.State.ContextID && receipt.InputSequence == header.State.InputAccepted {
+		copy := frozenReceipt
+		header.Consumed = &copy
 	}
 	if _, err := tx.Exec(`DELETE FROM session_questions WHERE session_id=? AND command_id=?`, receipt.SessionID, receipt.CommandID); err != nil {
 		return fail(err)

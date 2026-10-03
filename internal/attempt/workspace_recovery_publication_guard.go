@@ -22,7 +22,7 @@ func RecoveryPublisherTx(tx *ledger.Tx, id string, ws project.Workspace, base, r
 	if err != nil {
 		return r, err
 	}
-	if episode.Producer == nil || episode.Producer.Attempt != id || episode.Producer.Execution != *r.Execution || episode.Head.Version != r.WorkspaceRecovery.HeadVersion || episode.Head.Artifact != base {
+	if episode.Phase != "working" && episode.Phase != "draining" || episode.Producer == nil || episode.Producer.Attempt != id || episode.Producer.Execution != *r.Execution || episode.Head.Version != r.WorkspaceRecovery.HeadVersion || episode.Head.Artifact != base {
 		return Record{}, ErrWorkspaceRecovery
 	}
 	if err := task.CheckExecutionTx(tx, r.Execution); err != nil {

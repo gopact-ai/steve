@@ -63,3 +63,59 @@ func TestKillRetainedRequiresOriginalProcessReceipt(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoveryIdleCloseUsesOnlyStoppingAndRetainsTheMachineOutcome(t *testing.T) {
+	for _, outcome := range []string{"stopped", "interrupted", "nil outcome", "binding", "command", "context", "idle", "running", "unknown"} {
+		t.Run(outcome, func(t *testing.T) {
+			binding := NodeSessionContext{Binding: nodewire.SessionBinding{NodeID: "worker", AttemptID: "copy-turn"}, CommandID: "copy-command"}
+			calls := 0
+			manager, err := NewManager(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer manager.Stop()
+			manager.SetNodeSessionBinder(func(ctx context.Context, _ Placement, id, work string) (context.Context, error) {
+				if id != "ns_copy" || work != "/copy/work" {
+					t.Fatal("close lost its exact identity")
+				}
+				return WithNodeSession(ctx, binding), nil
+			})
+			manager.remote = directKillTransport{call: func(_ context.Context, node string, req nodewire.SessionRequest) (nodewire.SessionState, error) {
+				calls++
+				if req.Action != nodewire.SessionActionClose || node != "worker" || req.Binding != binding.Binding || req.CommandID != binding.CommandID {
+					t.Fatal("idle retirement used observation or another binding")
+				}
+				st := nodewire.SessionState{ID: req.ID, ContextID: "native-copy", Harness: "test", Binding: req.Binding, State: nodewire.SessionClosed, ProcessStopped: true, Command: &nodewire.SessionCommand{ID: req.CommandID}}
+				switch outcome {
+				case "interrupted":
+					st.State = nodewire.SessionInterrupted
+				case "idle":
+					st.State = nodewire.SessionIdle
+				case "running":
+					st.State = nodewire.SessionRunning
+				case "unknown":
+					st.State = "unknown"
+				case "nil outcome":
+					return nodewire.SessionState{}, nil
+				case "binding":
+					st.Binding.AttemptID = "newer"
+				case "command":
+					st.Command.ID = "later"
+				case "context":
+					st.ProcessStopped = false
+				}
+				return st, nil
+			}}
+			got, err := manager.CloseRecoverySession(t.Context(), Placement{Node: "worker", Harness: "test"}, "ns_copy", "/copy/work")
+			if (outcome == "stopped" || outcome == "interrupted") && (err != nil || !got.ProcessStopped || got.ContextID != "native-copy" || got.Command == nil) {
+				t.Fatalf("idle close discarded proof: %+v %v", got, err)
+			}
+			if outcome != "stopped" && outcome != "interrupted" && err == nil {
+				t.Fatalf("unproved close became success: %+v", got)
+			}
+			if calls != 1 {
+				t.Fatalf("close retried or observed first: %d", calls)
+			}
+		})
+	}
+}

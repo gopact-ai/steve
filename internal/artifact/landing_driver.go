@@ -145,11 +145,15 @@ func (s *Store) renewCanonical(ctx context.Context, lease ledger.Lease) func() {
 // writes before a replacement resumes the WAL under a new canonical lease.
 func landingApplyContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	apply, cancel := context.WithTimeout(context.WithoutCancel(ctx), landTTL)
+	stopEpisode := func() bool { return false }
+	if permit := recoveryPermit(ctx); permit != nil {
+		stopEpisode = context.AfterFunc(permit.lifetime, cancel)
+	}
 	if d, ok := ctx.Value(landingDriverKey{}).(*landingDriver); ok {
 		stop := context.AfterFunc(d.ctx, cancel)
-		return apply, func() { stop(); cancel() }
+		return apply, func() { stop(); stopEpisode(); cancel() }
 	}
-	return apply, cancel
+	return apply, func() { stopEpisode(); cancel() }
 }
 
 // applying marks a landing as being applied by this process until the

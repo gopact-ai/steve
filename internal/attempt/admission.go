@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/workspacepath"
 )
 
 // potentialWriter is independent of TTL: expiry is not physical exit.
@@ -22,7 +22,7 @@ func abandonProjectionPending(r Record) bool {
 }
 
 func samePhysicalPath(a, b string) bool {
-	return a != "" && b != "" && path.Clean(a) == path.Clean(b)
+	return workspacepath.Same(a, b)
 }
 
 func lostOwnLease(tx *ledger.Tx, r Record) (bool, error) {

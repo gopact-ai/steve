@@ -17,19 +17,30 @@ var ErrWorkspaceRecovery = errors.New("workspace recovery must finish before the
 // WorkspaceRecovery owns a continuation independently of its cancelled source.
 // The original directory stays held even after every native writer has exited.
 type WorkspaceRecovery struct {
-	ID          string            `json:"id"`
-	Revision    int64             `json:"revision"`
-	Phase       string            `json:"phase"`
-	CreatedAt   time.Time         `json:"created_at"`
-	RequestedBy string            `json:"requested_by"`
-	Project     string            `json:"project"`
-	Declaration string            `json:"declaration"`
-	Target      project.Home      `json:"target"`
-	Baseline    RecoveryBaseline  `json:"baseline"`
-	Sources     []RecoverySource  `json:"sources"`
-	Workspace   project.Workspace `json:"workspace"`
-	Head        RecoveryHead      `json:"head"`
-	Producer    *RecoveryProducer `json:"producer,omitempty"`
+	ID                string             `json:"id"`
+	Revision          int64              `json:"revision"`
+	Phase             string             `json:"phase"`
+	CreatedAt         time.Time          `json:"created_at"`
+	RequestedBy       string             `json:"requested_by"`
+	Project           string             `json:"project"`
+	Declaration       string             `json:"declaration"`
+	Target            project.Home       `json:"target"`
+	Baseline          RecoveryBaseline   `json:"baseline"`
+	Sources           []RecoverySource   `json:"sources"`
+	Workspace         project.Workspace  `json:"workspace"`
+	Head              RecoveryHead       `json:"head"`
+	Producer          *RecoveryProducer  `json:"producer,omitempty"`
+	NativeRetirements []RecoveryNative   `json:"native_retirements,omitempty"`
+	FrozenHeadVersion int64              `json:"frozen_head_version,omitempty"`
+	Residual          *RecoveryResidual  `json:"residual,omitempty"`
+	Result            *RecoveryResult    `json:"result,omitempty"`
+	ReleasedAt        time.Time          `json:"released_at,omitzero"`
+	Resolvers         []RecoveryResolver `json:"resolvers,omitempty"`
+	CopyIdentity      string             `json:"copy_identity,omitempty"`
+	CopyRemovedAt     time.Time          `json:"copy_removed_at,omitzero"`
+	Error             string             `json:"error,omitempty"`
+	CopyGeneration    int64              `json:"copy_generation,omitempty"`
+	CopyRootIdentity  string             `json:"copy_root_identity,omitempty"`
 }
 
 type RecoveryContent struct {
@@ -88,6 +99,12 @@ type RecoveryProducer struct {
 	HeadVersion    int64               `json:"head_version"`
 }
 
+// WorkspaceRecoveryTx reads the owner's validated historical episode within
+// a consumer's transaction. It issues no execution or recovery-driver grant.
+func WorkspaceRecoveryTx(tx ledger.Reader, id string) (WorkspaceRecovery, error) {
+	return recoveryByIDTx(tx, id)
+}
+
 func (s *Service) WorkspaceRecovery(ctx context.Context, id string) (WorkspaceRecovery, error) {
 	var r WorkspaceRecovery
 	err := s.l.Read(ctx, func(tx *ledger.ReadTx) error { var err error; r, err = recoveryByIDTx(tx, id); return err })
@@ -102,7 +119,7 @@ func (s *Service) RecoveryForProject(ctx context.Context, projectID string) (Wor
 			return err
 		}
 		for _, r := range all {
-			if r.Project == projectID {
+			if r.Project == projectID && r.Phase != "released" {
 				if result.ID != "" {
 					return errors.New("project has conflicting workspace recoveries")
 				}
@@ -122,7 +139,7 @@ func RecoveryProjectHoldTx(tx ledger.Reader, projectID string) error {
 		return err
 	}
 	for _, r := range all {
-		if r.Project == projectID {
+		if r.Project == projectID && r.Phase != "released" {
 			return ErrWorkspaceRecovery
 		}
 	}
@@ -136,7 +153,7 @@ func RecoveryHoldTx(tx ledger.Reader, node, directory string) error {
 		return err
 	}
 	for _, r := range all {
-		if r.Target.Node == node && samePhysicalPath(r.Target.Path, directory) {
+		if r.Phase != "released" && r.Target.Node == node && samePhysicalPath(r.Target.Path, directory) {
 			return ErrWorkspaceRecovery
 		}
 	}

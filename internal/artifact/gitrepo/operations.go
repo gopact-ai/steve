@@ -116,6 +116,10 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 		result.Commit, result.Changed, result.Nested, err = r.SnapshotWithNested(ctx, req.WorkTree, req.Parent, req.Message, req.Flatten)
 	case ops.Checkout:
 		err = r.Checkout(ctx, req.Commit, req.WorkTree)
+	case ops.VerifyRecoveryRemainder:
+		err = r.VerifyRecoveryRemainder(ctx, req.Commit, req.WorkTree)
+	case ops.VerifyRecoveryContent:
+		err = r.VerifyRecoveryContent(ctx, req.Commit, req.WorkTree)
 	case ops.VerifyCheckout:
 		err = r.VerifyCheckout(ctx, req.Commit, req.WorkTree)
 	case ops.PrepareRecovery:
@@ -135,6 +139,13 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 		}
 	case ops.Unbundle:
 		err = r.Unbundle(ctx, req.Path)
+	case ops.MergeRecovery:
+		var conflicts []string
+		var marked string
+		result.Commit, marked, conflicts, err = r.MergeRecovery(ctx, req.Base, req.Ours, req.Theirs, req.Message)
+		if err == nil && len(conflicts) > 0 {
+			err = MergeConflict{Paths: conflicts, Marked: marked}
+		}
 	case ops.Merge:
 		var conflicts []string
 		var marked string
@@ -150,6 +161,8 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 		result.Paths, err = r.Apply(ctx, req.From, req.Commit, req.WorkTree)
 	case ops.Changed:
 		result.Paths, err = r.Changed(ctx, req.From, req.Commit)
+	case ops.InspectRecovery, ops.RemoveRecovery:
+		result, err = RecoveryContainer(ctx, req.WorkTree, req.Path, req.Recovery, req.Commit, req.Identity, req.RootIdentity, req.Op == ops.RemoveRecovery)
 	case ops.Remove:
 		err = os.RemoveAll(req.Path)
 	case ops.ListWorktrees:
@@ -170,7 +183,7 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 				result.Paths = append(result.Paths, filepath.Join(req.WorkTree, entry.Name()))
 			}
 		}
-	case ops.PathState:
+	case ops.PathState, ops.RecoveryPathState:
 		result.State, err = r.pathState(ctx, req.WorkTree, req.From, req.Commit, req.Path)
 	case ops.WritePath:
 		err = r.writePath(ctx, req.WorkTree, req.Commit, req.Path)
@@ -179,6 +192,9 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 }
 
 func validateOperation(req ops.Request) error {
+	if req.Op == ops.RemoveRecovery && req.Generation < 1 {
+		return fmt.Errorf("recovery removal requires its node generation")
+	}
 	var paths []string
 	var commits []string
 	switch req.Op {
@@ -189,7 +205,7 @@ func validateOperation(req ops.Request) error {
 		if req.Parent != "" {
 			commits = []string{req.Parent}
 		}
-	case ops.Checkout, ops.VerifyCheckout, ops.PrepareRecovery:
+	case ops.Checkout, ops.VerifyCheckout, ops.PrepareRecovery, ops.VerifyRecoveryContent, ops.VerifyRecoveryRemainder:
 		paths, commits = []string{req.Repo, req.WorkTree}, []string{req.Commit}
 	case ops.Has:
 		paths, commits = []string{req.Repo}, []string{req.Commit}
@@ -202,9 +218,9 @@ func validateOperation(req ops.Request) error {
 		}
 	case ops.Unbundle:
 		paths = []string{req.Repo, req.Path}
-	case ops.Merge:
+	case ops.Merge, ops.MergeRecovery:
 		paths, commits = []string{req.Repo}, []string{req.Base, req.Ours, req.Theirs}
-	case ops.Apply, ops.PathState:
+	case ops.Apply, ops.PathState, ops.RecoveryPathState:
 		paths, commits = []string{req.Repo, req.WorkTree}, []string{req.From, req.Commit}
 	case ops.Changed:
 		paths, commits = []string{req.Repo}, []string{req.Commit}
@@ -213,6 +229,8 @@ func validateOperation(req ops.Request) error {
 		}
 	case ops.WritePath:
 		paths, commits = []string{req.Repo, req.WorkTree}, []string{req.Commit}
+	case ops.InspectRecovery, ops.RemoveRecovery:
+		paths, commits = []string{req.WorkTree, req.Path}, []string{req.Commit}
 	case ops.Remove:
 		paths = []string{req.Path}
 		if filepath.Clean(req.Path) == string(filepath.Separator) {
@@ -236,7 +254,7 @@ func validateOperation(req ops.Request) error {
 			return fmt.Errorf("artifact: %q is not a commit id", sha)
 		}
 	}
-	if req.Op == ops.PathState || req.Op == ops.WritePath {
+	if req.Op == ops.PathState || req.Op == ops.RecoveryPathState || req.Op == ops.WritePath {
 		if !filepath.IsLocal(req.Path) || filepath.Clean(req.Path) == "." || strings.ContainsRune(req.Path, 0) {
 			return fmt.Errorf("artifact: %q is not a tree path", req.Path)
 		}

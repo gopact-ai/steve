@@ -161,6 +161,7 @@ type sessionRecord struct {
 	CommandHashes  map[string]string                  `json:"command_hashes"`
 	Commands       map[string]nodewire.SessionCommand `json:"commands"`
 	CurrentCommand string                             `json:"current_command,omitempty"`
+	Consumed       *nodewire.SessionReceipt           `json:"consumed,omitzero"`
 	// Process is the native process group the open started, recorded once
 	// it runs, so a later node process can end it and confirm the stop.
 	Process sessionProcess `json:"process,omitzero"`
@@ -405,6 +406,8 @@ func (one *ownedSession) admitLocked(req nodewire.SessionRequest) error {
 			return sessionError("conflict", "session belongs to another execution")
 		} else {
 			next.State.Binding = req.Binding
+			next.OpenID = req.CommandID
+			next.Consumed = nil
 			next.BindingInputStart = next.State.InputAccepted
 		}
 	}

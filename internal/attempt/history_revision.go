@@ -97,6 +97,9 @@ func setRecordDataTx(tx *ledger.Tx, op *ledger.Operation, next Record) error {
 	if err != nil {
 		return err
 	}
+	if err := trackRecoveryNativeTx(tx, previous, next); err != nil {
+		return err
+	}
 	if previous.Abandoned != nil {
 		next.Usage, next.EndedAt = previous.Usage, previous.EndedAt
 	}

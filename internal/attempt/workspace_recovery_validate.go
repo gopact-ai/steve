@@ -3,10 +3,10 @@ package attempt
 import (
 	"encoding/hex"
 	"errors"
-	"path"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/workspacepath"
 )
 
 func recoveryArtifactID(id string) bool {
@@ -35,7 +35,7 @@ func validateRecoveryContent(artifact, content, storage string) error {
 
 func validateWorkspaceRecovery(r WorkspaceRecovery) error {
 	identity, err := hex.DecodeString(strings.TrimPrefix(r.ID, "workspace-recovery-"))
-	if err != nil || len(identity) != 16 || r.ID != "workspace-recovery-"+hex.EncodeToString(identity) || r.CreatedAt.IsZero() || r.RequestedBy == "" || !path.IsAbs(r.Target.Path) || r.Baseline.Name != "project/"+r.Project+"/canonical" {
+	if err != nil || len(identity) != 16 || r.ID != "workspace-recovery-"+hex.EncodeToString(identity) || r.CreatedAt.IsZero() || r.RequestedBy == "" || !workspacepath.IsAbs(r.Target.Path) || r.Baseline.Name != "project/"+r.Project+"/canonical" {
 		return errors.New("workspace recovery source identity is invalid")
 	}
 	if err := validateRecoveryContent(r.Baseline.Artifact, r.Baseline.ContentID, r.Baseline.Storage); err != nil {
@@ -51,7 +51,7 @@ func validateWorkspaceRecovery(r WorkspaceRecovery) error {
 		}
 		seen[s.Attempt] = true
 	}
-	if r.Phase != "recorded" && (r.Workspace.ID == "" || r.Workspace.RecoveryID != r.ID || r.Workspace.Project != r.Project || r.Workspace.Kind != project.KindWorktree || !path.IsAbs(r.Workspace.Path) || path.Base(r.Workspace.Path) != "work" || r.Workspace.Base != r.Baseline.Artifact) {
+	if r.Phase != "recorded" && !((r.Phase == "draining" || r.Phase == "capture" || r.Phase == "landing" || r.Phase == "released") && r.Workspace.ID == "") && (r.Workspace.ID == "" || r.Workspace.RecoveryID != r.ID || r.Workspace.Project != r.Project || r.Workspace.Kind != project.KindWorktree || !workspacepath.IsAbs(r.Workspace.Path) || workspacepath.Base(r.Workspace.Path) != "work" || r.Workspace.Base != r.Baseline.Artifact) {
 		return errors.New("workspace recovery has no exact prepared location")
 	}
 	if (r.Phase == "recorded" || r.Phase == "materializing") && r.Head.Version != 1 {
@@ -86,11 +86,50 @@ func validateWorkspaceRecovery(r WorkspaceRecovery) error {
 		}
 	}
 
-	if (r.Phase == "working") != (r.Producer != nil) {
+	if r.Phase == "working" && r.Producer == nil || r.Phase != "working" && r.Phase != "draining" && r.Producer != nil {
 		return errors.New("recovery writer obligation differs from phase")
+	}
+	if err := validateRecoveryCapture(r); err != nil {
+		return err
+	}
+	if err := validateRecoveryNatives(r); err != nil {
+		return err
 	}
 	if r.Producer != nil && (r.Producer.NativeMayWrite == nil || r.Producer.Attempt == "" || r.Producer.Execution.TaskID == "" || r.Producer.Execution.Epoch == 0 || r.Producer.Base != r.Head.Artifact || r.Producer.HeadVersion != r.Head.Version) {
 		return errors.New("recovery writer obligation has no exact authority")
+	}
+	return nil
+}
+
+func validateRecoveryCapture(r WorkspaceRecovery) error {
+	if r.Phase == "released" && (r.Result == nil || r.ReleasedAt.IsZero()) || r.Phase != "released" && (r.Result != nil || !r.ReleasedAt.IsZero()) {
+		return errors.New("recovery release lacks its exact result")
+	}
+	if len(r.Error) > 2048 || !r.CopyRemovedAt.IsZero() && r.Phase != "released" || r.CopyIdentity == "" && (r.CopyRootIdentity != "" || r.CopyGeneration != 0) || r.CopyIdentity != "" && (r.CopyRootIdentity == "" || r.CopyGeneration < 1) {
+		return errors.New("recovery cleanup identity differs from its phase")
+	}
+	if r.Result != nil {
+		if r.Result.Version < 1 || r.Result.Landing == "" || r.Result.Evidence == "" {
+			return errors.New("recovery result has no exact committed identity")
+		}
+		if err := validateRecoveryContent(r.Result.Artifact, r.Result.ID, r.Result.Storage); err != nil {
+			return err
+		}
+	}
+	frozen := r.Phase == "capture" || r.Phase == "landing" || r.Phase == "released"
+	if frozen && (r.FrozenHeadVersion != r.Head.Version || r.Producer != nil) || !frozen && r.FrozenHeadVersion != 0 {
+		return errors.New("recovery frozen head differs from phase")
+	}
+	if (r.Phase == "landing" || r.Phase == "released") != (r.Residual != nil) {
+		return errors.New("recovery residual differs from capture phase")
+	}
+	if r.Residual != nil {
+		if r.Residual.CapturedAt.IsZero() || r.Residual.Evidence == "" {
+			return errors.New("recovery residual is not accepted")
+		}
+		if err := validateRecoveryContent(r.Residual.Artifact, r.Residual.ID, r.Residual.Storage); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -34,6 +34,10 @@ func (s *Store) LandOnce(ctx context.Context, id string, p project.Project, arti
 		return Landing{}, err
 	}
 	land := Landing{ID: id}
+	if permit := recoveryPermit(ctx); permit != nil {
+		link := permit.link
+		land.Recovery = &link
+	}
 	if found {
 		if op.Kind != landKind {
 			return land, errors.New("landing identity belongs to another operation")
@@ -42,14 +46,22 @@ func (s *Store) LandOnce(ctx context.Context, id string, p project.Project, arti
 			return land, err
 		}
 		land.State = op.State
-		if !land.Recoverable || land.Target != p.Home || land.Project != p.ID || land.Artifact != artifactID || !reflect.DeepEqual(land.Source, firstSource(source)) {
+		if !land.Recoverable || land.Target != p.Home || land.Project != p.ID || land.Artifact != artifactID || !reflect.DeepEqual(land.Source, firstSource(source)) || !reflect.DeepEqual(land.Recovery, recoveryLinkFromContext(ctx)) {
 			return land, errors.New("landing identity has different source or result")
 		}
 		switch land.State {
 		case LandCommitted:
 			return land, s.ensureLandingReceipt(ctx, p, land)
-		case LandMergeConflicted, LandApplyConflicted:
+		case LandMergeConflicted:
 			return land, Conflict{State: land.State, Paths: land.Paths}
+		case LandApplyConflicted:
+			if !retryableRecoveryPreapply(land) {
+				return land, Conflict{State: land.State, Paths: land.Paths}
+			}
+			land, err = s.retryRecoveryPreapply(ctx, p, land)
+			if err != nil {
+				return land, err
+			}
 		case LandApplying, LandRecoveryPending:
 			cleanup, cancel := landingApplyContext(ctx)
 			defer cancel()
@@ -76,6 +88,9 @@ func (s *Store) LandOnce(ctx context.Context, id string, p project.Project, arti
 }
 
 func (s *Store) ensureLandingReceipt(ctx context.Context, p project.Project, land Landing) error {
+	if land.Recovery != nil {
+		return s.ensureRecoveryLandingReceipt(ctx, p, land)
+	}
 	if land.Merged == "" || land.Merged == land.Now {
 		return nil
 	}
@@ -84,4 +99,12 @@ func (s *Store) ensureLandingReceipt(ctx context.Context, p project.Project, lan
 	}
 	_, err := s.receipt(ctx, p, Manifest{ID: land.Merged, Project: p.ID, Parent: land.Now, Label: p.Level, By: land.ID, Message: "landed " + short(land.Artifact), Canonical: true})
 	return err
+}
+
+func recoveryLinkFromContext(ctx context.Context) *RecoveryLink {
+	if permit := recoveryPermit(ctx); permit != nil {
+		link := permit.link
+		return &link
+	}
+	return nil
 }
