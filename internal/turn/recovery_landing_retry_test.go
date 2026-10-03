@@ -114,7 +114,7 @@ func TestRecoveryPreapplyConflictRetriesAfterPhysicalBlockerRemoval(t *testing.T
 	f := blockedRecoveryPreapply(t)
 	checks := 0
 	f.nodes.before = func(req ops.Request) error {
-		if req.Op == ops.PathState {
+		if req.Op == ops.RecoveryPathState {
 			checks++
 		}
 		return nil
@@ -283,7 +283,7 @@ func TestRecoveryPreapplyRetryRechecksSourcesBeforeApplying(t *testing.T) {
 	removePreapplyBlocker(t, f)
 	revoked := false
 	f.nodes.before = func(req ops.Request) error {
-		if req.Op == ops.PathState && !revoked {
+		if req.Op == ops.RecoveryPathState && !revoked {
 			revoked = true
 			_, err := f.c.tasks.SetAside(f.producers[0].TaskID, task.StateCancelled)
 			return err
