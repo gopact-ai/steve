@@ -110,10 +110,7 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 		req.stage(view.StageAwaitSnapshot)
 	}}
 	if spec.WorkspaceRecovery != nil {
-		attempts.passes = func(err error) bool {
-			var busy attempt.Busy
-			return errors.As(err, &busy) && busy.Resource == "workspace:"+spec.Workspace.ID
-		}
+		attempts.passes = recoveryCopyPasses(spec.Workspace.ID)
 		attempts.limit = 0
 	}
 	if req.ExpectedTask != "" {
