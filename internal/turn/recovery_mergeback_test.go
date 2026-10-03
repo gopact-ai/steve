@@ -1407,6 +1407,13 @@ func TestRecoveryObsoleteConflictedSinkCannotRewindItsSuccessor(t *testing.T) {
 		t.Fatalf("second pending: %+v %v", stuck, err)
 	}
 	newestRef := *stuck[0].Resolution
+	if _, err := c.artifacts.LandRecoveryResolutionOnce(t.Context(), *root.Resolution, firstID, firstSource); err == nil {
+		t.Fatal("obsolete terminal conflict unexpectedly succeeded before the winner")
+	}
+	beforeWinner, err := c.artifacts.Stuck(t.Context(), p.ID)
+	if err != nil || len(beforeWinner) != 1 || beforeWinner[0].Landing != second.ID || *beforeWinner[0].Resolution != newestRef {
+		t.Fatalf("obsolete sink rewound Pending before winner admission: %+v %v", beforeWinner, err)
+	}
 	thirdSource, thirdID := acceptedResolverFixture(t, c, p, stuck[0], "third-resolution", "final accepted text\n")
 	winner, err := c.artifacts.LandRecoveryResolutionOnce(t.Context(), newestRef, thirdID, thirdSource)
 	if err != nil || winner.State != artifact.LandCommitted {
@@ -1442,11 +1449,19 @@ func TestRecoveryObsoleteConflictedSinkCannotRewindItsSuccessor(t *testing.T) {
 			return stuck[0].Landing
 		}(), releaseErr, replayDone, admittedReplayErr, exactAgain.State, exactAgainErr, releaseAgainErr)
 	}
+	postObsolete, err := c.artifacts.LandRecoveryResolutionOnce(t.Context(), newestRef, thirdID, thirdSource)
+	if err != nil || postObsolete.ID != winner.ID || postObsolete.Committed == nil || *postObsolete.Committed != *winner.Committed {
+		t.Fatalf("obsolete sink changed the exact D3 retry: %+v %v", postObsolete, err)
+	}
 	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
 		_, err := c.artifacts.ReleaseRecovery(ctx, episode.ID, driver)
 		return err
 	}); err != nil {
 		t.Fatalf("committed winner cannot release: %v", err)
+	}
+	postRelease, err := c.artifacts.LandRecoveryResolutionOnce(t.Context(), newestRef, thirdID, thirdSource)
+	if err != nil || postRelease.ID != winner.ID || postRelease.Committed == nil || *postRelease.Committed != *winner.Committed {
+		t.Fatalf("released winner acknowledgement failed: %+v %v", postRelease, err)
 	}
 	if done, err := NewWorkspaceRecoveryControl(c).Replay(t.Context(), episode.ID); err != nil || done {
 		t.Fatalf("released replay: %v %v", done, err)
