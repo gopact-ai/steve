@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,16 +15,23 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/execution"
+	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -1437,5 +1447,162 @@ func TestRecoveryObsoleteConflictedSinkCannotRewindItsSuccessor(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(p.Home.Path, "original")); err != nil || string(data) != "final accepted text\n" {
 		t.Fatalf("obsolete C was applied again: %q %v", data, err)
+	}
+}
+
+type recoveryLifecycleSessionConsumer struct {
+	*fakeManager
+	prepared []harness.PluginPreparation
+	refuse   error
+}
+
+func (m *recoveryLifecycleSessionConsumer) PreparePluginSession(_ context.Context, input harness.PluginPreparation) (*plugins.RuntimeRef, error) {
+	m.prepared = append(m.prepared, input)
+	return nil, nil
+}
+func (m *recoveryLifecycleSessionConsumer) OpenSession(_ context.Context, at harness.Placement, upstream, workdir string, servers []acp.MCPServer) (harness.Runner, error) {
+	m.placed = append(m.placed, at)
+	m.workdirs = append(m.workdirs, workdir)
+	m.opened = append(m.opened, upstream)
+	m.servers = append(m.servers, servers)
+	return nil, m.refuse
+}
+func TestRecoveryWaitingRefreshUpdatesEveryLifecycleSessionInput(t *testing.T) {
+	c, p, original, ws := sharedCopy(t)
+	completed := publishBoundRecoveryTurn(t, c, p, ws, "copy-before-queue", map[string]string{"incoming": "accepted\n"})
+	cached := state.Session{ConversationID: "console:copy-before-queue", AgentID: "worker", HarnessID: "mock", NodeID: ws.Node, UpstreamID: completed.Session, Workspace: ws.Path, ProjectID: p.ID}
+	cached.AgentToken = "retired-token"
+	gate, err := agentmcp.New(0, i18n.New(i18n.LocaleEN))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gate.SetStore(&scheduleGrantStore{data: map[string]json.RawMessage{}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	serving, stopGate := context.WithCancel(t.Context())
+	gateDone := make(chan error, 1)
+	go func() { gateDone <- gate.Start(serving) }()
+	t.Cleanup(func() {
+		stopGate()
+		if err := <-gateDone; err != nil {
+			t.Error(err)
+		}
+	})
+	c.gate = gate
+	native := &recoveryLifecycleSessionConsumer{fakeManager: &fakeManager{mcpHTTP: true}, refuse: errors.New("stop before native creation")}
+	c.runtime = native
+	c.nodes = fakeEndpoints{port: map[string]int{"node": gate.Port()}}
+	if _, err := gate.PrepareExtras(cached.ConversationID, cached.AgentID, cached.AgentToken, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.store.SaveSession(cached); err != nil {
+		t.Fatal(err)
+	}
+	episode := captureBoundCopy(t, c, original)
+	tracked, err := c.tasks.Create(task.Task{Channel: cached.ConversationID, Transport: "console", Member: "worker", ProjectID: p.ID, Workspace: ws.Path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.tasks.BeginTurn(tracked.ID, "worker", ws.Node, task.TurnInput{TurnID: "waiting-native", Address: channel.Address{Conversation: cached.ConversationID, Channel: "console", Message: "waiting-native"}}); err != nil {
+		t.Fatal(err)
+	}
+	scope, err := c.executions.Begin(t.Context(), execution.Key{TaskID: tracked.ID, InstanceID: "waiting-native"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer scope.Finish(nil)
+	ready := make(chan struct{}, 1)
+	req := Request{ConversationID: cached.ConversationID, MessageID: "waiting-native", SenderOpenID: "owner", OnStage: func(view.Stage) {
+		select {
+		case ready <- struct{}{}:
+		default:
+		}
+	}}
+	selected := agent.Agent{ID: "worker", Node: ws.Node, Harness: "mock"}
+	spec, candidate, err := c.turnSpec(scope.Context(), req, selected, tracked.ID, project.Binding{ProjectID: p.ID}, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskTurn := &chatTurn{c: c, req: req, selected: selected, tracked: tracked.ID, binding: project.Binding{ProjectID: p.ID}, workspace: ws, saved: cached, clock: newTurnClock(), spent: &turnSpend{resetIdle: func() {}}}
+	initialCapabilities, err := c.assemble(selected, req, c.gate.DescribeExtras(cached.AgentToken, gate.URL()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskTurn.capabilities = initialCapabilities
+	options := taskTurn.options(spec, candidate)
+	seen := make(chan string, 1)
+	seenServers := make(chan string, 1)
+	sentinel := native.refuse
+	open := options.Open
+	leased := options.Leased
+	leasedCalls := 0
+	options.Leased = func(ctx context.Context, e *lifecycle.Execution) (context.Context, error) {
+		leasedCalls++
+		return leased(ctx, e)
+	}
+	options.Open = func(ctx context.Context, e *lifecycle.Execution) (harness.Runner, error) {
+		seen <- e.Upstream
+		seenServers <- fmt.Sprint(e.Servers)
+		return open(ctx, e)
+	}
+	finished := make(chan error, 1)
+	go func() { _, err := lifecycle.Run(scope.Context(), options); finished <- err }()
+	select {
+	case <-ready:
+	case err := <-finished:
+		t.Fatalf("did not wait: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiting never entered")
+	}
+	if err := NewWorkspaceRecoveryControl(c).Drive(t.Context(), episode.ID, func(ctx context.Context, driver ledger.Lease) error {
+		if _, err := c.artifacts.LandRecoveryOnce(ctx, episode.ID, driver); err != nil {
+			return err
+		}
+		_, err := c.artifacts.ReleaseRecovery(ctx, episode.ID, driver)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-finished:
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("lifecycle boundary: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("lifecycle not done")
+	}
+	got := <-seen
+	servers := <-seenServers
+	if leasedCalls != 1 || len(native.prepared) != 1 || len(native.workdirs) != 1 {
+		t.Fatalf("lifecycle duplicated input or skipped a consumer: leased=%d plugin=%+v opens=%v", leasedCalls, native.prepared, native.workdirs)
+	}
+	if native.prepared[0].Upstream != "" || native.prepared[0].Project != p.ID || native.prepared[0].At.Node != p.Home.Node || native.workdirs[0] != p.Home.Path || native.placed[0] != placement(selected) {
+		t.Fatalf("plugin/native preparation used stale identity: %+v %v %+v", native.prepared, native.workdirs, native.placed)
+	}
+	if taskTurn.saved.AgentToken == "" || taskTurn.saved.AgentToken == cached.AgentToken || !strings.Contains(fmt.Sprint(native.servers), taskTurn.saved.AgentToken) || strings.Contains(fmt.Sprint(native.servers), cached.AgentToken) {
+		t.Fatalf("native MCP credentials differ from the new session binding: actual=%v new=%q", native.servers, taskTurn.saved.AgentToken)
+	}
+	for _, tc := range []struct {
+		token  string
+		status int
+	}{{taskTurn.saved.AgentToken, http.StatusOK}, {cached.AgentToken, http.StatusUnauthorized}} {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, gate.URL(), strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+tc.token)
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		closeErr := response.Body.Close()
+		if readErr != nil || closeErr != nil || response.StatusCode != tc.status {
+			t.Fatalf("MCP token status=%d want=%d body=%s read=%v close=%v", response.StatusCode, tc.status, body, readErr, closeErr)
+		}
+	}
+	if taskTurn.saved.UpstreamID != "" || got != "" || !strings.Contains(servers, taskTurn.saved.AgentToken) {
+		t.Fatalf("new canonical native received stale captured inputs: cachedUpstream=%q lifecycleUpstream=%q newBoundToken=%q actualServers=%s", taskTurn.saved.UpstreamID, got, taskTurn.saved.AgentToken, servers)
 	}
 }
