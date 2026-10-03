@@ -651,6 +651,10 @@ bash -lc 'exec /home/me/steve-bin/steve-node mcp-broker -config /home/me/steve-b
 
 canonical snapshot 的最终接纳事务核对原声明、目录、精确租约及恢复 hold，并与 artifact/content 索引和名称提交一起判定。已经发出的 I/O 可能完成，但完成回执、Git pin 或可达对象不等于新产物已经被接纳；同 SHA 更早已获接纳的历史事实不会因晚到拒绝而撤销。恢复副本仍从同事务固定的可信基线开始，原目录保留隔离。确认所有原目录写者已真实退出后，恢复驱动排空共享副本并保存原目录现状 R，以最初固定 B 将接受的副本 C 合到执行时的当前目录。不会恢复 B、reset/clean 原树或删除忽略及嵌套内容。冲突沿精确恢复关联交给手工或正常授权的解析者；未取得退出证明、完整来源当前授权或真实提交回执时继续隔离。最终 Result 与 released/原 hold 解除同事务，下一回合重新解析 canonical，不热改 native cwd。合回完成后自有容器仍受声明保护，核对固定路径、marker、安装/目录身份和机器 generation 并以锚定 handle 精确清理；副本新变化或未捕获内容使 cleanup 保持 pending，不重新封锁已释放原目录。节点或安装身份变化、未知替换及不支持的文件身份能力均保守等待。dev/inode、Windows file-id 不是永久不复用标识；协作声明与安装协议提供正常互斥，不承诺外部非合作 rename/check/unlink 的全目录原子性。
 
+仅在物理预检查阶段停止、尚未进入 applying 且没有内容冲突树的恢复 root，才能在障碍移除后以同一身份重新检查和准入。重试保留固定基线与 head，重新核对当前 owner 及全部来源权限，并原子消费精确对应的 Pending；已经进入 applying 的 WAL 或已提交结果只重放原决定，不重新发起落地。
+
+恢复路径检查和容器清理要求执行节点支持当前专用操作合同。节点不认识这些操作时直接拒绝，不回退到旧路径检查或旧清理实现；原目录继续隔离，或已释放目录的副本保持 cleanup pending。应先升级执行节点；无法匹配既有安装、容器或 connection generation 身份时仍保守等待，不以升级成功代替原机器退出或清理证明。
+
 恢复 owner 保存完整连续 head 来源链，并独立引用内容寻址的 Git 存储模式证据。保留检查不依赖普通 artifact 行仍存在；模式证据、producing attempt 事实或当前内容 manifest/依赖/发布回执缺失、错关联时保守拒绝删除与回收。模式证据用于核对历史事实和单条元数据损坏，不是密码学签名，不授予当前 task token、项目权限或合回授权，也不声称防御同时恶意重写全部账本。它随 accepted artifact 的历史事实保留，普通 artifact 行删除不能顺带删除仍被恢复 owner 引用的证据。
 
 
