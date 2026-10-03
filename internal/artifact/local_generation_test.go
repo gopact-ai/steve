@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
@@ -24,5 +25,12 @@ func TestLocalArtifactDispatchRefusesAnotherGeneration(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("refused dispatch performed filesystem I/O: %v", err)
+	}
+}
+
+func TestRecoveryRemovalRequiresGenerationBeforeDispatch(t *testing.T) {
+	_, err := (LocalNodes{}).Artifact(t.Context(), "", ops.Request{Op: ops.RemoveRecovery})
+	if err == nil || !strings.Contains(err.Error(), "generation") {
+		t.Fatalf("missing generation was not refused before dispatch: %v", err)
 	}
 }

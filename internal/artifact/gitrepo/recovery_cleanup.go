@@ -49,7 +49,7 @@ func RecoveryContainer(ctx context.Context, root, container, recovery, base, exp
 	if rootIdentity != "" && result.RootIdentity != rootIdentity {
 		return result, ErrPreparedWorkspaceChanged
 	}
-	parent, err := os.OpenRoot(filepath.Join(root, "worktrees"))
+	parent, err := installation.OpenRoot("worktrees")
 	if os.IsNotExist(err) {
 		return result, nil
 	}
@@ -182,6 +182,9 @@ func removeRecoveryContainer(ctx context.Context, parent *os.Root, name string, 
 // VerifyRecoveryContent also checks ignored/untracked physical entities. A
 // matching tracked snapshot alone cannot justify deleting excluded user bytes.
 func (r *Repo) VerifyRecoveryContent(ctx context.Context, commit, work string) error {
+	if err := recoveryWorkRoot(work); err != nil {
+		return err
+	}
 	if err := r.VerifyCheckout(ctx, commit, work); err != nil {
 		return err
 	}
@@ -202,6 +205,9 @@ func (r *Repo) VerifyRecoveryRemainder(ctx context.Context, commit, work string)
 	if _, err := os.Lstat(work); os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
+		return err
+	}
+	if err := recoveryWorkRoot(work); err != nil {
 		return err
 	}
 	return filepath.WalkDir(work, func(full string, entry fs.DirEntry, walkErr error) error {
@@ -243,6 +249,29 @@ func recoveryContainerEntries(root *os.Root) error {
 		if entry.Name() != "work" && entry.Name() != recoveryPreparationMarker {
 			return ErrPreparedWorkspaceChanged
 		}
+		if entry.Name() == "work" {
+			info, err := root.Lstat("work")
+			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return ErrPreparedWorkspaceChanged
+			}
+			if _, err := root.Lstat(filepath.Join("work", ".git")); !os.IsNotExist(err) {
+				return ErrPreparedWorkspaceChanged
+			}
+		}
+	}
+	return nil
+}
+
+func recoveryWorkRoot(work string) error {
+	info, err := os.Lstat(work)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return ErrPreparedWorkspaceChanged
+	}
+	if _, err := os.Lstat(filepath.Join(work, ".git")); !os.IsNotExist(err) {
+		return ErrPreparedWorkspaceChanged
 	}
 	return nil
 }

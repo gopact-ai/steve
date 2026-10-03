@@ -42,6 +42,9 @@ type Limits struct {
 // relative tree entry for recovery. Before is the
 // worktree sweep cutoff. LegacyMerge keeps the pre-2.38 merge fallback.
 type Request struct {
+	// Generation pins execution to the selected node connection. Removal of a
+	// recovery container always supplies it, including on the local endpoint.
+	Generation   int64     `json:"generation,omitempty"`
 	RootIdentity string    `json:"root_identity,omitempty"`
 	Recovery     string    `json:"recovery,omitempty"`
 	Identity     string    `json:"identity,omitempty"`

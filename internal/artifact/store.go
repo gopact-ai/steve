@@ -1595,7 +1595,7 @@ func (s *Store) acquireCanonical(ctx context.Context, p project.Project, holder 
 // own repository), otherwise on that node.
 func (s *Store) operation(ctx context.Context, node string, req ops.Request) (ops.Result, error) {
 	if node == "" {
-		return gitrepo.RunOperation(ctx, req)
+		return (LocalNodes{}).Artifact(ctx, "", req)
 	}
 	return s.nodes.Artifact(ctx, node, req)
 }

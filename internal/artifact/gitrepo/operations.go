@@ -192,6 +192,9 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 }
 
 func validateOperation(req ops.Request) error {
+	if req.Op == ops.RemoveRecovery && req.Generation < 1 {
+		return fmt.Errorf("recovery removal requires its node generation")
+	}
 	var paths []string
 	var commits []string
 	switch req.Op {
