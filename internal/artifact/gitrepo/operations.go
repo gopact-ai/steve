@@ -183,7 +183,7 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 				result.Paths = append(result.Paths, filepath.Join(req.WorkTree, entry.Name()))
 			}
 		}
-	case ops.PathState:
+	case ops.PathState, ops.RecoveryPathState:
 		result.State, err = r.pathState(ctx, req.WorkTree, req.From, req.Commit, req.Path)
 	case ops.WritePath:
 		err = r.writePath(ctx, req.WorkTree, req.Commit, req.Path)
@@ -220,7 +220,7 @@ func validateOperation(req ops.Request) error {
 		paths = []string{req.Repo, req.Path}
 	case ops.Merge, ops.MergeRecovery:
 		paths, commits = []string{req.Repo}, []string{req.Base, req.Ours, req.Theirs}
-	case ops.Apply, ops.PathState:
+	case ops.Apply, ops.PathState, ops.RecoveryPathState:
 		paths, commits = []string{req.Repo, req.WorkTree}, []string{req.From, req.Commit}
 	case ops.Changed:
 		paths, commits = []string{req.Repo}, []string{req.Commit}
@@ -254,7 +254,7 @@ func validateOperation(req ops.Request) error {
 			return fmt.Errorf("artifact: %q is not a commit id", sha)
 		}
 	}
-	if req.Op == ops.PathState || req.Op == ops.WritePath {
+	if req.Op == ops.PathState || req.Op == ops.RecoveryPathState || req.Op == ops.WritePath {
 		if !filepath.IsLocal(req.Path) || filepath.Clean(req.Path) == "." || strings.ContainsRune(req.Path, 0) {
 			return fmt.Errorf("artifact: %q is not a tree path", req.Path)
 		}

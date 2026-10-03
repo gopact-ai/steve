@@ -547,7 +547,7 @@ func TestRecoveryLandingRechecksRevocationBetweenPreflightAndApplying(t *testing
 	c.artifacts = artifact.New(c.artifacts.Dir, ledgerOf(t, c), c.projects, nodes)
 	once := false
 	nodes.before = func(req ops.Request) error {
-		if req.Op == ops.PathState && !once {
+		if req.Op == ops.RecoveryPathState && !once {
 			once = true
 			_, err := c.tasks.SetAside(producer.TaskID, task.StateCancelled)
 			return err
