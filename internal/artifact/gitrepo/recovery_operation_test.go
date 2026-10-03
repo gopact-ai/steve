@@ -35,3 +35,16 @@ func TestRecoveryPathOperationUsesPhysicalAncestorInspection(t *testing.T) {
 		t.Fatalf("physical ancestor inspection: %+v %v", blocked, err)
 	}
 }
+
+func TestRecoveryCleanupRefusesUnscopedOperationNames(t *testing.T) {
+	repo, root, id, base, work := recoveryIntegrityFixture(t)
+	for _, kind := range []ops.Kind{"inspect_recovery", "remove_recovery", "verify_recovery_content", "verify_recovery_remainder"} {
+		request := ops.Request{Op: kind, Repo: repo.Dir, WorkTree: root, Path: filepath.Dir(work), Recovery: id, Commit: base, Generation: 1}
+		if kind == "verify_recovery_content" || kind == "verify_recovery_remainder" {
+			request.WorkTree = work
+		}
+		if err := validateOperation(request); err == nil {
+			t.Errorf("unscoped operation still authorizes recovery I/O: %s", kind)
+		}
+	}
+}
