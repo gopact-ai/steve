@@ -89,8 +89,8 @@ func Dir(value string) string {
 	return path.Dir(value)
 }
 
-// Same excludes empty locations and deliberately does not fold case or resolve
-// symlinks. Unsupported Windows spellings can match only their exact text.
+// Same excludes empty locations. It preserves component and UNC case and does
+// not resolve symlinks. Unsupported Windows spellings match only exact text.
 func Same(a, b string) bool {
 	return a != "" && b != "" && parse(a) == parse(b)
 }
