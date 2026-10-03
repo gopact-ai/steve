@@ -3,6 +3,7 @@ package gitrepo
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
@@ -43,8 +44,8 @@ func TestRecoveryCleanupRefusesUnscopedOperationNames(t *testing.T) {
 		if kind == "verify_recovery_content" || kind == "verify_recovery_remainder" {
 			request.WorkTree = work
 		}
-		if err := validateOperation(request); err == nil {
-			t.Errorf("unscoped operation still authorizes recovery I/O: %s", kind)
+		if err := validateOperation(request); err == nil || !strings.Contains(err.Error(), "unknown operation") {
+			t.Errorf("unscoped operation was not refused by its contract: %s: %v", kind, err)
 		}
 	}
 }

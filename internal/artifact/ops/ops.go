@@ -22,16 +22,19 @@ const (
 	Apply             Kind = "apply"
 	Changed           Kind = "changed"
 	Remove            Kind = "remove"
-	InspectRecovery   Kind = "inspect_recovery"
-	RemoveRecovery    Kind = "remove_recovery"
+	InspectRecovery   Kind = "inspect_recovery_scoped"
+	RemoveRecovery    Kind = "remove_recovery_scoped"
 	ListWorktrees     Kind = "list_worktrees"
 	PathState         Kind = "path_state"
 	RecoveryPathState Kind = "recovery_path_state"
 	WritePath         Kind = "write_path"
 )
 
-const VerifyRecoveryContent Kind = "verify_recovery_content"
-const VerifyRecoveryRemainder Kind = "verify_recovery_remainder"
+// Scoped names require the executing node's rooted entity and generation
+// checks. A node without that contract rejects them instead of using an older
+// cleanup implementation under the same protocol version.
+const VerifyRecoveryContent Kind = "verify_recovery_content_scoped"
+const VerifyRecoveryRemainder Kind = "verify_recovery_remainder_scoped"
 
 type Limits struct {
 	MaxFiles     int64 `json:"max_files,omitempty"`
