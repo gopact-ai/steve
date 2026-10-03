@@ -185,7 +185,11 @@ func (r *Registry) noticeLocked(s Status) {
 
 // Generation is how many times the node has connected: it moves on every
 // reconnect, so a replica recorded under an older generation is suspect.
+// The empty endpoint executes locally and shares Artifact's fixed generation.
 func (r *Registry) Generation(_ context.Context, name string) (int64, error) {
+	if name == "" {
+		return 1, nil
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.confs[name]; !ok {
