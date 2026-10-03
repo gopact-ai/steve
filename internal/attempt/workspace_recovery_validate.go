@@ -3,10 +3,10 @@ package attempt
 import (
 	"encoding/hex"
 	"errors"
-	"path"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/workspacepath"
 )
 
 func recoveryArtifactID(id string) bool {
@@ -35,7 +35,7 @@ func validateRecoveryContent(artifact, content, storage string) error {
 
 func validateWorkspaceRecovery(r WorkspaceRecovery) error {
 	identity, err := hex.DecodeString(strings.TrimPrefix(r.ID, "workspace-recovery-"))
-	if err != nil || len(identity) != 16 || r.ID != "workspace-recovery-"+hex.EncodeToString(identity) || r.CreatedAt.IsZero() || r.RequestedBy == "" || !path.IsAbs(r.Target.Path) || r.Baseline.Name != "project/"+r.Project+"/canonical" {
+	if err != nil || len(identity) != 16 || r.ID != "workspace-recovery-"+hex.EncodeToString(identity) || r.CreatedAt.IsZero() || r.RequestedBy == "" || !workspacepath.IsAbs(r.Target.Path) || r.Baseline.Name != "project/"+r.Project+"/canonical" {
 		return errors.New("workspace recovery source identity is invalid")
 	}
 	if err := validateRecoveryContent(r.Baseline.Artifact, r.Baseline.ContentID, r.Baseline.Storage); err != nil {
@@ -51,7 +51,7 @@ func validateWorkspaceRecovery(r WorkspaceRecovery) error {
 		}
 		seen[s.Attempt] = true
 	}
-	if r.Phase != "recorded" && !((r.Phase == "draining" || r.Phase == "capture" || r.Phase == "landing" || r.Phase == "released") && r.Workspace.ID == "") && (r.Workspace.ID == "" || r.Workspace.RecoveryID != r.ID || r.Workspace.Project != r.Project || r.Workspace.Kind != project.KindWorktree || !path.IsAbs(r.Workspace.Path) || path.Base(r.Workspace.Path) != "work" || r.Workspace.Base != r.Baseline.Artifact) {
+	if r.Phase != "recorded" && !((r.Phase == "draining" || r.Phase == "capture" || r.Phase == "landing" || r.Phase == "released") && r.Workspace.ID == "") && (r.Workspace.ID == "" || r.Workspace.RecoveryID != r.ID || r.Workspace.Project != r.Project || r.Workspace.Kind != project.KindWorktree || !workspacepath.IsAbs(r.Workspace.Path) || workspacepath.Base(r.Workspace.Path) != "work" || r.Workspace.Base != r.Baseline.Artifact) {
 		return errors.New("workspace recovery has no exact prepared location")
 	}
 	if (r.Phase == "recorded" || r.Phase == "materializing") && r.Head.Version != 1 {

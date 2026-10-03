@@ -12,6 +12,7 @@ import (
 	"slices"
 
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/workspacepath"
 )
 
 // ReadTx keeps declaration data in the same snapshot as a domain decision.
@@ -35,6 +36,8 @@ func ReadTx(tx ledger.Reader, id string) (Project, error) {
 
 // RecoveryIdentity fixes placement and data handling, not grants or instructions.
 // Current authorization must still be checked whenever new work is requested.
+// The digest uses slash-lexical path.Clean; directory equality is a separate
+// metadata comparison.
 func RecoveryIdentity(p Project) string {
 	p.Copies = maps.Clone(p.Copies)
 	p.DurablePlaces = slices.Clone(p.DurablePlaces)
@@ -59,7 +62,7 @@ func RecoveryIdentity(p Project) string {
 // CheckRecoveryWorkspaceTx keeps an isolated recovery container separate from
 // every current project declaration in the transaction that fixes its location.
 func CheckRecoveryWorkspaceTx(tx ledger.Reader, workspace Workspace) error {
-	if workspace.Kind != KindWorktree || workspace.RecoveryID == "" || !path.IsAbs(workspace.Path) || path.Base(workspace.Path) != "work" {
+	if workspace.Kind != KindWorktree || workspace.RecoveryID == "" || !workspacepath.IsAbs(workspace.Path) || workspacepath.Base(workspace.Path) != "work" {
 		return errors.New("recovery workspace has no exact isolated container")
 	}
 	last := ""
@@ -81,7 +84,7 @@ func CheckRecoveryWorkspaceTx(tx ledger.Reader, workspace Workspace) error {
 			return err
 		}
 		for _, place := range p.Workspaces() {
-			if place.Node == workspace.Node && pathsOverlap(place.Path, path.Dir(workspace.Path)) {
+			if place.Node == workspace.Node && workspacepath.Overlap(place.Path, workspacepath.Dir(workspace.Path)) {
 				return fmt.Errorf("recovery container overlaps project %s on %s", p.ID, nodeLabel(workspace.Node))
 			}
 		}

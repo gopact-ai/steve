@@ -536,7 +536,8 @@ func validateOwnership(projects map[string]Project) error {
 
 func pathsOverlap(a, b string) bool {
 	a, b = filepath.Clean(a), filepath.Clean(b)
-	return a == b || strings.HasPrefix(a, strings.TrimSuffix(b, "/")+"/") || strings.HasPrefix(b, strings.TrimSuffix(a, "/")+"/")
+	separator := string(filepath.Separator)
+	return a == b || strings.HasPrefix(a, strings.TrimSuffix(b, separator)+separator) || strings.HasPrefix(b, strings.TrimSuffix(a, separator)+separator)
 }
 
 // Retire forgets a project the operator no longer wants. Conversations
