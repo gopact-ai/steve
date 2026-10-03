@@ -80,8 +80,8 @@ func (s *Service) confirmTaskStopped(ctx context.Context, id, actor string, proo
 			return errors.New("native stop receipt belongs to another execution")
 		}
 		kind := "native-command-settled"
-		if next.Session == "" {
-			next.Session = st.ID
+		if err := acceptStoppedNativeIdentityTx(tx, &next, st); err != nil {
+			return err
 		}
 		if st.ProcessStopped {
 			kind = "native-process-stopped"
@@ -161,18 +161,42 @@ func nativeTaskTx(tx *ledger.Tx, r Record) (task.Task, error) {
 }
 
 func matchesStoppedSession(r Record, tracked task.Task, st nodewire.SessionState) bool {
-	if st.Binding.PluginRuntimeID != r.PluginRuntimeID() || st.Harness != r.Harness || st.Binding.ProjectID != r.Project || st.Binding.NodeID != r.Node || st.Binding.TaskID != r.TaskID || st.Binding.AttemptID != r.ID || st.Binding.ExecutionEpoch != SessionExecutionEpoch(r) || st.Binding.TaskEpoch != r.Execution.Epoch || st.Binding.SessionID != RetainedSessionID(tracked.Channel, tracked.ID, r.Agent) {
+	if r.NativeContext != "" && r.NativeContext != st.ContextID || st.Binding.NativeImportID != r.NativeImportID() || st.Binding.PluginRuntimeID != r.PluginRuntimeID() || st.Harness != r.Harness || st.Binding.ProjectID != r.Project || st.Binding.NodeID != r.Node || st.Binding.TaskID != r.TaskID || st.Binding.AttemptID != r.ID || st.Binding.ExecutionEpoch != SessionExecutionEpoch(r) || st.Binding.TaskEpoch != r.Execution.Epoch || st.Binding.SessionID != RetainedSessionID(tracked.Channel, tracked.ID, r.Agent) {
 		return false
 	}
 	if r.Session == "" {
-		proof := st.OpenReceipt
-		if !PendingSessionOpen(r) || proof == nil || (proof.Action != nodewire.SessionActionCancelOpen && proof.Action != nodewire.SessionActionKill) || proof.CommandID != InputCommandID(r)+"/open" || proof.Authority.ClusterID == "" || proof.Authority.CoordinatorNodeID == "" || proof.Authority.CoordinatorEpoch == 0 || proof.Authority.WriterGeneration == 0 || !st.ProcessStopped || st.State != nodewire.SessionClosed || st.ID != nodewire.SessionOpenID(proof.Authority.ClusterID, r.Node, r.ID, proof.CommandID, r.Harness) {
+		if !PendingSessionOpen(r) || !matchesStoppedOpen(r, st) {
 			return false
 		}
 	} else if st.ID != r.Session {
 		return false
 	}
 	return st.Command == nil && st.ProcessStopped || st.Command != nil && st.Command.ID == InputCommandID(r) && st.Command.InputSequence > 0 && st.Command.InputSequence <= st.InputAccepted
+}
+
+// matchesStoppedOpen proves the original open, not a replacement native
+// context or an empty-context wildcard. A cancelled open created no context.
+func matchesStoppedOpen(r Record, st nodewire.SessionState) bool {
+	proof := st.OpenReceipt
+	return proof != nil && (proof.Action == nodewire.SessionActionCancelOpen || proof.Action == nodewire.SessionActionKill) && proof.CommandID == InputCommandID(r)+"/open" && proof.Authority.ClusterID != "" && proof.Authority.CoordinatorNodeID != "" && proof.Authority.CoordinatorEpoch > 0 && proof.Authority.WriterGeneration > 0 && st.ProcessStopped && st.State == nodewire.SessionClosed && st.ID == nodewire.SessionOpenID(proof.Authority.ClusterID, r.Node, r.ID, proof.CommandID, r.Harness) && (!proof.CancelledBeforeOpen || st.ContextID == "")
+}
+
+func acceptStoppedNativeIdentityTx(tx *ledger.Tx, next *Record, st nodewire.SessionState) error {
+	if next.Session == "" {
+		next.Session = st.ID
+	}
+	if next.NativeContext != "" || st.ContextID == "" || !matchesStoppedOpen(*next, st) {
+		return nil
+	}
+	latest, found, err := LatestForSessionTx(tx, next.Node, next.Harness, st.ID)
+	if err != nil {
+		return err
+	}
+	if found && latest.ID != next.ID {
+		return ErrStopConfirmationRequired
+	}
+	next.NativeContext = st.ContextID
+	return completeRecoveryStoppedIdentityTx(tx, *next, st)
 }
 
 // PendingSessionOpen has a committed preparation whose native receipt was
