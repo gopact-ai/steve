@@ -10,6 +10,25 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
+func TestLocalArtifactEndpointSharesItsGenerationContract(t *testing.T) {
+	r := NewRegistry("hub", nil)
+	t.Cleanup(r.Close)
+	generation, err := r.Generation(t.Context(), "")
+	if err != nil || generation != 1 {
+		t.Fatalf("local artifact endpoint has no fixed generation: %d %v", generation, err)
+	}
+	dir := filepath.Join(t.TempDir(), "objects.git")
+	if _, err := r.Artifact(t.Context(), "", ops.Request{Op: ops.Init, Repo: dir, Generation: generation}); err != nil {
+		t.Fatalf("local generation could not dispatch its exact request: %v", err)
+	}
+	if _, err := r.Artifact(t.Context(), "", ops.Request{Op: ops.Init, Repo: filepath.Join(t.TempDir(), "refused.git"), Generation: generation + 1}); err == nil {
+		t.Fatal("another local generation acquired execution permission")
+	}
+	if value, err := r.Generation(t.Context(), "unknown"); err == nil || value != 0 {
+		t.Fatalf("unknown remote inherited the local generation: %d %v", value, err)
+	}
+}
+
 func TestArtifactDispatchUsesTheSelectedConnectionGeneration(t *testing.T) {
 	registry, _ := artifactNode(t)
 	c, err := registry.connect(t.Context(), "n")
