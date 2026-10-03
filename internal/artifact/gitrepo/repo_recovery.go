@@ -48,6 +48,15 @@ func (r *Repo) pathState(ctx context.Context, dir, from, to, path string) (strin
 		return "", err
 	}
 	defer root.Close()
+	for parent := filepath.Dir(path); parent != "."; parent = filepath.Dir(parent) {
+		info, err := root.Lstat(parent)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "other", nil
+		}
+	}
 	current, writable, err := r.onDisk(ctx, root, path)
 	if err != nil {
 		return "", err

@@ -37,6 +37,7 @@ func (s *Store) CleanupRecoveryCopy(ctx context.Context, id string, driver ledge
 		if generation < 1 {
 			return r, attempt.ErrWorkspaceRecovery
 		}
+		request.Generation = generation
 		observed, err := s.operation(ctx, r.Workspace.Node, request)
 		if err != nil {
 			return r, err

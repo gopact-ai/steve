@@ -41,6 +41,9 @@ func (l LocalNodes) root(node string) string  { return filepath.Join(l.Dir, node
 func (l LocalNodes) state(node string) string { return filepath.Join(l.Dir, node, "state") }
 
 func (l LocalNodes) Artifact(ctx context.Context, _ string, req ops.Request) (ops.Result, error) {
+	if req.Op == ops.RemoveRecovery && req.Generation == 0 || req.Generation != 0 && req.Generation != 1 {
+		return ops.Result{}, fmt.Errorf("artifact operation belongs to another node generation")
+	}
 	return gitrepo.RunOperation(ctx, req)
 }
 

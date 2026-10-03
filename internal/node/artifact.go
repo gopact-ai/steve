@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -17,7 +18,13 @@ const operationTimeout = 10 * time.Minute
 // Artifact executes a platform operation where its files live; there is
 // deliberately no shell fallback.
 func (r *Registry) Artifact(ctx context.Context, name string, req nodewire.ArtifactRequest) (nodewire.ArtifactResult, error) {
+	if req.Op == ops.RemoveRecovery && req.Generation == 0 {
+		return nodewire.ArtifactResult{}, fmt.Errorf("recovery removal requires its node generation")
+	}
 	if name == "" {
+		if req.Generation != 0 && req.Generation != 1 {
+			return nodewire.ArtifactResult{}, fmt.Errorf("artifact operation belongs to another node generation")
+		}
 		return gitrepo.RunOperation(ctx, req)
 	}
 	var reply nodewire.ArtifactReply
@@ -34,6 +41,9 @@ func (r *Registry) operation(ctx context.Context, name, kind string, req, reply 
 	c, err := r.connect(ctx, name)
 	if err != nil {
 		return err
+	}
+	if artifact, ok := req.(nodewire.ArtifactRequest); ok && artifact.Generation != 0 && artifact.Generation != c.generation {
+		return fmt.Errorf("artifact operation belongs to another node generation")
 	}
 	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: kind})
 	if err != nil {

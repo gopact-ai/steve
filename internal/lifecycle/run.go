@@ -350,7 +350,8 @@ type Execution struct {
 	Outcome Outcome
 	Usage   *attempt.Usage
 
-	stopBeat func()
+	stopBeat            func()
+	sessionInputsLocked bool
 	// armed says the caller's arming succeeded: with KeepSession the
 	// session is the conversation's from then on.
 	armed bool
@@ -502,6 +503,7 @@ func (e *Execution) open(ctx context.Context) error {
 
 // start takes the leased attempt to running with a session open on it.
 func (e *Execution) start(ctx context.Context) error {
+	e.sessionInputsLocked = true
 	o := e.o
 	id := e.Record.ID
 	if o.Roster != nil {
@@ -576,6 +578,20 @@ func (e *Execution) start(ctx context.Context) error {
 			return e.step(StepStart, err)
 		}
 	}
+	return nil
+}
+
+// UseLeasedSessionInputs synchronizes a pre-open preparation with the exact
+// record Open accepted. It cannot choose another placement, workspace, token
+// or attempt, and becomes unavailable before roster/native preparation begins.
+func (e *Execution) UseLeasedSessionInputs(candidate roster.Candidate, at harness.Placement, workdir, upstream string, servers []acp.MCPServer) error {
+	if e.sessionInputsLocked || e.Record.ID == "" || e.Record.State != attempt.Leased || e.Record.Admission != nil || e.Record.Session != "" || e.Session != nil || e.armed || e.Record.Node != at.Node || e.Record.Harness != at.Harness || e.Record.Workspace.Path != workdir || e.o.Roster != nil && (candidate.Node != e.Record.Node || candidate.Harness != e.Record.Harness || candidate.Agent.ID != e.Record.Agent) {
+		return errors.New("session inputs differ from the accepted unprepared attempt")
+	}
+	e.o.Spec, e.o.Candidate = e.Record.Spec, candidate
+	e.o.At, e.o.Workdir, e.o.Upstream = at, workdir, upstream
+	e.o.Servers = append([]acp.MCPServer(nil), servers...)
+	e.Upstream, e.Servers = e.o.Upstream, e.o.Servers
 	return nil
 }
 

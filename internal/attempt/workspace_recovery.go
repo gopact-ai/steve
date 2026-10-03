@@ -99,6 +99,12 @@ type RecoveryProducer struct {
 	HeadVersion    int64               `json:"head_version"`
 }
 
+// WorkspaceRecoveryTx reads the owner's validated historical episode within
+// a consumer's transaction. It issues no execution or recovery-driver grant.
+func WorkspaceRecoveryTx(tx ledger.Reader, id string) (WorkspaceRecovery, error) {
+	return recoveryByIDTx(tx, id)
+}
+
 func (s *Service) WorkspaceRecovery(ctx context.Context, id string) (WorkspaceRecovery, error) {
 	var r WorkspaceRecovery
 	err := s.l.Read(ctx, func(tx *ledger.ReadTx) error { var err error; r, err = recoveryByIDTx(tx, id); return err })

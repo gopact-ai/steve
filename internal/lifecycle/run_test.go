@@ -1290,3 +1290,41 @@ func TestRunEndsAHangingCompletionWhenItsSettledTimeoutRunsOut(t *testing.T) {
 		}
 	}
 }
+
+func TestLeasedSessionInputsMatchTheAcceptedRecordAndLockBeforePreparation(t *testing.T) {
+	servers := []acp.MCPServer{acp.HTTPMCPServer("session", "http://127.0.0.1:1/mcp", nil)}
+	record := attempt.Record{Spec: attempt.Spec{ID: "accepted", TaskID: "task", Node: "worker", Harness: "native", Workspace: project.Workspace{Path: "/canonical"}}, State: attempt.Leased}
+	for _, mode := range []string{"match", "workspace", "node", "harness", "prepared", "preparing", "session"} {
+		t.Run(mode, func(t *testing.T) {
+			e := &Execution{o: Options{Spec: attempt.Spec{ID: "stale"}, Workdir: "/copy", Upstream: "retired"}, Record: record, Upstream: "retired"}
+			at, directory := harness.Placement{Node: "worker", Harness: "native"}, "/canonical"
+			switch mode {
+			case "workspace":
+				directory = "/other"
+			case "node":
+				at.Node = "other"
+			case "harness":
+				at.Harness = "other"
+			case "prepared":
+				e.Record.State = attempt.Prepared
+			case "preparing":
+				e.sessionInputsLocked = true
+			case "session":
+				e.armed = true
+			}
+			err := e.UseLeasedSessionInputs(roster.Candidate{}, at, directory, "", servers)
+			if (err == nil) != (mode == "match") {
+				t.Fatalf("input synchronization %s: %v", mode, err)
+			}
+			if mode == "match" {
+				if e.o.Spec.ID != record.ID || e.o.Workdir != record.Workspace.Path || e.o.At != at || e.Upstream != "" || e.o.Upstream != "" || len(e.Servers) != 1 || len(e.o.Servers) != 1 {
+					t.Fatalf("captured option copies differ: %+v", e.o)
+				}
+				e.sessionInputsLocked = true
+				if err := e.UseLeasedSessionInputs(roster.Candidate{}, at, directory, "revived", servers); err == nil {
+					t.Fatal("native preparation permitted another input change")
+				}
+			}
+		})
+	}
+}

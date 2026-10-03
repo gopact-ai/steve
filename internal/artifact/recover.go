@@ -501,8 +501,12 @@ func (s *Store) pathState(ctx context.Context, p project.Project, land Landing, 
 	if err != nil {
 		return "", err
 	}
+	kind := ops.PathState
+	if land.Recovery != nil {
+		kind = ops.RecoveryPathState
+	}
 	result, err := s.operation(ctx, p.Home.Node, ops.Request{
-		Op: ops.PathState, Repo: bare, WorkTree: p.Home.Path,
+		Op: kind, Repo: bare, WorkTree: p.Home.Path,
 		From: land.Now, Commit: land.Merged, Path: path,
 	})
 	if err != nil {

@@ -134,3 +134,32 @@ func TestTaskStopPendingIsRecordedOnce(t *testing.T) {
 func taskStopPending(t *testing.T, s *Service, id string, locale i18n.Locale) error {
 	return s.TaskStopPending(i18n.WithLocale(t.Context(), locale), id, "task-stop-recovery")
 }
+
+func TestTaskStopRejectsKnownContextAndImportedIdentityMismatches(t *testing.T) {
+	for _, mode := range []string{"context", "native-import"} {
+		t.Run(mode, func(t *testing.T) {
+			s, _, original, proof, tasks := retainedFixture(t)
+			if mode == "context" {
+				var err error
+				original, err = s.Advance(t.Context(), original.ID, Snapshotted, "fixture", func(r *Record) { r.NativeContext = "known-native" })
+				if err != nil {
+					t.Fatal(err)
+				}
+				proof.Session.ContextID = "another-native"
+			} else {
+				proof.Session.Binding.NativeImportID = "another-import"
+			}
+			if _, err := tasks.SetAside(original.TaskID, task.StatePaused); err != nil {
+				t.Fatal(err)
+			}
+			proof.Session.ProcessStopped, proof.Session.State, proof.Session.Command = true, "closed", nil
+			if _, err := s.ConfirmTaskStopped(t.Context(), original.ID, "fixture", proof); err == nil {
+				t.Fatal("foreign native identity was accepted as the original stop")
+			}
+			current, err := s.Get(t.Context(), original.ID)
+			if err != nil || current.Revision != original.Revision || current.NativeContext != original.NativeContext {
+				t.Fatalf("rejected proof changed the original: %+v %v", current, err)
+			}
+		})
+	}
+}

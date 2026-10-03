@@ -124,6 +124,46 @@ func recoveryNativeProof(n RecoveryNative, proof RetainedEvidence) error {
 	return nil
 }
 
+// Complete an unknown retirement identity only inside the original stop
+// owner's acceptance transaction, after the exact open receipt was verified.
+func completeRecoveryStoppedIdentityTx(tx *ledger.Tx, record Record, st nodewire.SessionState) error {
+	id := ""
+	if record.Abandoned != nil {
+		id = record.Abandoned.WorkspaceRecoveryID
+	}
+	if id == "" && record.WorkspaceRecovery != nil {
+		id = record.WorkspaceRecovery.ID
+	}
+	if id == "" {
+		return nil
+	}
+	r, err := recoveryByIDTx(tx, id)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i, native := range r.NativeRetirements {
+		if native.Binding.AttemptID != record.ID {
+			continue
+		}
+		if native.Binding != st.Binding || native.Harness != record.Harness || native.Command != InputCommandID(record) || native.Session != "" && native.Session != record.Session || native.Context != "" && native.Context != record.NativeContext {
+			return ErrStopConfirmationRequired
+		}
+		if native.Proof != nil {
+			return ErrStopConfirmationRequired
+		}
+		if native.Session == record.Session && native.Context == record.NativeContext {
+			continue
+		}
+		r.NativeRetirements[i].Session, r.NativeRetirements[i].Context = record.Session, record.NativeContext
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return saveWorkspaceRecoveryTx(tx, &r, "recovery-native-identity")
+}
+
 // AcceptRecoveryNativeStop consumes only a fresh exact idle-close receipt.
 // It does not finish a task or rewrite its native accounting.
 func (s *Service) AcceptRecoveryNativeStop(ctx context.Context, expected WorkspaceRecovery, native RecoveryNative, driver ledger.Lease, proof RetainedEvidence) error {
