@@ -3,6 +3,8 @@ package attempt
 import (
 	"context"
 	"errors"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
@@ -83,9 +85,13 @@ func (s *Service) ConfirmRecoveryCopyRemoved(ctx context.Context, id string, dri
 func (s *Service) RecordRecoveryWait(ctx context.Context, id string, driver ledger.Lease, cause error) error {
 	message := ""
 	if cause != nil {
-		message = cause.Error()
+		message = strings.ToValidUTF8(cause.Error(), "�")
 		if len(message) > 2048 {
-			message = message[:2048]
+			cut := 2048
+			for !utf8.RuneStart(message[cut]) {
+				cut--
+			}
+			message = message[:cut]
 		}
 	}
 	return s.l.Update(ctx, func(tx *ledger.Tx) error {
