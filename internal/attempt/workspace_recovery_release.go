@@ -58,6 +58,7 @@ func ReleaseRecoveryTx(tx *ledger.Tx, id string, version int64, driver ledger.Le
 		return contentreplica.ErrIntegrity
 	}
 	r.Result, r.ReleasedAt, r.Phase = &result, at, "released"
+	r.Error = ""
 	return saveWorkspaceRecoveryTx(tx, &r, "recovery-released")
 }
 

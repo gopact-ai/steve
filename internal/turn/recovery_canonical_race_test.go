@@ -21,6 +21,17 @@ type canonicalRecoveryRaceAttempts struct {
 	calls  int
 }
 
+type fixedRecoveryRefusal struct {
+	lifecycle.Attempts
+	record attempt.Record
+	calls  int
+}
+
+func (a *fixedRecoveryRefusal) Open(context.Context, attempt.Spec) (attempt.Record, error) {
+	a.calls++
+	return a.record, attempt.ErrWorkspaceRecovery
+}
+
 func (a *canonicalRecoveryRaceAttempts) Open(ctx context.Context, spec attempt.Spec) (attempt.Record, error) {
 	a.calls++
 	if a.calls == 1 {
@@ -101,5 +112,50 @@ func TestRecoveryReleaseClearsThePreviousDiagnostic(t *testing.T) {
 	current, err := c.attempts.WorkspaceRecovery(t.Context(), episode.ID)
 	if err != nil || current.Phase != "released" || current.Error != "new cleanup refusal" {
 		t.Fatalf("cleanup could not record its own later diagnostic: %+v %v", current, err)
+	}
+}
+
+func TestCanonicalRecoveryRefreshStopsAtAcceptedOrUnexplainedRefusals(t *testing.T) {
+	for _, mode := range []string{"accepted", "unexplained", "other-project", "worktree"} {
+		t.Run(mode, func(t *testing.T) {
+			c, p, _, _ := recoveryCopyFixture(t, true)
+			req := Request{ConversationID: "console:bounded-refresh", MessageID: "bounded-refresh", SenderOpenID: "owner"}
+			tracked, err := c.tasks.Create(task.Task{Channel: req.ConversationID, Transport: "console", Member: "worker", ProjectID: p.ID, Workspace: p.Home.Path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.tasks.BeginTurn(tracked.ID, "worker", "node", task.TurnInput{TurnID: req.MessageID, Address: channel.Address{Conversation: req.ConversationID, Channel: "console", Message: req.MessageID}}); err != nil {
+				t.Fatal(err)
+			}
+			scope, err := c.executions.Begin(t.Context(), execution.Key{TaskID: tracked.ID, InstanceID: req.MessageID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer scope.Finish(nil)
+			selected := agent.Agent{ID: "worker", Node: p.Home.Node, Harness: "mock"}
+			spec, _, err := c.turnSpec(scope.Context(), req, selected, tracked.ID, project.Binding{ProjectID: p.ID}, p.Canonical())
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec.ID = "bounded-proposal"
+			refused := &fixedRecoveryRefusal{Attempts: c.attempts}
+			wantCalls := 1
+			switch mode {
+			case "accepted":
+				refused.record.ID = "accepted-once"
+			case "unexplained":
+				wantCalls = 2
+			case "other-project":
+				spec.Project = "other"
+			case "worktree":
+				spec.Workspace.Kind = project.KindWorktree
+			}
+			turn := &chatTurn{c: c, req: req, selected: selected, tracked: tracked.ID, binding: project.Binding{ProjectID: p.ID}, workspace: p.Canonical(), clock: newTurnClock(), spent: &turnSpend{resetIdle: func() {}}}
+			admission := recoveryAdmissionAttempts{waitingAttempts: waitingAttempts{Attempts: refused, passes: func(error) bool { return false }}, turn: turn}
+			got, err := admission.Open(scope.Context(), spec)
+			if !errors.Is(err, attempt.ErrWorkspaceRecovery) || refused.calls != wantCalls || got.ID != refused.record.ID {
+				t.Fatalf("refusal replay crossed its boundary: %+v opens=%d/%d err=%v", got, refused.calls, wantCalls, err)
+			}
+		})
 	}
 }

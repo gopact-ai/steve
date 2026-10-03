@@ -47,17 +47,38 @@ type recoveryAdmissionAttempts struct {
 }
 
 func (a recoveryAdmissionAttempts) Open(ctx context.Context, spec attempt.Spec) (attempt.Record, error) {
+	if spec.ID == "" {
+		spec.ID = attempt.NewID()
+	}
+	refreshedWithoutEpisode := false
 	for {
 		record, err := a.waitingAttempts.Open(ctx, spec)
-		if err == nil || record.ID != "" || spec.WorkspaceRecovery == nil || !errors.Is(err, attempt.ErrWorkspaceRecovery) {
+		if err == nil || record.ID != "" || !errors.Is(err, attempt.ErrWorkspaceRecovery) {
 			return record, err
 		}
-		episode, readErr := a.turn.c.attempts.WorkspaceRecovery(ctx, spec.WorkspaceRecovery.ID)
-		if readErr != nil {
-			return record, readErr
-		}
-		if episode.Phase != "draining" && episode.Phase != "capture" && episode.Phase != "landing" && episode.Phase != "released" {
-			return record, err
+		if spec.WorkspaceRecovery == nil {
+			if spec.Workspace.Kind != project.KindCanonical || spec.Project != a.turn.binding.ProjectID {
+				return record, err
+			}
+			_, active, readErr := a.turn.c.attempts.RecoveryForProject(ctx, spec.Project)
+			if readErr != nil {
+				return record, readErr
+			}
+			// Release may have committed between the refusal and this read.
+			// Refresh once without an active episode, never loop on an
+			// unexplained repeated refusal.
+			if !active && refreshedWithoutEpisode {
+				return record, err
+			}
+			refreshedWithoutEpisode = !active
+		} else {
+			episode, readErr := a.turn.c.attempts.WorkspaceRecovery(ctx, spec.WorkspaceRecovery.ID)
+			if readErr != nil {
+				return record, readErr
+			}
+			if episode.Phase != "draining" && episode.Phase != "capture" && episode.Phase != "landing" && episode.Phase != "released" {
+				return record, err
+			}
 		}
 		ws, err := a.turn.c.awaitRecoveryWorkspace(ctx, a.turn.req, a.turn.selected, a.turn.binding, a.turn.spent.resetIdle)
 		if err != nil {
