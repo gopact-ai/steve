@@ -47,6 +47,9 @@ func TestRecoveryValidationUsesQualifiedMetadataLocations(t *testing.T) {
 		{"root-relative-work", `/srv/repo`, `\root\work`, false},
 		{"not-work", `/srv/repo`, `/srv/container/other`, false},
 		{"literal-backslash-work-name", `/srv/repo`, `/srv/container\work`, false},
+		{"posix-dot-work-name", `/srv/repo`, `/srv/container/work/.`, false},
+		{"drive-dot-work-name", `C:\root\repo`, `C:\root\container\work\.`, false},
+		{"unc-dot-work-name", `\\server\share\repo`, `\\server\share\container\work\.`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := validateWorkspaceRecovery(recoveryPathEpisode(tc.target, tc.work))
@@ -63,6 +66,7 @@ func TestRecoveryWriterEqualityUsesQualifiedMetadataPaths(t *testing.T) {
 		same bool
 	}{
 		{`C:\root\work`, `C:/root/temp/../work`, true},
+		{`C:\root\work`, `c:\root\work`, true},
 		{`\\server\share\work`, `\\server\share\temp\..\work`, true},
 		{`C:\root\work`, `D:\root\work`, false},
 		{`\\server\share\work`, `\\server\other\work`, false},
@@ -87,7 +91,7 @@ func TestRecoveryAdmissionKeepsQualifiedWindowsWriterHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := s.l.Update(t.Context(), func(tx *ledger.Tx) error {
-		return CheckWriterTx(tx, "node", `C:/root/temp/../repo`)
+		return CheckWriterTx(tx, "node", `c:/root/temp/../repo`)
 	})
 	if !errors.Is(err, ErrStopConfirmationRequired) {
 		t.Fatalf("qualified alias bypassed real writer guard: %v", err)
@@ -123,7 +127,7 @@ func storeRecoveryPathEpisode(t *testing.T, s *Service, r WorkspaceRecovery) {
 
 func TestRecoveryGuardsProtectQualifiedWindowsContainerUntilRemoved(t *testing.T) {
 	for _, location := range []struct{ name, target, work, container, within, sibling string }{
-		{"drive", `C:\root\repo`, `C:\root\container\work`, `C:/root/container`, `C:/root/container/marker`, `C:/root/container-other`},
+		{"drive", `C:\root\repo`, `C:\root\container\work`, `c:/root/container`, `c:/root/container/marker`, `c:/root/container-other`},
 		{"unc", `\\server\share\repo`, `\\server\share\container\work`, `\\server\share\container`, `\\server\share\container\marker`, `\\server\share\container-other`},
 	} {
 		for _, phase := range []string{"ready", "released-pending", "released-removed"} {
@@ -163,6 +167,11 @@ func TestRecoveryGuardsProtectQualifiedWindowsContainerUntilRemoved(t *testing.T
 					desired[1].Home.Path = location.sibling
 					if err := checkRecoveryDeclarationsTx(tx, desired); err != nil {
 						t.Fatalf("similar sibling refused: %v", err)
+					}
+					desired[1].Home.Path = r.Target.Path + `\nested`
+					err = checkRecoveryDeclarationsTx(tx, desired)
+					if errors.Is(err, ErrWorkspaceRecovery) != (phase == "ready") || phase != "ready" && err != nil {
+						t.Fatalf("target ancestor hold: %v, phase=%s", err, phase)
 					}
 					return nil
 				}); err != nil {

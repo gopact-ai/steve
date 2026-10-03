@@ -11,7 +11,7 @@ func TestRecoveryHomeGuardUsesQualifiedMetadataPaths(t *testing.T) {
 	for _, tc := range []struct {
 		name, home, same, different string
 	}{
-		{"drive", `C:\root\repo`, `C:/root/temp/../repo`, `D:\root\repo`},
+		{"drive", `C:\root\repo`, `c:/root/temp/../repo`, `D:\root\repo`},
 		{"unc", `\\server\share\repo`, `\\server\share\temp\..\repo`, `\\server\other\repo`},
 		{"posix", `/srv/repo`, `/srv/temp/../repo`, `/srv/other`},
 		{"posix-backslash", `/srv/a\b`, `/srv/./a\b`, `/srv/a/b`},
@@ -43,7 +43,7 @@ func TestRecoveryContainerGuardUsesQualifiedMetadataParents(t *testing.T) {
 	for _, tc := range []struct {
 		name, work, within, sibling string
 	}{
-		{"drive", `C:\root\container\work`, `C:/root/container/marker`, `C:/root/container-other`},
+		{"drive", `C:\root\container\work`, `c:/root/container/marker`, `c:/root/container-other`},
 		{"unc", `\\server\share\container\work`, `\\server\share\container\marker`, `\\server\share\container-other`},
 		{"posix", `/srv/container/work`, `/srv/container/marker`, `/srv/container-other`},
 		{"posix-backslash", `/srv/a\b/work`, `/srv/a\b/marker`, `/srv/a/b`},

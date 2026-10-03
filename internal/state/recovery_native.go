@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"path"
 	"reflect"
 
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/workspacepath"
 )
 
 // RecoveryContextsTx owns the live and archived cwd enumeration. Empty slots
@@ -25,7 +25,7 @@ func RecoveryContextsTx(tx ledger.Reader, node, directory string) ([]Session, er
 	}
 	var result []Session
 	add := func(session Session) {
-		if session.NodeID == node && session.Workspace != "" && path.Clean(session.Workspace) == path.Clean(directory) {
+		if session.NodeID == node && workspacepath.Same(session.Workspace, directory) {
 			result = append(result, session)
 		}
 	}

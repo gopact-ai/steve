@@ -3,13 +3,12 @@ package attempt
 import (
 	"context"
 	"fmt"
-	"path"
 	"slices"
-	"strings"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/workspacepath"
 )
 
 func checkRecoveryDeclarationsTx(tx ledger.Reader, desired []project.Project) error {
@@ -24,14 +23,14 @@ func checkRecoveryDeclarationsTx(tx ledger.Reader, desired []project.Project) er
 				kept = true
 			}
 			for _, w := range p.Workspaces() {
-				if r.CopyRemovedAt.IsZero() && r.Workspace.Path != "" && w.Node == r.Workspace.Node && recoveryPathsOverlap(w.Path, path.Dir(r.Workspace.Path)) {
+				if r.CopyRemovedAt.IsZero() && r.Workspace.Path != "" && w.Node == r.Workspace.Node && recoveryPathsOverlap(w.Path, workspacepath.Dir(r.Workspace.Path)) {
 					return ErrWorkspaceRecovery
 				}
 				if r.Phase == "released" || w.Node != r.Target.Node {
 					continue
 				}
-				a, b := path.Clean(w.Path), path.Clean(r.Target.Path)
-				if a == b && p.ID == r.Project && w.Kind == project.KindCanonical {
+				a, b := w.Path, r.Target.Path
+				if samePhysicalPath(a, b) && p.ID == r.Project && w.Kind == project.KindCanonical {
 					continue
 				}
 				if recoveryPathsOverlap(a, b) {
@@ -90,7 +89,7 @@ func RecoveryCopyHoldTx(tx ledger.Reader, node, directory string) error {
 		if !r.CopyRemovedAt.IsZero() || r.Workspace.Path == "" || r.Workspace.Node != node {
 			continue
 		}
-		container := path.Dir(r.Workspace.Path)
+		container := workspacepath.Dir(r.Workspace.Path)
 		if samePhysicalPath(container, directory) || samePhysicalPath(r.Workspace.Path, directory) {
 			return ErrWorkspaceRecovery
 		}
@@ -118,6 +117,5 @@ func (s *Service) RecoveryWorkspaces(ctx context.Context) ([]project.Workspace, 
 }
 
 func recoveryPathsOverlap(a, b string) bool {
-	a, b = path.Clean(a), path.Clean(b)
-	return a == b || strings.HasPrefix(a, strings.TrimSuffix(b, "/")+"/") || strings.HasPrefix(b, strings.TrimSuffix(a, "/")+"/")
+	return workspacepath.Overlap(a, b)
 }

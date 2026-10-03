@@ -11,7 +11,7 @@ func TestRecoveryContextsUseQualifiedMetadataInLiveAndArchive(t *testing.T) {
 	for _, tc := range []struct {
 		name, directory, alias, different string
 	}{
-		{"drive", `C:\root\work`, `C:/root/temp/../work`, `D:\root\work`},
+		{"drive", `C:\root\work`, `c:/root/temp/../work`, `D:\root\work`},
 		{"unc", `\\server\share\work`, `\\server\share\temp\..\work`, `\\server\other\work`},
 		{"posix", `/srv/work`, `/srv/temp/../work`, `/srv/other`},
 		{"literal-backslash", `/srv/a\b`, `/srv/./a\b`, `/srv/a/b`},
@@ -60,6 +60,9 @@ func TestRecoveryContextsUseQualifiedMetadataInLiveAndArchive(t *testing.T) {
 				return err
 			}); err != nil {
 				t.Fatal(err)
+			}
+			if got := store.Conversation("live").Sessions["agent"].Workspace; got != tc.alias {
+				t.Fatalf("metadata read rewrote stored cwd: %q", got)
 			}
 		})
 	}
