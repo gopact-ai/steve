@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -19,6 +20,7 @@ type canonicalRecoveryRaceAttempts struct {
 	lifecycle.Attempts
 	before func()
 	calls  int
+	refuse func(attempt.Spec) error
 }
 
 type fixedRecoveryRefusal struct {
@@ -37,10 +39,26 @@ func (a *canonicalRecoveryRaceAttempts) Open(ctx context.Context, spec attempt.S
 	if a.calls == 1 {
 		a.before()
 	}
+	if a.calls == 2 && a.refuse != nil {
+		return attempt.Record{}, a.refuse(spec)
+	}
 	return a.Attempts.Open(ctx, spec)
 }
 
 func TestCanonicalRecoveryAdmissionRefreshesAnEmptyRefusal(t *testing.T) {
+	checkCanonicalRecoveryAdmission(t, false, false)
+}
+
+func TestCanonicalRecoveryAdmissionWaitsForTheRefreshedCopy(t *testing.T) {
+	checkCanonicalRecoveryAdmission(t, true, false)
+}
+
+func TestCanonicalRecoveryAdmissionKeepsContinuationSlotWaiting(t *testing.T) {
+	checkCanonicalRecoveryAdmission(t, true, true)
+}
+
+func checkCanonicalRecoveryAdmission(t *testing.T, contention, continuation bool) {
+	t.Helper()
 	c, p, source, _ := recoveryCopyFixture(t, true)
 	tracked, err := c.tasks.Create(task.Task{Channel: "console:canonical-race", Transport: "console", Member: "worker", ProjectID: p.ID, Workspace: p.Home.Path})
 	if err != nil {
@@ -66,6 +84,9 @@ func TestCanonicalRecoveryAdmissionRefreshesAnEmptyRefusal(t *testing.T) {
 		t.Fatalf("canonical input: %+v %v", spec, err)
 	}
 	spec.ID = "one-canonical-input"
+	if continuation {
+		req.ExpectedTask = tracked.ID
+	}
 	turn := &chatTurn{c: c, req: req, selected: selected, tracked: tracked.ID, binding: project.Binding{ProjectID: p.ID}, workspace: p.Canonical(), clock: newTurnClock(), spent: &turnSpend{resetIdle: func() {}}}
 	raced := &canonicalRecoveryRaceAttempts{Attempts: c.attempts, before: func() {
 		if _, err := NewAbandonControl(c).AbandonAttempt(t.Context(), source.ID, "owner", 1); err != nil {
@@ -75,9 +96,20 @@ func TestCanonicalRecoveryAdmissionRefreshesAnEmptyRefusal(t *testing.T) {
 			t.Fatal(err)
 		}
 	}}
-	admission := recoveryAdmissionAttempts{waitingAttempts: waitingAttempts{Attempts: raced, passes: func(error) bool { return false }}, turn: turn}
+	wantCalls := 2
+	if contention {
+		wantCalls = 3
+		raced.refuse = func(spec attempt.Spec) error {
+			if continuation {
+				return attempt.NoSlot{Endpoint: "node/mock", Slots: 1}
+			}
+			return attempt.Busy{Resource: "workspace:" + spec.Workspace.ID, Holder: "other-copy-writer"}
+		}
+	}
+	admission := turn.options(spec, roster.Candidate{}).Attempts.(recoveryAdmissionAttempts)
+	admission.waitingAttempts.Attempts = raced
 	got, err := admission.Open(ctx, spec)
-	if err != nil || got.ID != spec.ID || got.WorkspaceRecovery == nil || got.Workspace.Kind != project.KindWorktree || got.Workspace.Path == p.Home.Path || !turn.recoveryRefreshed || raced.calls != 2 {
+	if err != nil || got.ID != spec.ID || got.WorkspaceRecovery == nil || got.Workspace.Kind != project.KindWorktree || got.Workspace.Path == p.Home.Path || !turn.recoveryRefreshed || raced.calls != wantCalls {
 		t.Fatalf("canonical refusal rejected an unadmitted input: %+v refreshed=%v opens=%d err=%v", got, turn.recoveryRefreshed, raced.calls, err)
 	}
 	if got.Execution == nil || *got.Execution != token || got.TaskID != tracked.ID || got.TurnID != req.MessageID {
