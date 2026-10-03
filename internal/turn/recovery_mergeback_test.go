@@ -953,6 +953,10 @@ func TestRecoveryResolverAdmittedWALSurvivesTaskCancelAndOwnerChangeWithoutNewAu
 	if replayed, err := NewWorkspaceRecoveryControl(c).Replay(t.Context(), episode.ID); err != nil || !replayed {
 		t.Fatalf("old committed decision required fresh owner/task authority: %v %v", replayed, err)
 	}
+	confirmed, err := c.artifacts.LandRecoveryResolutionOnce(t.Context(), *stuck.Resolution, id, source)
+	if err != nil || confirmed.ID != land.ID || confirmed.Committed == nil || *confirmed.Committed != *land.Committed {
+		t.Fatalf("committed sink required revoked authority again: %+v %v", confirmed, err)
+	}
 	if nodes.applies != 1 {
 		t.Fatalf("replay created another apply under revoked authority: %d", nodes.applies)
 	}

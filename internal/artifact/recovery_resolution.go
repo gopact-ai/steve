@@ -54,7 +54,7 @@ func recoveryLandingTx(tx ledger.Reader, id string) (Landing, error) {
 	return land, nil
 }
 
-func recoveryConflictTx(tx *ledger.Tx, r attempt.WorkspaceRecovery, ref attempt.RecoveryResolutionRef) (Landing, error) {
+func recoveryConflictTx(tx ledger.Reader, r attempt.WorkspaceRecovery, ref attempt.RecoveryResolutionRef) (Landing, error) {
 	if ref.Episode != r.ID || ref.HeadVersion != r.FrozenHeadVersion || ref.Root != attempt.RecoveryLandingID(r) || ref.Conflict == "" || ref.Marked == "" || ref.Canonical == "" {
 		return Landing{}, ErrNotBlocked
 	}
@@ -83,11 +83,17 @@ func recoveryConflictTx(tx *ledger.Tx, r attempt.WorkspaceRecovery, ref attempt.
 }
 
 // LandRecoveryResolutionOnce is the only recovered plan sink. It acquires the
-// owner-controlled episode driver once, then calls the already-authorized
-// executor directly; it never recurses through a public driver entrance.
+// owner-controlled episode driver for fresh work. An exact committed result
+// is acknowledged read-only, without another driver or physical landing.
 func (s *Store) LandRecoveryResolutionOnce(ctx context.Context, ref attempt.RecoveryResolutionRef, artifactID string, source Source) (Landing, error) {
-	if s.recoveryResolutionDriver == nil || source.Execution == nil || source.AttemptID == "" {
-		return Landing{}, errors.New("recovery resolution requires its owner driver and resolver execution")
+	if source.Execution == nil || source.AttemptID == "" {
+		return Landing{}, errors.New("recovery resolution requires its resolver execution")
+	}
+	if land, committed, err := s.committedRecoveryResolution(ctx, ref, artifactID, source); err != nil || committed {
+		return land, err
+	}
+	if s.recoveryResolutionDriver == nil {
+		return Landing{}, errors.New("recovery resolution requires its owner driver")
 	}
 	var result Landing
 	err := s.recoveryResolutionDriver(ctx, ref.Episode, func(ctx context.Context, driver ledger.Lease) error {
@@ -96,6 +102,85 @@ func (s *Store) LandRecoveryResolutionOnce(ctx context.Context, ref attempt.Reco
 		return err
 	})
 	return result, err
+}
+
+// Only a complete committed winner can be read without fresh authority. Every
+// check uses immutable accepted identities in one read transaction; a later
+// canonical name is neither this decision's receipt nor new write permission.
+func (s *Store) committedRecoveryResolution(ctx context.Context, ref attempt.RecoveryResolutionRef, artifactID string, source Source) (Landing, bool, error) {
+	var land Landing
+	committed := false
+	err := s.ledger.Read(ctx, func(tx *ledger.ReadTx) error {
+		var err error
+		land, err = recoveryLandingTx(tx, RecoveryResolutionID(ref, artifactID, &source))
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if land.State != LandCommitted {
+			return nil
+		}
+		r, err := attempt.WorkspaceRecoveryTx(tx, ref.Episode)
+		if err != nil {
+			return err
+		}
+		link := RecoveryLink{Episode: ref.Episode, HeadVersion: ref.HeadVersion, Resolution: &ref}
+		if !land.Recoverable || land.Project != r.Project || land.Target != r.Target || land.Artifact != artifactID || !sameSource(land.Source, &source) || !sameRecoveryLink(land.Recovery, &link) || r.Phase != "landing" && r.Phase != "released" || r.FrozenHeadVersion != ref.HeadVersion || r.Head.Version != ref.HeadVersion || r.Producer != nil || r.Residual == nil || land.Committed == nil || land.Committed.Artifact == "" || land.Committed.Version < 1 {
+			return ErrNotBlocked
+		}
+		if err := checkResolutionLandingTx(tx, r, land, false); err != nil {
+			return err
+		}
+		accepted, err := acceptedResolutionTx(tx, land)
+		if err != nil {
+			return err
+		}
+		if accepted.Manual {
+			return ErrNotBlocked
+		}
+		if err := checkResolutionSourceIdentityTx(tx, r.Project, artifactID, &source); err != nil {
+			return err
+		}
+		retained := false
+		for _, resolver := range r.Resolvers {
+			if resolver.Landing == land.ID && resolver.Artifact == artifactID && resolver.Attempt == source.AttemptID && resolver.Execution == *source.Execution {
+				retained = true
+			}
+		}
+		if !retained {
+			return ErrNotBlocked
+		}
+		winner, err := recoveryWinnerTx(tx, r)
+		if err != nil {
+			return err
+		}
+		if winner.ID != land.ID || *winner.Committed != *land.Committed {
+			return ErrNotBlocked
+		}
+		if r.Phase == "released" && (r.Result == nil || r.Result.Landing != land.ID || r.Result.Artifact != land.Committed.Artifact || r.Result.Version != land.Committed.Version || r.Result.Outcome != "resolved") {
+			return ErrNotBlocked
+		}
+		var receiptID string
+		err = tx.QueryRow(`SELECT id FROM bindings WHERE kind=? AND id=?`, manifestKind, land.Committed.Artifact).Scan(&receiptID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		receipt, err := artifactTx(tx, land.Committed.Artifact)
+		if err != nil {
+			return err
+		}
+		if receipt.Project != r.Project {
+			return ErrNotBlocked
+		}
+		committed = true
+		return nil
+	})
+	return land, committed, err
 }
 
 func (s *Store) executeRecoveryResolution(ctx context.Context, ref attempt.RecoveryResolutionRef, artifactID string, source *Source, manual bool, driver ledger.Lease) (Landing, error) {
@@ -158,7 +243,7 @@ func (s *Store) executeRecoveryResolution(ctx context.Context, ref attempt.Recov
 	return land, err
 }
 
-func checkResolutionSourceTx(tx ledger.Reader, projectID, artifactID string, source *Source) error {
+func checkResolutionSourceIdentityTx(tx ledger.Reader, projectID, artifactID string, source *Source) error {
 	if source == nil || source.Execution == nil || source.AttemptID == "" {
 		return task.ErrExecutionStopped
 	}
@@ -168,6 +253,13 @@ func checkResolutionSourceTx(tx ledger.Reader, projectID, artifactID string, sou
 	}
 	if r.Project != projectID || r.Execution == nil || *r.Execution != *source.Execution || !r.State.Terminal() || r.Result == nil || r.Result.Artifact != artifactID || r.Result.CaptureError != "" {
 		return errors.New("resolution artifact differs from its accepted producer")
+	}
+	return nil
+}
+
+func checkResolutionSourceTx(tx ledger.Reader, projectID, artifactID string, source *Source) error {
+	if err := checkResolutionSourceIdentityTx(tx, projectID, artifactID, source); err != nil {
+		return err
 	}
 	return task.CheckExecutionTx(tx, source.Execution)
 }
@@ -325,7 +417,7 @@ func recoveryWinnerTx(tx ledger.Reader, r attempt.WorkspaceRecovery) (Landing, e
 	return land, nil
 }
 
-func checkResolutionLandingTx(tx *ledger.Tx, r attempt.WorkspaceRecovery, land Landing, newAdmission bool) error {
+func checkResolutionLandingTx(tx ledger.Reader, r attempt.WorkspaceRecovery, land Landing, newAdmission bool) error {
 	accepted, err := acceptedResolutionTx(tx, land)
 	if err != nil {
 		return err
