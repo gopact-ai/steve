@@ -30,7 +30,7 @@ func (m *Manager) CloseRecoverySession(ctx context.Context, at Placement, id, wo
 	if err != nil {
 		return state, err
 	}
-	if state.ID != id || state.Binding != binding.Binding || state.Harness != at.Harness || !state.ProcessStopped || state.State != nodewire.SessionClosed || state.Command != nil && state.Command.ID != binding.CommandID {
+	if state.ID != id || state.Binding != binding.Binding || state.Harness != at.Harness || !state.ProcessStopped || (state.State != nodewire.SessionClosed && state.State != nodewire.SessionInterrupted) || state.Command != nil && state.Command.ID != binding.CommandID {
 		return state, unprovedKillReceipt("idle close did not prove the exact native process stopped")
 	}
 	return state, nil
