@@ -84,7 +84,11 @@ func Dir(value string) string {
 	if p.mode == 'w' {
 		tail := strings.ReplaceAll(value[len(p.volume):], `\`, "/")
 		parent := path.Dir("/" + tail)
-		return p.volume + strings.ReplaceAll(parent, "/", `\`)
+		volume := p.volume
+		if value[1] == ':' {
+			volume = value[:2]
+		}
+		return volume + strings.ReplaceAll(parent, "/", `\`)
 	}
 	return path.Dir(value)
 }

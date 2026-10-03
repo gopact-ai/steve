@@ -3,12 +3,12 @@ package artifact
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/artifact/ops"
-	"path/filepath"
 
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/workspacepath"
 )
 
 // CaptureRecoveryResidual is the frozen episode's exact non-destructive R
@@ -110,7 +110,7 @@ func (s *Store) verifyRecoveryCopy(ctx context.Context, p project.Project, r att
 			if err != nil {
 				return err
 			}
-			request := ops.Request{Op: ops.InspectRecovery, WorkTree: root, Path: filepath.Dir(r.Workspace.Path), Recovery: r.ID, Commit: r.Baseline.Artifact}
+			request := ops.Request{Op: ops.InspectRecovery, WorkTree: root, Path: workspacepath.Dir(r.Workspace.Path), Recovery: r.ID, Commit: r.Baseline.Artifact}
 			observed, err := s.operation(ctx, r.Workspace.Node, request)
 			if err != nil {
 				return err
@@ -119,7 +119,7 @@ func (s *Store) verifyRecoveryCopy(ctx context.Context, p project.Project, r att
 				return nil
 			}
 		} else {
-			observed, err := s.operation(ctx, "", ops.Request{Op: ops.InspectRecovery, WorkTree: root, Path: filepath.Dir(r.Workspace.Path), Recovery: r.ID, Commit: r.Baseline.Artifact})
+			observed, err := s.operation(ctx, "", ops.Request{Op: ops.InspectRecovery, WorkTree: root, Path: workspacepath.Dir(r.Workspace.Path), Recovery: r.ID, Commit: r.Baseline.Artifact})
 			if err != nil {
 				return err
 			}

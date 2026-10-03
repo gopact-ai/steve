@@ -10,7 +10,7 @@ func TestQualifiedMetadataSyntaxAndRoots(t *testing.T) {
 	}{
 		{`C:\root\container\work`, `C:\root\container`, "work", true},
 		{`C:/root\container//work`, `C:\root\container`, "work", true},
-		{`c:/root\container//work`, `C:\root\container`, "work", true},
+		{`c:/root\container//work`, `c:\root\container`, "work", true},
 		{`C:\root\temp\..\work`, `C:\root`, "work", true},
 		{`C:\..\work`, `C:\`, "work", true},
 		{`C:\`, `C:\`, "/", true},

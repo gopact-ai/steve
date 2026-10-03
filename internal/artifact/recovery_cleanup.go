@@ -3,11 +3,11 @@ package artifact
 import (
 	"context"
 	"errors"
-	"path/filepath"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/workspacepath"
 )
 
 // CleanupRecoveryCopy removes only the fixed platform container after release.
@@ -32,7 +32,7 @@ func (s *Store) CleanupRecoveryCopy(ctx context.Context, id string, driver ledge
 				return r, err
 			}
 		}
-		request := ops.Request{Op: ops.InspectRecovery, WorkTree: root, Path: filepath.Dir(r.Workspace.Path), Recovery: r.ID, Commit: r.Baseline.Artifact, Identity: r.CopyIdentity, RootIdentity: r.CopyRootIdentity}
+		request := ops.Request{Op: ops.InspectRecovery, WorkTree: root, Path: workspacepath.Dir(r.Workspace.Path), Recovery: r.ID, Commit: r.Baseline.Artifact, Identity: r.CopyIdentity, RootIdentity: r.CopyRootIdentity}
 		generation := s.generationOf(ctx, r.Workspace.Node)
 		if generation < 1 {
 			return r, attempt.ErrWorkspaceRecovery
