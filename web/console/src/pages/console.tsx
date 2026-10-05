@@ -41,7 +41,7 @@ import { RecoveryWorkspaceNotice } from "@/components/steve/recovery-workspace";
 import { beginSubmission, retrySubmission, failSubmission, finishSubmission, restoreSubmission, updateDraft, useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission, useMaterials, removeDraftMaterial, submissionRefs, useRewind, beginRewind, endRewind, rewindOf } from "@/lib/drafts";
 import { useI18n } from "@/providers/locale-provider";
 import { useMaterial } from "@/providers/material-provider";
-import { uploadMaterial, refKey } from "@/lib/api/material";
+import { uploadMaterial, materialUploadPhase, refKey, type MaterialUploadPhase } from "@/lib/api/material";
 import { MaterialPreview } from "@/components/steve/material-shelf";
 import { QuestionPanel } from "@/components/steve/question-panel";
 import type { MaterialRef } from "@/lib/types";
@@ -92,6 +92,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
     const materials = useMaterial();
     const side = useSideChat();
     const [uploading, setUploading] = useState(false);
+    const [uploadError, setUploadError] = useState<{ conversation: string; project: string; file: string; phase: MaterialUploadPhase | "draft"; status?: number; remaining: number } | null>(null);
     const [openedMaterial, setOpenedMaterial] = useState<MaterialRef | null>(null);
     const { intent, consume } = useIntent();
     const [conversation, setConversation] = useState(initialConversation);
@@ -272,7 +273,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
         setChild(null);
         setPickedTask(null);
         setSelectedReply(null);
-        setStatus("");
+        setStatus(""); setUploadError(null);
         window.setTimeout(() => box.current?.focus(), 0);
     }
 
@@ -388,7 +389,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
         catch { if (activeConversation.current === conversation) setStatus(t("console.pendingStorage")); return; }
         if (!pending) return;
         clearStopNotice(conversation);
-        if (activeConversation.current === conversation) { setStatus(""); followTranscript.current = true; }
+        if (activeConversation.current === conversation) { setStatus(""); setUploadError(null); followTranscript.current = true; }
         await deliver(pending);
     }
 
@@ -482,12 +483,37 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
         const chosen = Array.from(files ?? []);
         if (!chosen.length || uploading || !context?.project || !submissionSupport.material_refs) return;
         const target = { conversation, project: context.project.id, title };
-        setUploading(true); setStatus("");
-        try { for (const file of chosen) { const material = await uploadMaterial(target.project, file, locale); await materials.add(material, { id: material.id }, target); } }
-        catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }
-        finally { setUploading(false); }
+        setUploading(true); setStatus(""); setUploadError(null);
+        try {
+            for (const [index, file] of chosen.entries()) {
+                let uploaded = false;
+                try {
+                    const material = await uploadMaterial(target.project, file, locale);
+                    uploaded = true;
+                    await materials.add(material, { id: material.id }, target);
+                } catch (error) {
+                    const status = error instanceof HTTPError ? error.status : undefined;
+                    // No response does not distinguish an unreadable local File
+                    // from a transport failure. Never label it a Hub outage or
+                    // expose the browser/server's raw error (paths or credentials).
+                    const name = file.name.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, "") || t("materials.binary");
+                    setUploadError({ conversation: target.conversation, project: target.project, file: name, phase: uploaded ? "draft" : materialUploadPhase(error) ?? "transfer", status, remaining: chosen.length - index - 1 });
+                    break;
+                }
+            }
+        } finally { setUploading(false); }
     }
-    const toolbarStatus = stopState?.uncertain ? t("console.stopUncertain") : status || contextError || conversationsError || (queueError ? readErrorText(queueError) : "") || (replyError ? readErrorText(replyError) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "");
+    const uploadErrorReason = uploadError?.phase === "draft" ? "materials.uploadDraftFailed"
+        : uploadError?.phase === "receipt" ? "materials.uploadReceiptInvalid"
+        : uploadError?.phase === "capability" ? (uploadError.status === 401 || uploadError.status === 403 ? "materials.uploadPreflightDenied" : "materials.uploadPreflightFailed")
+        : uploadError?.status === 400 ? "materials.uploadInvalid"
+        : uploadError?.status === 413 ? "materials.uploadTooLarge"
+        : uploadError?.status === 401 || uploadError?.status === 403 ? "materials.uploadDenied"
+        : uploadError?.status !== undefined ? "materials.uploadRejected" : "materials.uploadUnconfirmed";
+    const supportStatus = submissionSupport.failure instanceof HTTPError ? submissionSupport.failure.status : undefined;
+    const queueFailureText = queueError ? (queueError instanceof HTTPError
+        ? t("console.queueReadHTTPFailed", { status: queueError.status }) : t("console.queueReadFailed")) : "";
+    const toolbarStatus = stopState?.uncertain ? t("console.stopUncertain") : status || contextError || conversationsError || queueFailureText || (replyError ? readErrorText(replyError) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "");
     const listed = useMemo(() => conversations.some((c) => c.id === conversation && c.transport !== "feishu") ? conversations : [{ id: conversation, title: t("console.newConversation"), last_at: "", count: 0, running: false, project: context?.project?.id, agent: context?.agent?.id }, ...conversations], [conversations, conversation, t, context?.project?.id, context?.agent?.id]);
     const agents = useMemo(() => context?.agents ?? [], [context?.agents]);
 
@@ -646,7 +672,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
                             {draftIssue && <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary"><p>{t(draftIssue === "conflict" ? "console.draftConflict" : draftIssue === "unavailable" ? "console.draftLockUnavailable" : "console.draftStorage")}</p>{draftIssue === "conflict" && <><pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words">{savedDraft}</pre><div className="mt-2 flex flex-wrap gap-3"><button type="button" className="underline" onClick={() => void resolveDraftConflict(conversation, "local")}>{t("console.keepLocalDraft")}</button><button type="button" className="underline" onClick={() => void resolveDraftConflict(conversation, "remote")}>{t("console.useSavedDraft")}</button></div></>}</div>}
                             {!canSubmit && <div role="status" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
                                 <p>{submissionSupport.state === "unsupported" ? t("console.unsupportedHub") : submissionSupport.error ? t("console.unknownHub") : t("console.checkingHub")}</p>
-                                {submissionSupport.error && <p className="mt-1 break-words">{submissionSupport.error}</p>}
+                                {submissionSupport.error && supportStatus !== undefined && <p className="mt-1 break-words">{t("console.supportHTTP", { status: supportStatus })}</p>}
                                 <button type="button" className="mt-1 underline disabled:opacity-50" disabled={submissionSupport.checking} onClick={() => void checkSubmissionSupport()}>{submissionSupport.checking ? t("console.checking") : t("console.checkAgain")}</button>
                             </div>}
                             {submission && !submission.active && <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
@@ -662,6 +688,12 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
                             {submissionSupport.interactive_requests && <QuestionPanel key={conversation} conversation={conversation} turnStartedAt={live?.since} />}
                             {draftMaterials.length > 0 && <ul aria-label={t("materials.draftRefs")} className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">{draftMaterials.map((ref) => <li key={refKey(ref)} className="flex max-w-full items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs"><button type="button" className="truncate" onClick={() => setOpenedMaterial(ref)}>{ref.title}{ref.selector?.kind === "lines" ? ` · L${ref.selector.start}–L${ref.selector.end}` : ""}</button><button type="button" aria-label={t("materials.remove", { title: ref.title })} onClick={async () => { if (!await removeDraftMaterial(conversation, ref)) setStatus(t("materials.sourceUnavailable")); }}>×</button></li>)}</ul>}
                             {submissionSupport.material_refs && <div className="mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-3"><label className="cursor-pointer rounded-md px-2 py-1 text-xs text-tertiary hover:bg-secondary">{uploading ? t("materials.uploading") : t("materials.upload")}<input type="file" multiple className="sr-only" disabled={uploading} aria-label={t("materials.upload")} onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} /></label><span className="text-xs text-quaternary">{t("materials.uploadHint")}</span></div>}
+                            {uploadError && uploadError.conversation === conversation && uploadError.project === context?.project?.id && <div role="alert" aria-atomic="true" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
+                                <p className="break-words">{uploadError.status === undefined
+                                    ? t("materials.uploadFailed", { file: uploadError.file, reason: t(uploadErrorReason) })
+                                    : t("materials.uploadHTTPFailed", { file: uploadError.file, status: uploadError.status, reason: t(uploadErrorReason) })}</p>
+                                {uploadError.remaining > 0 && <p className="mt-1 break-words">{t("materials.uploadRemaining", { count: uploadError.remaining })}</p>}
+                            </div>}
                             {openedMaterial && context?.project && <MaterialPreview project={context.project.id} anchor={openedMaterial} onClose={() => setOpenedMaterial(null)} />}
                             <Composer
                                 value={text} hasMaterials={draftMaterials.length > 0} onChange={changeText} onPasteFiles={pasteFiles} onSubmit={submitLine} onStop={stopLine}

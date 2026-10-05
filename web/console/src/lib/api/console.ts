@@ -16,16 +16,21 @@ export const fetchSetup = (conversation: string, agent?: string, signal?: AbortS
     request<{ enabled: boolean; setup?: SessionSetup }>(`/console/setup?${channelQuery(conversation)}${agent ? `&agent=${encodeURIComponent(agent)}` : ""}`, { signal });
 export const fetchSuggest = (conversation: string, line: string, signal?: AbortSignal) => request<{ suggestions: Suggestion[] }>(`/console/suggest?${channelQuery(conversation)}&q=${encodeURIComponent(line)}`, { signal });
 export const fetchVerbs = (signal?: AbortSignal) => request<{ verbs: Verb[] }>("/console/verbs", { signal });
-export interface SubmissionSupport { state: "unknown" | "supported" | "unsupported"; checking: boolean; error: string; material_refs?: boolean; interactive_requests?: boolean }
+export interface SubmissionSupport { state: "unknown" | "supported" | "unsupported"; checking: boolean; error: string; failure?: unknown; material_refs?: boolean; interactive_requests?: boolean }
 let submissionSupport: SubmissionSupport = { state: "unknown", checking: false, error: "" };
 let supportCheck: Promise<SubmissionSupport> | null = null;
 let supportGeneration = 0;
 const supportListeners = new Set<() => void>();
 export const getSubmissionSupport = () => submissionSupport;
 export function subscribeSubmissionSupport(listener: () => void) { supportListeners.add(listener); return () => { supportListeners.delete(listener); }; }
+function safeSupportFailure(error: unknown) {
+    const message = "Submission support could not be confirmed";
+    return error instanceof HTTPError ? new HTTPError(message, error.status) : new Error(message);
+}
 function publishSupport(patch: Partial<SubmissionSupport>) {
     const next = { ...submissionSupport, ...patch };
-    if (next.state === submissionSupport.state && next.checking === submissionSupport.checking && next.error === submissionSupport.error && next.material_refs === submissionSupport.material_refs && next.interactive_requests === submissionSupport.interactive_requests) return;
+    if (!next.error) delete next.failure;
+    if (next.state === submissionSupport.state && next.checking === submissionSupport.checking && next.error === submissionSupport.error && next.failure === submissionSupport.failure && next.material_refs === submissionSupport.material_refs && next.interactive_requests === submissionSupport.interactive_requests) return;
     submissionSupport = next;
     for (const listener of supportListeners) listener();
 }
@@ -39,7 +44,7 @@ async function fetchQueueResponse(query: string, signal?: AbortSignal): Promise<
         if (generation === supportGeneration) publishSupport({ state: data.submission_keys === true ? "supported" : "unsupported", error: "", material_refs: data.material_refs === true, interactive_requests: data.interactive_requests === true });
         return data;
     } catch (error) {
-        if (generation === supportGeneration && !signal?.aborted) publishSupport({ state: "unknown", error: error instanceof Error ? error.message : String(error) });
+        if (generation === supportGeneration && !signal?.aborted) publishSupport({ state: "unknown", error: "Submission support could not be confirmed", failure: safeSupportFailure(error) });
         throw error;
     }
 }
@@ -50,7 +55,7 @@ export function checkSubmissionSupport(): Promise<SubmissionSupport> {
     // mutable display state, even when their completions share a microtask batch.
     supportCheck = fetchQueueResponse("capabilities=1").then(
         (data): SubmissionSupport => ({ state: data.submission_keys === true ? "supported" : "unsupported", checking: false, error: "", material_refs: data.material_refs === true, interactive_requests: data.interactive_requests === true }),
-        (error): SubmissionSupport => ({ state: "unknown", checking: false, error: error instanceof Error ? error.message : String(error) }),
+        (error): SubmissionSupport => ({ state: "unknown", checking: false, error: "Submission support could not be confirmed", failure: safeSupportFailure(error) }),
     ).finally(() => { supportCheck = null; publishSupport({ checking: false }); });
     return supportCheck;
 }

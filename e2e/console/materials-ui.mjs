@@ -2,6 +2,7 @@ import { workState, nativeHistory } from "./work-fixture.mjs";
 // Source preview only; every API is intercepted, no live hub and no dist build.
 import assert from "node:assert/strict";
 import path from "node:path";
+import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createServer } from "../../web/console/node_modules/vite/dist/node/index.js";
 import { chromium } from "../../web/console/node_modules/playwright/index.mjs";
@@ -14,7 +15,7 @@ const browser = await chromium.launch({ headless: true, channel: process.env.BRO
 const A="console:material-ui", at="2026-09-07T01:00:00Z", base="a".repeat(40), after="b".repeat(40);
 const png=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+gxkAAAAASUVORK5CYII=","base64");
 const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:"block"});const page=await context.newPage();page.setDefaultTimeout(7000);
-const f={version:"test",supportsMaterials:true,captures:[],posts:[],queue:[],materials:new Map(),notes:[],answers:[],questions:[],hideQueue:false,reset:false,errors:[]};
+const f={version:"test",supportsMaterials:true,captures:[],posts:[],queue:[],materials:new Map(),notes:[],answers:[],questions:[],hideQueue:false,reset:false,errors:[],uploads:[],uploadFailure:null,capabilities:[],capabilityFailure:null,queueReads:0};
 page.on("pageerror",e=>f.errors.push(String(e)));
 function material(id,title,source,kind="text",mime="text/plain",data=Buffer.from("first\nsecond\nthird\n")) {const value={id,project:"p",title,source,kind,mime,size:data.length,digest:"d".repeat(64),created_at:at,...(kind==="image"?{width:1,height:1}:{})};f.materials.set(id,{value,data});return value;}
 const note=material("m-seed-1","Design note",{kind:'upload'});material("m-seed-2","Trace log",{kind:'upload'});
@@ -24,6 +25,7 @@ const shot=material("m-shot","screenshot.png",{kind:'upload'},"image","image/png
 const report=material("m-report","report.pdf",{kind:'upload'},"binary","application/pdf",Buffer.from("%PDF-1.4 report"));
 const frozen=(m,selector,text)=>({ref:{id:m.id,...(selector?{selector}:{})},material:m,...(text?{text}:{})});
 const carried={refs:[{id:shot.id},{id:report.id},{id:note.id,selector:{kind:"lines",start:1,end:2}},{id:"m-gone"}],materials:[frozen(shot),frozen(report),frozen(note,{kind:"lines",start:1,end:2},"first\nsecond")]};
+const initialMaterials=new Map(f.materials);
 await page.route("**/*",async route=>{
  const req=route.request(),u=new URL(req.url()),p=u.pathname;
  if(u.origin!==new URL(url).origin){f.errors.push("external "+u.origin);return route.abort();}
@@ -38,12 +40,25 @@ await page.route("**/*",async route=>{
  if(p==="/console/verbs")return route.fulfill({json:{verbs:[]}});
  if(p==="/console/suggest")return route.fulfill({json:{suggestions:[]}});
  if(p==="/console/queue"){
+  if(req.method()==="GET")f.queueReads++;
+  if(req.method()==="GET"&&f.capabilityFailure?.queue){const failure=f.capabilityFailure;return route.fulfill({status:failure.status,contentType:failure.contentType||'application/json',body:failure.body});}
+  if(req.method()==="GET"&&u.searchParams.get('capabilities')==='1'){
+   f.capabilities.push(req.url());
+   if(f.capabilityFailure){const failure=f.capabilityFailure;if(failure.abort)return route.abort('failed');return route.fulfill({status:failure.status,contentType:failure.contentType||'application/json',body:failure.body});}
+  }
   if(req.method()==="POST"){f.posts.push(input);let item=f.queue.find(e=>e.key==="client:"+input.command_id);if(!item){item={id:"e"+(f.queue.length+1),conversation:input.conversation,key:"client:"+input.command_id,input:input.input,refs:input.refs,locale:input.locale,quotes:input.quotes,state:"queued",enqueued_at:at};f.queue.push(item);}if(f.reset){f.reset=false;return route.abort('connectionreset');}return route.fulfill({json:item});}
   return route.fulfill({json:{queue:f.hideQueue?[]:f.queue,submission_keys:true,material_refs:f.supportsMaterials,interactive_requests:true}});
  }
  if(p==="/console/materials")return route.fulfill({json:{materials:[...f.materials.values()].map(m=>m.value)}});
  if(p==="/console/materials/capture"){f.captures.push(input);assert.equal(input.project,"p");if(input.source.kind==="reply")assert.equal(input.source.revision,"reply-version-1");return route.fulfill({json:material("m-"+f.captures.length,input.title||input.source.path||"Reference reply",input.source)});}
- if(p==="/console/materials/upload"){const kind=req.headers()['content-type'].startsWith('image/')?'image':'binary';return route.fulfill({json:material("m-upload-"+f.materials.size,u.searchParams.get('name'),{kind:'upload'},kind,req.headers()['content-type'],req.postDataBuffer())});}
+ if(p==="/console/materials/upload"){
+  f.uploads.push({name:u.searchParams.get('name'),mime:req.headers()['content-type'],locale:req.headers()['accept-language'],data:req.postDataBuffer()});
+  if(f.uploadFailure && f.uploadFailure.name===u.searchParams.get('name')) {
+   const failure=f.uploadFailure;
+   if(failure.abort)return route.abort('failed');
+   return route.fulfill({status:failure.status,contentType:failure.contentType||'application/json',body:failure.body});
+  }
+  const kind=req.headers()['content-type'].startsWith('image/')?'image':'binary';return route.fulfill({json:material("m-upload-"+f.materials.size,u.searchParams.get('name'),{kind:'upload'},kind,req.headers()['content-type'],req.postDataBuffer())});}
  if(p.match(/^\/console\/materials\/[^/]+\/content$/)){const m=f.materials.get(p.split('/')[3]);return route.fulfill({contentType:m.value.mime,body:m.data});}
  if(p.match(/^\/console\/materials\/[^/]+$/)){const m=f.materials.get(p.split('/')[3]);return route.fulfill({json:m.value});}
  if(p==="/console/annotations")return route.fulfill({json:{annotations:f.notes.filter(n=>!n.deleted)}});
@@ -57,10 +72,257 @@ await page.route("**/*",async route=>{
  if(p==="/console/attempts/attempt1/diff")return route.fulfill({json:{path:'app.ts',diff:'--- a/app.ts\n+++ b/app.ts\n@@ -1,2 +1,3 @@\n-old\n+first\n+second\n third\n'}});
  f.errors.push(req.method()+" "+p);return route.fulfill({status:500,json:{error:'Unmocked API'}});
 });
-await page.addInitScript((conversation)=>{sessionStorage.setItem('steve.conversation',conversation);localStorage.setItem('steve.ui.locale','en');window.sources=[];window.EventSource=class{addEventListener(){}constructor(){window.sources.push(this);setTimeout(()=>this.onopen?.(),0)}close(){window.sources=window.sources.filter(s=>s!==this)}};window.emit=(e)=>window.sources.forEach(s=>s.onmessage?.({data:JSON.stringify(e)}));},A);
+await page.addInitScript((conversation)=>{sessionStorage.setItem('steve.conversation',conversation);if(!localStorage.getItem('steve.ui.locale'))localStorage.setItem('steve.ui.locale','en');window.sources=[];window.EventSource=class{addEventListener(){}constructor(){window.sources.push(this);setTimeout(()=>this.onopen?.(),0)}close(){window.sources=window.sources.filter(s=>s!==this)}};window.emit=(e)=>window.sources.forEach(s=>s.onmessage?.({data:JSON.stringify(e)}));},A);
 async function waitFor(test,label){for(let i=0;i<100;i++){if(await test())return;await new Promise(r=>setTimeout(r,30));}assert.fail(label);}
+async function uploadErrorRegressions() {
+ // These are observed backend/browser failures, driven through the actual Console
+ // and material API. All writes are intercepted, including capability checks.
+ f.uploadFailure=null;f.questions=[];f.queue=[];f.hideQueue=true;
+ await page.evaluate(A=>{for(const kind of ['submission','materials','text'])localStorage.removeItem('steve.console.draft.'+kind+':'+A);localStorage.setItem('steve.ui.locale','en');},A);
+ await page.setViewportSize({width:1600,height:1000});await page.reload();await page.getByLabel('Attach files',{exact:true}).waitFor();
+ const faults=[];
+ const check=async (label,work)=>{try{await work();console.log('PASS '+label);}catch(error){faults.push(new Error(label,{cause:error}));console.error('FAIL '+label+' '+error.stack);}};
+ const secret='fixture-private-token',privatePath='/Users/fixture-private/documents/secret.png';
+ const message='Keep my body\n**unchanged**';
+ const seed={id:note.id,title:note.title,project:'p',kind:note.kind,mime:note.mime,size:note.size};
+ const pending=await page.evaluate(async ({A,seed})=>{
+  const store=await import('/src/lib/drafts.ts');
+  await store.addDraftMaterial(A,seed);
+  await store.updateDraft(A,'Pending original message');
+  const pending=await store.beginSubmission(A,'Pending original message',[],true,'en');
+  await store.failSubmission(A,pending.id,'Fixture unconfirmed submission','unknown');
+  await store.addDraftMaterial(A,{...seed,id:'m-seed-2',title:'Trace log'});
+  await store.updateDraft(A,'Keep my body\n**unchanged**');
+  return localStorage.getItem('steve.console.draft.submission:'+A);
+ },{A,seed});
+ const saved=()=>page.evaluate(A=>({text:localStorage.getItem('steve.console.draft.text:'+A),refs:JSON.parse(localStorage.getItem('steve.console.draft.materials:'+A)||'[]'),pending:localStorage.getItem('steve.console.draft.submission:'+A)}),A);
+ const initial=await saved(),postCount=f.posts.length;
+ const cases=[
+  {name:'broken.png',mime:'image/png',status:400,body:JSON.stringify({error:'invalid material: unsupported or mismatched image'}),reason:/invalid or unsupported/i},
+  {name:'oversized.pdf',status:413,body:JSON.stringify({error:'material too large'}),reason:/smaller file/i},
+  {name:'sign-in.pdf',status:401,body:'Unauthorized',contentType:'text/plain',reason:/sign-in.*permissions/i},
+  {name:'forbidden.pdf',status:403,body:JSON.stringify({error:privatePath+' '+secret}),reason:/sign-in.*permissions/i},
+  {name:'service.pdf',status:503,body:'<html>'+privatePath+' '+secret+'</html>',contentType:'text/html',reason:/try again later/i},
+  {name:'offline.pdf',abort:true,reason:/read.*file.*connection/i},
+  {name:'unreadable.pdf',local:true,reason:/read.*file.*connection/i},
+  {name:'invalid-ack.pdf',status:200,body:'not JSON '+privatePath+' '+secret,contentType:'text/plain',reason:/receipt.*invalid.*cannot be confirmed/i},
+  ...[
+   ['null-ack.pdf',null],['empty-ack.pdf',{}],['missing-id.pdf',{project:'p',title:'fixture',kind:'binary',mime:'application/pdf',size:12}],
+   ['wrong-project.pdf',{...note,id:'foreign',project:'other'}],['bad-kind.pdf',{...note,kind:'surprise'}],
+   ['bad-size.pdf',{...note,size:-1}],['bad-title.pdf',{...note,title:privatePath,mime:null}],
+   ['wrong-name.pdf',{...note,title:privatePath}],['bad-digest.pdf',{...note,digest:'invalid'}],['bad-date.pdf',{...note,created_at:'invalid'}],
+   ['bad-source.pdf',{...note,source:{kind:'reply'}}],['bad-image.pdf',{...note,kind:'image',mime:'image/png',width:0,height:1}],
+  ].map(([name,body])=>({name,status:200,body:JSON.stringify(body),reason:/receipt.*invalid.*cannot be confirmed/i})),
+ ];
+ await page.evaluate(({privatePath,secret})=>{
+  const fetch=window.fetch;
+  window.uploadReadFailures=0;
+  window.fetch=function(url,init){
+   if(String(url).includes('/materials/upload')&&init?.body?.name==='unreadable.pdf'){
+    window.uploadReadFailures++;
+    return Promise.reject(new TypeError('Load failed '+privatePath+' Bearer '+secret));
+   }
+   return fetch.call(this,url,init);
+  };
+ },{privatePath,secret});
+ const input=page.getByLabel('Attach files',{exact:true});
+ for(const failure of cases) {
+  f.uploadFailure=failure;
+  const before=f.uploads.length,localBefore=await page.evaluate(()=>window.uploadReadFailures);
+  await input.setInputFiles({name:failure.name,mimeType:failure.mime||'application/pdf',buffer:Buffer.from('not a PNG')});
+  await waitFor(async()=>f.uploads.length>before||await page.evaluate(()=>window.uploadReadFailures)>localBefore,'upload attempted');
+  await waitFor(()=>input.isEnabled(),'upload busy flag released');
+  await check('upload UI '+failure.name,async()=>{
+   const alert=page.locator('.composer-dock [role="alert"]').filter({hasText:failure.name});
+   assert.equal(await alert.count(),1,'file-specific failure is visible beside the composer, not raw toolbar text');
+   const text=await alert.innerText();
+   if(failure.status!==undefined)assert.match(text,new RegExp('HTTP '+failure.status));
+   assert.match(text,failure.reason);assert.match(text,/select.*again|try again|check.*materials/i);assert.match(text,/message.*attached materials.*retained/i);
+   assert.doesNotMatch(text,/\{"error"|invalid material|Load failed|fixture-private|secret.png|Bearer|Hub.*(offline|unreachable|disconnect)/i);
+   if(failure.status===200)assert.doesNotMatch(text,/file was uploaded|read the local file|connection works/i);
+   assert.deepEqual(await saved(),initial,'every upload failure keeps text, previous draft refs and pending submission');
+   assert.equal(f.posts.length,postCount,'no submission/replay from upload failure');
+   assert.equal(f.uploads.length,before+(failure.local?0:1),'no transparent upload retry');
+   assert.equal(await input.inputValue(),'','same file can be selected again');
+   if(failure.name==='broken.png'&&process.env.MATERIAL_UPLOAD_ARTIFACTS){await mkdir(process.env.MATERIAL_UPLOAD_ARTIFACTS,{recursive:true});await page.screenshot({path:path.join(process.env.MATERIAL_UPLOAD_ARTIFACTS,'upload-error-en-desktop.png')});}
+  });
+ }
+ // Initial support is true. Only the upload's mandatory capability recheck
+ // fails: the File POST must never happen, and no other visible status surface
+ // may echo the private response or confuse preflight with reading a file.
+ for(const failure of [
+  {status:401,body:JSON.stringify({error:privatePath+' Bearer '+secret}),reason:/sign-in.*permissions/i},
+  {status:403,body:privatePath+' Bearer '+secret,contentType:'text/plain',reason:/sign-in.*permissions/i},
+  {status:500,body:'<html>'+privatePath+' Bearer '+secret+'</html>',contentType:'text/html',reason:/attachment support.*not.*confirmed/i},
+  {abort:true,reason:/attachment support.*not.*confirmed/i},
+ ]) {
+  f.uploadFailure=null;f.capabilityFailure=null;
+  await page.evaluate(async()=>{await (await import('/src/lib/api/console.ts')).checkSubmissionSupport();});
+  const file='preflight-'+(failure.status||'no-response')+'.pdf',before=f.capabilities.length,uploads=f.uploads.length;
+  f.capabilityFailure=failure;
+  await input.setInputFiles({name:file,mimeType:'application/pdf',buffer:Buffer.from('do not upload')});
+  await waitFor(()=>f.capabilities.length>before,'upload capability recheck attempted');await waitFor(()=>input.isEnabled(),'preflight failure settles');
+  await check('preflight UI preserves stage/status and all visible privacy '+(failure.status||'no-response'),async()=>{
+   const alert=page.locator('.composer-dock [role="alert"]').filter({hasText:file});const text=await alert.innerText();
+   const visible=await page.locator('.composer-dock').innerText()+' '+await page.locator('.console-status').innerText()+' '+await page.locator('.console-status').getAttribute('title');
+   assert.doesNotMatch(visible,/fixture-private|secret.png|Bearer|\{"error"|<html>/i);
+   assert.match(text,failure.reason);assert.doesNotMatch(text,/read the local file|connection works|file was uploaded/i);
+   if(failure.status)assert.match(text,new RegExp('HTTP '+failure.status));
+   assert.deepEqual(await saved(),initial);assert.equal(f.uploads.length,uploads);assert.equal(f.posts.length,postCount);
+   assert.equal(f.capabilities.length,before+1,'no transparent preflight retry');
+  });
+  const result=await page.evaluate(async()=>{
+   const {uploadMaterial}=await import('/src/lib/api/material.ts'),{HTTPError}=await import('/src/lib/http.ts'),api=await import('/src/lib/api/console.ts');
+   try{await uploadMaterial('p',new File(['no upload'],'preflight-api.pdf'),'en');return {ok:true};}
+   catch(error){const support=api.getSubmissionSupport();return {http:error instanceof HTTPError,status:error.status,phase:error.phase,supportError:support.error,supportHTTP:support.failure instanceof HTTPError,supportStatus:support.failure?.status,supportMessage:support.failure?.message};}
+  });
+  await check('preflight API keeps HTTPError and capability phase '+(failure.status||'no-response'),async()=>{
+   assert.doesNotMatch(result.supportError+' '+result.supportMessage,/fixture-private|secret.png|Bearer|\{"error"|<html>/i);
+   assert.equal(result.phase,'capability');assert.equal(result.http,!!failure.status);assert.equal(result.status,failure.status);assert.equal(result.supportHTTP,!!failure.status);assert.equal(result.supportStatus,failure.status);
+   assert.doesNotMatch(result.supportError,/fixture-private|secret.png|Bearer|\{"error"|<html>/i);assert.equal(f.uploads.length,uploads);
+  });
+ }
+ // The shared queue read error can also reach the toolbar. Probe that real
+ // event-driven path, not only the new attachment warning surface.
+ f.capabilityFailure={queue:true,status:403,body:JSON.stringify({error:privatePath+' Bearer '+secret})};
+ const queueReads=f.queueReads;
+ await page.evaluate(e=>window.emit(e),{kind:'console.queue',conversation:A,at});
+ await waitFor(()=>f.queueReads>queueReads,'queue error read after capability failure');
+ await check('shared queue/support status never renders raw failure or title',async()=>{
+  await page.locator('.console-status').filter({hasText:/HTTP 403/}).waitFor();
+  const visible=await page.locator('.composer-dock').innerText()+' '+await page.locator('.console-status').innerText()+' '+await page.locator('.console-status').getAttribute('title');
+  assert.doesNotMatch(visible,/fixture-private|secret.png|Bearer|\{"error"|<html>/i);assert.deepEqual(await saved(),initial);
+ });
+ f.capabilityFailure=null;await page.evaluate(e=>window.emit(e),{kind:'console.queue',conversation:A,at});
+ await page.evaluate(async()=>{await (await import('/src/lib/api/console.ts')).checkSubmissionSupport();});
+ for(const body of ['not JSON '+privatePath+' Bearer '+secret,'null','{}',JSON.stringify({...note,id:'foreign',project:'other'}),JSON.stringify({...note,kind:'wrong'})]) {
+  f.uploadFailure={name:'receipt-api.pdf',status:200,body,contentType:'application/json'};
+  const result=await page.evaluate(async()=>{
+   const {uploadMaterial}=await import('/src/lib/api/material.ts'),{HTTPError}=await import('/src/lib/http.ts');
+   try{const material=await uploadMaterial('p',new File(['uploaded bytes'],'receipt-api.pdf',{type:'application/pdf'}),'en');return {ok:true,material};}
+   catch(error){return {http:error instanceof HTTPError,status:error.status,phase:error.phase,message:error.message};}
+  });
+  await check('receipt API rejects invalid acknowledgement '+JSON.stringify(body),async()=>{
+   assert.equal(result.http,true);assert.equal(result.status,200);assert.equal(result.phase,'receipt');
+   assert.doesNotMatch(result.message,/fixture-private|secret.png|Bearer|<html>|not JSON/i);
+  });
+ }
+ // File.name is normally a basename, but injected/clipboard File values
+ // must not expose directory components or control characters either.
+ f.uploadFailure={name:'C:\\fixture-private\\documents\\bad-path.png',status:400,body:JSON.stringify({error:privatePath+' Bearer '+secret})};
+ const beforePath=f.uploads.length;
+ await page.evaluate(name=>{const file=new File(['bad PNG'],name,{type:'image/png'}),data=new DataTransfer();data.items.add(file);const input=document.querySelector('input[type="file"]');input.files=data.files;input.dispatchEvent(new Event('change',{bubbles:true}));},f.uploadFailure.name);
+ await waitFor(()=>f.uploads.length>beforePath,'path-named File attempted');await waitFor(()=>input.isEnabled(),'path-named File settles');
+ await check('failure shows only the file basename, never paths or credentials',async()=>{
+  const alert=page.locator('.composer-dock [role="alert"]').filter({hasText:'bad-path.png'});assert.equal(await alert.count(),1);assert.doesNotMatch(await alert.innerText(),/fixture-private|documents|Bearer|secret.png/);assert.deepEqual(await saved(),initial);
+ });
+ // One earlier file succeeds, the next is rejected, and the later one is not
+ // attempted. Both the pre-existing refs and this success must remain attached.
+ f.uploadFailure=cases[0];
+ const beforeBatch=f.uploads.length;
+ await input.setInputFiles([{name:'batch-kept.pdf',mimeType:'application/pdf',buffer:Buffer.from('pdf bytes')},{name:'broken.png',mimeType:'image/png',buffer:Buffer.from('not a PNG')},{name:'not-attempted.pdf',mimeType:'application/pdf',buffer:Buffer.from('later')}]);
+ await waitFor(()=>f.uploads.length>=beforeBatch+2,'batch reaches second file');await waitFor(()=>input.isEnabled(),'batch settles');
+ await check('partial upload retains successful refs and names the failed file',async()=>{
+  const now=await saved();assert.equal(now.text,message);assert.equal(now.pending,pending);
+  assert.deepEqual(now.refs.slice(0,initial.refs.length),initial.refs);assert.equal(now.refs.at(-1).title,'batch-kept.pdf');
+  assert.deepEqual(f.uploads.slice(beforeBatch).map(u=>u.name),['batch-kept.pdf','broken.png']);
+  const alert=page.locator('.composer-dock [role="alert"]').filter({hasText:'broken.png'});
+  assert.match(await alert.innerText(),/Files left unuploaded: 1/i);
+ });
+ // A successful upload followed by a failed local draft write is not a
+ // network failure. Its error must not claim the new ref was attached.
+ f.uploadFailure=null;
+ const beforeAttach=await saved(),beforeAttachUploads=f.uploads.length;
+ await page.evaluate(A=>{const set=Storage.prototype.setItem;window.restoreDraftStorage=()=>{Storage.prototype.setItem=set;};Storage.prototype.setItem=function(key,value){if(key==='steve.console.draft.materials:'+A)throw new Error('/Users/fixture-private/local-storage Bearer fixture-private-token');return set.call(this,key,value);};},A);
+ await input.setInputFiles({name:'draft-write.pdf',mimeType:'application/pdf',buffer:Buffer.from('uploaded bytes')});
+ await waitFor(()=>f.uploads.length>beforeAttachUploads,'file uploaded before draft failure');await waitFor(()=>input.isEnabled(),'draft failure settles');
+ await page.evaluate(()=>window.restoreDraftStorage());
+ await check('uploaded file draft failure retains all existing text/refs',async()=>{
+  const alert=page.locator('.composer-dock [role="alert"]').filter({hasText:'draft-write.pdf'});assert.match(await alert.innerText(),/uploaded.*could not be added.*draft/i);
+  assert.deepEqual(await saved(),beforeAttach);assert.equal(f.uploads.length,beforeAttachUploads+1);
+ });
+ // Retry is explicit reselection. The same name succeeds without sending a
+ // message, duplicating a pending turn, or deleting earlier materials.
+ await input.setInputFiles({name:'broken.png',mimeType:'image/png',buffer:png});
+ await page.getByRole('list',{name:'Attached materials'}).getByText('broken.png',{exact:true}).waitFor();
+ await check('explicit reselection succeeds without replay or draft loss',async()=>{
+  const now=await saved();assert.equal(now.text,message);assert.equal(now.pending,pending);assert.deepEqual(now.refs.slice(0,beforeAttach.refs.length),beforeAttach.refs);
+  assert.equal(await page.locator('.composer-dock [role="alert"]').filter({hasText:'Could not attach'}).count(),0);
+  assert.equal(f.posts.length,postCount);
+ });
+ // Exercise the real API with a File body: no JSON conversion/copy, correct
+ // locale and shared HTTPError identity/status/error-body contract.
+ for(const response of [
+  {status:400,body:'{"error":"invalid material: unsupported or mismatched image"}',message:'invalid material: unsupported or mismatched image'},
+  {status:403,body:'Permission denied',message:'Permission denied',contentType:'text/plain'},
+  {status:503,body:'',message:'503 Service Unavailable'},
+  {status:400,body:'null',message:'null'},
+  {status:400,body:'{"error":17}',message:'{"error":17}'},
+ ]) {
+  f.uploadFailure={name:'api-boundary.png',...response};
+  const before=f.uploads.length;
+  const result=await page.evaluate(async()=>{
+   const {uploadMaterial}=await import('/src/lib/api/material.ts');const {HTTPError}=await import('/src/lib/http.ts');
+   try{await uploadMaterial('p',new File(['raw file bytes'],'api-boundary.png',{type:'image/png'}),'zh');return {success:true};}
+   catch(error){return {http:error instanceof HTTPError,status:error.status,message:error.message};}
+  });
+  await check('upload API response '+response.status+' '+JSON.stringify(response.body),async()=>{
+   assert.deepEqual(result,{http:true,status:response.status,message:response.message});assert.equal(f.uploads.length,before+1);
+   const sent=f.uploads.at(-1);assert.equal(sent.mime,'image/png');assert.equal(sent.locale,'zh');assert.equal(sent.data.toString(),'raw file bytes');
+  });
+ }
+ await check('HTTP status survives an unreadable error response body',async()=>{
+  const result=await page.evaluate(async()=>{
+   const {uploadMaterial}=await import('/src/lib/api/material.ts'),{HTTPError}=await import('/src/lib/http.ts');
+   const fetch=window.fetch;window.fetch=(url,init)=>String(url).includes('/materials/upload')?Promise.resolve({ok:false,status:413,statusText:'Payload Too Large',text:async()=>{throw new TypeError('Load failed /Users/fixture-private');}}):fetch.call(window,url,init);
+   try{await uploadMaterial('p',new File(['file bytes'],'response-read.pdf'),'en');return {success:true};}
+   catch(error){return {http:error instanceof HTTPError,status:error.status,message:error.message};}
+   finally{window.fetch=fetch;}
+  });
+  assert.deepEqual(result,{http:true,status:413,message:'413 Payload Too Large'});
+ });
+ f.uploadFailure={name:'中文坏图.png',status:400,body:'{"error":"invalid material: unsupported or mismatched image"}'};
+ await page.evaluate(()=>localStorage.setItem('steve.ui.locale','zh'));await page.reload();
+ const zhInput=page.getByLabel('添加附件',{exact:true});await zhInput.waitFor();
+ await page.setViewportSize({width:390,height:844});
+ const beforeZh=f.uploads.length;
+ await zhInput.setInputFiles({name:'中文坏图.png',mimeType:'image/png',buffer:Buffer.from('bad image')});await waitFor(()=>f.uploads.length>beforeZh,'Chinese upload');await waitFor(()=>zhInput.isEnabled(),'Chinese upload settles');
+ await check('Chinese narrow-screen failure is localized and readable',async()=>{
+  const alert=page.locator('.composer-dock [role="alert"]').filter({hasText:'中文坏图.png'});const text=await alert.innerText();assert.match(text,/无效|不支持/);assert.match(text,/重新选择/);assert.match(text,/正文.*附件.*保留/);assert.doesNotMatch(text,/invalid material|\{"error"/);
+  assert.ok(await alert.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'failure wraps rather than overflows');assert.equal((await saved()).text,message);assert.equal((await saved()).pending,pending);
+ });
+ if(process.env.MATERIAL_UPLOAD_ARTIFACTS){await mkdir(process.env.MATERIAL_UPLOAD_ARTIFACTS,{recursive:true});await page.screenshot({path:path.join(process.env.MATERIAL_UPLOAD_ARTIFACTS,'upload-error-zh-narrow.png')});}
+ await page.evaluate(()=>{localStorage.setItem('steve.ui.locale','en');window.dispatchEvent(new StorageEvent('storage',{key:'steve.ui.locale',newValue:'en',storageArea:localStorage}));});await page.getByLabel('Attach files',{exact:true}).waitFor();
+ await check('existing upload failure translates without rereading or retrying',async()=>{
+  const alert=page.locator('.composer-dock [role="alert"]').filter({hasText:'中文坏图.png'});assert.match(await alert.innerText(),/invalid or unsupported/i);assert.equal(f.uploads.length,beforeZh+1);assert.equal((await saved()).pending,pending);
+ });
+
+ await check('keyboard focus remains available after a failed upload',async()=>{
+  const input=page.getByLabel('Attach files',{exact:true}),box=page.getByRole('textbox',{name:'Message',exact:true});
+  await input.focus();assert.ok(await input.evaluate(el=>document.activeElement===el));
+  await box.focus();await box.press('ArrowRight');assert.ok(await box.evaluate(el=>document.activeElement===el));
+  assert.equal(await draftOf(box),message);assert.equal(f.posts.length,postCount);
+ });
+ assert.equal(f.posts.length,postCount);
+ // Choosing to send the retained draft is a separate explicit action. The
+ // old upload warning must not outlive that draft or carry into another chat.
+ await page.evaluate(async A=>{const store=await import('/src/lib/drafts.ts');await store.finishSubmission(A);},A);
+ f.hideQueue=false;f.uploadFailure=null;
+ const sending=await saved();
+ await page.getByRole('textbox',{name:'Message',exact:true}).press('Enter');
+ await waitFor(()=>f.posts.length===postCount+1,'explicit retained draft submission');
+ await check('explicit submission clears obsolete attachment feedback',async()=>{
+  assert.equal(f.posts.at(-1).input,message);assert.deepEqual(f.posts.at(-1).refs,sending.refs.map(({id,selector})=>({id,...(selector?{selector}:{})})));
+  assert.equal(await page.locator('.composer-dock [role="alert"]').filter({hasText:'中文坏图.png'}).count(),0);
+ });
+ if(faults.length)throw new AggregateError(faults,'Material upload regressions');
+}
 try{
  await page.goto(url+'#/console');await page.getByRole('heading',{name:'Material conversation',exact:true}).waitFor();await page.getByRole('button',{name:'Actions',exact:true}).waitFor();
+ await uploadErrorRegressions();
+ if(!process.env.MATERIAL_UPLOAD_ERRORS_ONLY){
+  f.materials=new Map(initialMaterials);f.uploadFailure=null;f.capabilityFailure=null;f.capabilities=[];f.uploads=[];f.posts=[];f.queue=[];f.questions=[];f.hideQueue=false;
+  await page.evaluate(()=>{localStorage.clear();localStorage.setItem('steve.ui.locale','en');});await page.setViewportSize({width:1600,height:1000});await page.reload();await page.getByRole('heading',{name:'Material conversation',exact:true}).waitFor();await page.getByRole('button',{name:'Actions',exact:true}).waitFor();
  // The sent line shows what it carried, each kind in its own shape, and
  // says so rather than going quiet when a reference cannot be resolved.
  const sent=page.locator('.message-user').first();
@@ -112,5 +374,6 @@ try{
  const message=page.getByRole('textbox',{name:'Message',exact:true});await waitFor(async()=>{const box=await message.boundingBox();return box&&box.y>=0&&box.y+box.height<=844;},'Question history must not push the composer out of the viewport after responsive layout settles');
  await panel.getByRole('textbox',{name:'Answer',exact:true}).first().fill('Narrow-screen response');assert.equal(await panel.getByRole('textbox',{name:'Answer',exact:true}).first().inputValue(),'Narrow-screen response');assert.ok(await panel.evaluate(el=>el.clientHeight<=window.innerHeight*.4+1));console.log('PASS many questions keep pending order, bound history and preserve a reachable mobile composer');
 
+ }
  assert.deepEqual(f.errors,[]);
 }catch(error){console.log("DEBUG",JSON.stringify(f.errors),JSON.stringify(f.captures),await page.locator("body").innerText());throw error;}finally{await context.close();await browser.close();await server.close();}
