@@ -12,7 +12,15 @@ export const saveAnnotation = async (annotation: { id: string; project: string; 
 export async function uploadMaterial(project: string, file: File, locale: string): Promise<Material> {
     await requireMaterials();
     const response = await fetch(`./console/materials/upload?project=${encodeURIComponent(project)}&name=${encodeURIComponent(file.name)}`, { method: "POST", headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": file.type || "application/octet-stream", "Accept-Language": locale }, body: file });
-    if (!response.ok) throw new HTTPError(await response.text(), response.status);
+    if (!response.ok) {
+        // request() encodes bodies as JSON; uploads must keep the File body.
+        // Match its JSON/plain-text error contract without copying file bytes.
+        let text = "";
+        try { text = await response.text(); } catch { /* Keep the received HTTP status even if its body cannot be read. */ }
+        let message = text.trim();
+        try { const value = JSON.parse(text); if (typeof value?.error === "string") message = value.error; } catch { /* Plain text errors are also supported. */ }
+        throw new HTTPError(message || `${response.status} ${response.statusText}`, response.status);
+    }
     return response.json();
 }
 export async function materialBlob(project: string, id: string, signal?: AbortSignal): Promise<Blob> {
