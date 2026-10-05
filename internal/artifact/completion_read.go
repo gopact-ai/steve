@@ -3,19 +3,65 @@ package artifact
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 
 	"github.com/gopact-ai/steve/internal/ledger"
+	"modernc.org/sqlite"
 )
 
-const standingTaskLandingsSQL = `SELECT state,data FROM operations INDEXED BY operations_uncommitted_landings
-	WHERE kind='landing' AND state<>'committed' ORDER BY id`
+const completionLandingKeySQL = `steve_landing_completion_key_v1(data)`
+const unwrittenCompletionLandingSQL = `steve_landing_unwritten_v1(data,state)`
+const standingTaskLandingsSQL = `SELECT candidate.state,candidate.data
+	FROM operations AS candidate INDEXED BY operations_uncommitted_landings
+	WHERE candidate.kind='landing' AND candidate.state<>'committed'
+	AND steve_landing_task_v1(candidate.data)<>''
+	AND NOT (steve_landing_unwritten_v1(candidate.data,candidate.state)=1 AND EXISTS(
+		SELECT 1 FROM operations AS accepted INDEXED BY operations_landing_completion_key
+		WHERE accepted.kind='landing' AND accepted.state='committed'
+		AND steve_landing_completion_key_v1(accepted.data)=steve_landing_completion_key_v1(candidate.data)))
+	ORDER BY candidate.id`
 
 func init() {
-	ledger.MustRegisterReadIndex("operations_uncommitted_landings", `CREATE INDEX IF NOT EXISTS operations_uncommitted_landings ON operations(id) WHERE kind='landing' AND state<>'committed'`)
+	sqlite.MustRegisterDeterministicScalarFunction("steve_landing_completion_key_v1", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		var land Landing
+		if json.Unmarshal(completionRaw(args[0]), &land) != nil || land.Source == nil || land.Source.Execution == nil || land.Artifact == "" || land.Source.AttemptID == "" {
+			return nil, nil
+		}
+		raw, err := json.Marshal(completionLandingIdentity(land))
+		return string(raw), err
+	})
+	sqlite.MustRegisterDeterministicScalarFunction("steve_landing_unwritten_v1", 2, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		var land Landing
+		if json.Unmarshal(completionRaw(args[0]), &land) != nil {
+			return int64(0), nil
+		}
+		land.State = string(completionRaw(args[1]))
+		if unwrittenCompletionLanding(land) {
+			return int64(1), nil
+		}
+		return int64(0), nil
+	})
+	// Cache both typed predicates in local indexes. Otherwise even a SQL-side
+	// exclusion would decode every retained, already-superseded refusal.
+	ledger.MustRegisterReadIndex("operations_uncommitted_landings", `CREATE INDEX IF NOT EXISTS operations_uncommitted_landings ON operations(`+unwrittenCompletionLandingSQL+`,`+completionLandingKeySQL+`,id)
+		WHERE kind='landing' AND state<>'committed' AND `+completionLandingTask+`<>''`)
+	ledger.MustRegisterReadIndex("operations_landing_completion_key", `CREATE INDEX IF NOT EXISTS operations_landing_completion_key ON operations(`+completionLandingKeySQL+`)
+		WHERE kind='landing' AND state='committed'`)
+}
+
+func completionRaw(value driver.Value) []byte {
+	switch value := value.(type) {
+	case string:
+		return []byte(value)
+	case []byte:
+		return value
+	default:
+		return nil
+	}
 }
 
 // CompletionBlockers reports the tasks whose results are still queued or have
@@ -36,14 +82,8 @@ func (s *Store) CompletionBlockers(ctx context.Context) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		committed, err := committedCompletionLandings(tx, lands)
-		if err != nil {
-			return err
-		}
 		for _, land := range lands {
-			if !landingWasSuperseded(land, committed) {
-				blocked[land.Source.Execution.TaskID] = true
-			}
+			blocked[land.Source.Execution.TaskID] = true
 		}
 		for id := range blocked {
 			ids = append(ids, id)
@@ -102,48 +142,6 @@ func standingTaskLandings(tx *ledger.ReadTx) ([]Landing, error) {
 		out = append(out, land)
 	}
 	return out, rows.Err()
-}
-
-func committedCompletionLandings(tx *ledger.ReadTx, lands []Landing) (map[completionLandingKey]bool, error) {
-	keys := map[completionLandingKey]bool{}
-	tasks := map[string]bool{}
-	for _, land := range lands {
-		if unwrittenCompletionLanding(land) {
-			tasks[land.Source.Execution.TaskID] = true
-		}
-	}
-	if len(tasks) == 0 {
-		return keys, nil
-	}
-	ids := make([]string, 0, len(tasks))
-	for id := range tasks {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	raw, err := json.Marshal(ids)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := tx.Query(`SELECT data FROM operations INDEXED BY operations_landing_task
-		WHERE kind='landing' AND `+completionLandingTask+` IN (SELECT value FROM json_each(?)) AND state='committed'`, string(raw))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		var land Landing
-		if err := json.Unmarshal(raw, &land); err != nil {
-			return nil, err
-		}
-		if land.Source != nil && land.Source.Execution != nil && land.Artifact != "" && land.Source.AttemptID != "" {
-			keys[completionLandingIdentity(land)] = true
-		}
-	}
-	return keys, rows.Err()
 }
 
 func checkCompletionLandingRecords(tx ledger.Reader) error {

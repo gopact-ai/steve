@@ -1,7 +1,6 @@
 package artifact
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -84,7 +83,7 @@ func TestCompletionBlockerReadRejectsUnreadableStandingOrHistoricalRecords(t *te
 			var query string
 			switch scenario {
 			case "pending":
-				query = `INSERT INTO bindings VALUES('pending-landing','bad','{')`
+				query = `INSERT INTO bindings VALUES('pending-landing','bad','{','2026-09-01T00:00:00Z')`
 			case "committed-payload":
 				query = `INSERT INTO operations VALUES('bad','landing','committed',1,1,'{','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z')`
 			case "committed-envelope":
@@ -127,21 +126,58 @@ func TestCompletionBlockerReadCostDoesNotGrowWithCommittedHistory(t *testing.T) 
 	if after > before+30 {
 		t.Fatalf("committed history entered standing completion read: %.0f -> %.0f", before, after)
 	}
-	rows, err := s.ledger.DB().Query("EXPLAIN QUERY PLAN " + standingTaskLandingsSQL)
-	if err != nil {
-		t.Fatal(err)
+	var definition string
+	if err := s.ledger.DB().QueryRow(`SELECT sql FROM sqlite_schema WHERE name='operations_uncommitted_landings'`).Scan(&definition); err != nil ||
+		!strings.Contains(definition, "WHERE kind='landing' AND state<>'committed'") {
+		t.Fatalf("standing read lost its exact partial index: %s, %v", definition, err)
 	}
-	defer rows.Close()
-	var plan strings.Builder
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-			t.Fatal(err)
-		}
-		fmt.Fprintln(&plan, detail)
-	}
-	if err := rows.Err(); err != nil || !strings.Contains(plan.String(), "operations_uncommitted_landings") {
-		t.Fatalf("standing read lost its exact partial index: %s, %v", plan.String(), err)
+}
+
+func TestCompletionBlockerReadCostDoesNotGrowWithSupersededHistory(t *testing.T) {
+	for _, scenario := range []string{"retained-superseded-other-tasks", "same-task-committed-history"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, _ := newStore(t, &localNode{}, project.Home{Path: t.TempDir()})
+			refusal := Landing{ID: "refusal", Project: "p", Artifact: "result", Target: project.Home{Path: "/canonical"}, Source: &Source{AttemptID: "attempt", Execution: &task.ExecutionToken{TaskID: "old-task", Epoch: 1}}, State: LandMergeConflicted, EndedAt: time.Unix(101, 0).UTC()}
+			accepted := refusal
+			accepted.ID, accepted.State = "accepted", LandCommitted
+			for _, land := range []Landing{refusal, accepted} {
+				if _, err := s.ledger.Begin(t.Context(), land.ID, landKind, land.State, "test", land); err != nil {
+					t.Fatal(err)
+				}
+			}
+			read := func() {
+				got, err := s.CompletionBlockers(t.Context())
+				if err != nil || len(got) != 0 {
+					t.Fatalf("got=%v err=%v", got, err)
+				}
+			}
+			before := testing.AllocsPerRun(2, read)
+			taskSQL := "'old-task'"
+			if scenario == "retained-superseded-other-tasks" {
+				taskSQL = "'other-'||n"
+			}
+			history := `WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<5000)
+    INSERT INTO operations SELECT 'hist-accepted-'||n,'landing','committed',1,1,
+    json_object('id','hist-accepted-'||n,'project','p','artifact','result-'||n,'target',json_object('path','/canonical'),
+    'source',json_object('execution',json_object('task_id',` + taskSQL + `,'epoch',1),'attempt_id','attempt-'||n),
+    'state','committed','ended_at','2026-09-01T00:00:00Z'), '2026-09-01T00:00:00Z','2026-09-01T00:00:00Z' FROM seq`
+			if _, err := s.ledger.DB().Exec(history); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "retained-superseded-other-tasks" {
+				q := `INSERT INTO operations SELECT replace(id,'accepted','refused'),kind,'merge-conflicted',revision,incarnation,
+    json_set(data,'$.id',replace(id,'accepted','refused'),'$.state','merge-conflicted'),created_at,updated_at FROM operations WHERE id LIKE 'hist-accepted-%'`
+				if _, err := s.ledger.DB().Exec(q); err != nil {
+					t.Fatal(err)
+				}
+			}
+			start := time.Now()
+			after := testing.AllocsPerRun(2, read)
+			elapsed := time.Since(start)
+			t.Logf("allocs %.0f -> %.0f; three reads %s", before, after, elapsed)
+			if after > before+30 {
+				t.Errorf("unrelated accepted history reentered standing completion read: %.0f -> %.0f", before, after)
+			}
+		})
 	}
 }
