@@ -28,7 +28,7 @@ export function MaterialActions({ capture, material, selector, anchor }: { captu
         } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
         finally { pending.current = false; setBusy(false); }
     }
-    return <div className="inline-flex max-w-full flex-wrap items-center gap-2">
+    return <div data-material-actions className="inline-flex max-w-full flex-wrap items-center gap-2">
         <Dropdown.Root><IconButton label={t("materials.actions")} isDisabled={busy} icon={DotsHorizontal} /><Dropdown.Popover className="w-56"><Dropdown.Menu onAction={(key) => void action(String(key))}>
             <Dropdown.Item id="chat" label={store.target ? t("materials.addTarget", { title: store.target.title }) : t("materials.add")} />
             <Dropdown.Item id="side" label={t("materials.pin")} />
