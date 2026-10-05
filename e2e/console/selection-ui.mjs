@@ -143,7 +143,7 @@ try {
  // replace their desktop forms only once the breakpoint change renders,
  // and the side chat is still open, now over the review.
  await page.setViewportSize({width:390,height:844});await page.locator('.app-mobile-bar').waitFor();await page.locator('.review-mobile-files').waitFor({state:'attached'});await side.waitFor();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);await side.getByRole('button',{name:'Close side chat',exact:true}).click();await select(page.locator('.source-code'),'second');const box=await bar.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=390&&box.y>=0&&box.y+box.height<=844);
- await page.screenshot({path:'/tmp/steve-selection-review-mobile.png'});console.log('PASS source/deleted-side references, Review side chat and narrow toolbar placement');
+ await page.screenshot({path:path.join(process.env.TMPDIR || '/tmp', 'steve-selection-review-mobile.png')});console.log('PASS source/deleted-side references, Review side chat and narrow toolbar placement');
  await page.keyboard.press('Escape');await page.getByRole('dialog',{name:'Artifact workspace',exact:true}).getByRole('button',{name:'Back',exact:true}).click();await page.setViewportSize({width:1600,height:1000});
  const draft=page.getByRole('textbox',{name:'Message',exact:true});await draft.fill('Keep this draft while the project changes');
  const saved=await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.draft.materials:'+A)),A),writes=f.posts.length,captures=f.captures.length;
@@ -155,4 +155,6 @@ try {
  assert.equal(await draftOf(draft),'Keep this draft while the project changes');assert.equal(f.posts.length,writes,'Rejecting a stale capture cannot submit a question');
  console.log('PASS delayed capture rechecks the target project without changing drafts or sending');
  assert.deepEqual(f.errors,[]);
-} catch(error) {console.log("DEBUG",f.errors,await page.locator("body").innerText());await page.screenshot({path:"/tmp/steve-selection-error.png"});throw error;} finally { f.releaseCapture?.();await context.close();await browser.close();await server.close(); }
+} catch(error) {console.log("DEBUG",f.errors,await page.locator("body").innerText());await page.screenshot({path:path.join(process.env.TMPDIR || "/tmp", "steve-selection-error.png")});throw error;} finally { f.releaseCapture?.();await context.close();await browser.close();await server.close(); }
+
+await import("./selection-settings-reflow.mjs");
