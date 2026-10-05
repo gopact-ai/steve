@@ -367,7 +367,10 @@ try{
 
  await setLocale('zh');
  const chineseSource=page.getByRole('region',{name:'app.ts 文件内容',exact:true});
- await chineseSource.getByRole('button',{name:'选择第 2 行',exact:true}).click();await chineseSource.getByRole('button',{name:'选择第 3 行',exact:true}).click({modifiers:['Shift']});
+ // Continue the viewport case's live range instead of relying on a
+ // preference change to dismiss it before selecting the same lines again.
+ assert.match(await dynamicBar.textContent(), /L2–L3/);
+ assert.deepEqual(await chineseSource.locator('.source-number[aria-pressed="true"]').evaluateAll(lines=>lines.map(el=>el.dataset.line)), ['2','3']);
  await afterPaint();
  const beforeReflow=await dynamicBar.evaluate(el=>{window.materialReflowToolbar=el;return el.getBoundingClientRect().toJSON();});
  assert.ok(await dynamicActions.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),'small localized toolbar begins with reachable Actions');
