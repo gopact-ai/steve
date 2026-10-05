@@ -36,7 +36,8 @@ type Sink struct {
 }
 
 // RunRecord keeps execution responsibility until all promised landings and
-// task completion are durable. Completed records remain replayable facts.
+// task completion are durable, or its conversation is explicitly discarded.
+// Completed records remain replayable facts, not necessarily successes.
 type RunRecord struct {
 	Target    project.Home `json:"target"`
 	fresh     bool
@@ -132,7 +133,9 @@ func (s *Supervisor) opened(ctx context.Context, p plan.Plan) (RunRecord, error)
 		}
 		rec.Execution = &token
 	}
-	_, err = s.ledger.Begin(ctx, id, runKind, RunExecuting, s.owner, rec)
+	_, err = s.ledger.BeginGuarded(ctx, id, runKind, RunExecuting, s.owner, rec, func(tx *ledger.Tx) error {
+		return task.CheckExecutionTx(tx, rec.Execution)
+	})
 	rec.fresh = err == nil
 	return rec, err
 }
