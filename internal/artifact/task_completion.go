@@ -1,10 +1,8 @@
 package artifact
 
 import (
-	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 
@@ -80,15 +78,7 @@ func CheckTaskLandingsTx(tx *ledger.Tx, ids map[string]bool) error {
 			return fmt.Errorf("%w: artifact %s is queued to land", task.ErrCompleteDelivery, pending.Artifact)
 		}
 	}
-	if err := ledger.CheckOperationEnvelopesTx(tx, landKind); err != nil {
-		return err
-	}
-	var data string
-	switch err := tx.QueryRow(unreadableLandingSQL).Scan(&data); {
-	case err == nil:
-		var land Landing
-		return json.Unmarshal([]byte(data), &land)
-	case !errors.Is(err, sql.ErrNoRows):
+	if err := checkCompletionLandingRecords(tx); err != nil {
 		return err
 	}
 	var tasks []string
@@ -114,6 +104,7 @@ func CheckTaskLandingsTx(tx *ledger.Tx, ids map[string]bool) error {
 	committed := map[completionLandingKey]bool{}
 	for rows.Next() {
 		var state string
+		var data string
 		if err := rows.Scan(&state, &data); err != nil {
 			return err
 		}
@@ -137,11 +128,19 @@ func CheckTaskLandingsTx(tx *ledger.Tx, ids map[string]bool) error {
 		if land.State == LandCommitted {
 			continue
 		}
-		unwritten := land.State == LandMergeConflicted && land.Lease == nil && land.Round == 0 && !land.EndedAt.IsZero() && (land.Unapplied || (land.Now == "" && land.Merged == "" && len(land.Paths) == 0))
-		if unwritten && committed[completionLandingIdentity(land)] {
+		if landingWasSuperseded(land, committed) {
 			continue
 		}
 		return fmt.Errorf("%w: landing %s (%s)", task.ErrCompleteDelivery, land.ID, land.State)
 	}
 	return nil
+}
+
+func unwrittenCompletionLanding(land Landing) bool {
+	return land.State == LandMergeConflicted && land.Lease == nil && land.Round == 0 && !land.EndedAt.IsZero() &&
+		(land.Unapplied || (land.Now == "" && land.Merged == "" && len(land.Paths) == 0))
+}
+
+func landingWasSuperseded(land Landing, committed map[completionLandingKey]bool) bool {
+	return unwrittenCompletionLanding(land) && committed[completionLandingIdentity(land)]
 }

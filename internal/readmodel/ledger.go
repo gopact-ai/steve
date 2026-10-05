@@ -28,6 +28,7 @@ type Ledger struct {
 		Reservations(context.Context) ([]attempt.Reservation, error)
 	}
 	Artifacts interface {
+		CompletionBlockers(context.Context) ([]string, error)
 		RecentAttestations(context.Context) ([]artifact.Attestation, error)
 		RecentReplicas(context.Context) ([]artifact.Replica, error)
 		RecentLandings(context.Context) ([]artifact.Landing, error)
@@ -41,6 +42,13 @@ type Ledger struct {
 	Intents interface {
 		PendingResolution(context.Context) ([]intent.Intent, error)
 	}
+}
+
+func (l Ledger) TaskLandingBlockers(ctx context.Context) ([]string, error) {
+	if l.Artifacts == nil {
+		return nil, errors.New("artifact source is not configured")
+	}
+	return l.Artifacts.CompletionBlockers(ctx)
 }
 
 // UsageSamples are the spend fields of the attempts that reached a terminal
