@@ -68,6 +68,10 @@ func (s *sourceFixture) RecentLandings(context.Context) ([]artifact.Landing, err
 	return []artifact.Landing{{ID: "land-p", Project: "p", State: artifact.LandCommitted}, {ID: "land-q", Project: "q", State: artifact.LandCommitted}}, s.fail["landings"]
 }
 
+func (s *sourceFixture) CompletionBlockers(context.Context) ([]string, error) {
+	return nil, s.fail["task-landings"]
+}
+
 func (s *sourceFixture) AllStuck(_ context.Context) ([]artifact.Stuck, error) {
 	return nil, s.fail["conflicts"]
 }

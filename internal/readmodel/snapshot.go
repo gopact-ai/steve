@@ -56,8 +56,10 @@ type snapshotBuilder struct {
 	// activityKnown says the live attempts were read completely; every
 	// ActivityKnown pointer in the snapshot points here. attentionKnown
 	// says the same for everything the inbox is made of.
-	activityKnown  bool
-	attentionKnown bool
+	activityKnown   bool
+	attentionKnown  bool
+	landingBlockers []string
+	landingUnknown  bool
 }
 
 // fleet lists the hub's machine first, then the workers, and fills each
@@ -150,6 +152,15 @@ func (b *snapshotBuilder) plansAndTasks(references []string) {
 	for _, request := range snap.Inbox {
 		references = append(references, request.TaskID)
 	}
+	if m.src.Tasks != nil {
+		for _, id := range b.landingBlockers {
+			// A retained result of a task already removed has no surviving
+			// tree to block; do not turn it into a global completion refusal.
+			if _, exists := m.src.Tasks.Header(id); exists {
+				references = append(references, id)
+			}
+		}
+	}
 	var headers []task.Header
 	if m.src.Tasks != nil {
 		work := m.src.Tasks.Workset(references)
@@ -201,7 +212,7 @@ func (b *snapshotBuilder) sources() {
 		{Name: "tasks", Wired: m.src.Tasks != nil}, {Name: "plans", Wired: m.src.Plans != nil},
 		{Name: "ledger", Wired: m.src.Ledger != nil}, {Name: "schedules", Wired: m.src.Schedules != nil},
 	}
-	for _, name := range []string{"ledger-live", "ledger-projects", "ledger-landings", "ledger-facts", "ledger-attention"} {
+	for _, name := range []string{"ledger-live", "ledger-projects", "ledger-landings", "ledger-task-landings", "ledger-facts", "ledger-attention"} {
 		snap.Sources = append(snap.Sources, SourceHealth{Name: name, Wired: m.src.Ledger != nil})
 	}
 }
@@ -314,6 +325,10 @@ func (b *snapshotBuilder) ledgerFacts(ctx context.Context) {
 	if b.live != nil {
 		snap.Attempts = b.live
 	}
+	var blockerErr error
+	b.landingBlockers, blockerErr = m.src.Ledger.TaskLandingBlockers(ctx)
+	b.landingUnknown = blockerErr != nil
+	m.markLedgerSource(snap, "task-landings", blockerErr)
 	recent, err := m.src.Ledger.RecentLandings(ctx)
 	// Landings and conflicts are both read from the artifact store, and a
 	// half-read view of what is blocked is what the one health mark is
@@ -396,6 +411,11 @@ func (b *snapshotBuilder) taskAxes() {
 	for _, t := range snap.Tasks {
 		parent[t.ID] = t.Parent
 	}
+	landing := map[string]bool{}
+	for _, id := range b.landingBlockers {
+		landing[id] = true
+	}
+	rolledLanding := map[string]bool{}
 	rolledPending, rolledUncertain := map[string]int{}, map[string]int{}
 	rolledPlan := map[string]bool{}
 	rolledLive, rolledUnsettled, rolledAttention := map[string]bool{}, map[string]bool{}, map[string]int{}
@@ -421,6 +441,9 @@ func (b *snapshotBuilder) taskAxes() {
 			seen[id] = true
 			if t.PlanID != "" {
 				rolledPlan[id] = true
+			}
+			if landing[t.ID] {
+				rolledLanding[id] = true
 			}
 			if live[t.ID] {
 				rolledLive[id] = true
@@ -451,7 +474,8 @@ func (b *snapshotBuilder) taskAxes() {
 		}
 		t.Attention = rolledAttention[t.ID]
 		t.PendingResults, t.UncertainResults = rolledPending[t.ID], rolledUncertain[t.ID]
-		t.CanComplete = t.CanComplete && t.Execution == ExecutionIdle && b.attentionKnown && t.Attention == 0 && t.PendingResults == 0 && t.UncertainResults == 0 && !rolledPlan[t.ID] && !t.planInTree
+		t.CanComplete = t.CanComplete && t.Execution == ExecutionIdle && b.attentionKnown && !b.landingUnknown && !rolledLanding[t.ID] &&
+			t.Attention == 0 && t.PendingResults == 0 && t.UncertainResults == 0 && !rolledPlan[t.ID] && !t.planInTree
 		t.Lane = lane(*t)
 		if t.Lane == "pending" && !b.attentionKnown {
 			t.Lane = "unknown"
