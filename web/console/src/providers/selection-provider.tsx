@@ -265,12 +265,29 @@ export function SelectionProvider({ children }: { children: ReactNode }) {
       ),
     );
     const above = anchor.top - box.height - gap >= gap;
-    const y = above
+    let y = above
       ? anchor.top - gap
       : Math.max(
           gap,
           Math.min(anchor.bottom + gap, window.innerHeight - box.height - gap),
         );
+    // A selected line's floating toolbar must not cover the same material's
+    // inline Actions trigger. Keep the usual placement unless it overlaps.
+    const actions = Array.from(current.surface.element.querySelectorAll<HTMLElement>("[data-material-actions]"))
+      .map((element) => element.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    const overlaps = (top: number, rect: DOMRect) =>
+      x < rect.right && x + box.width > rect.left && top < rect.bottom && top + box.height > rect.top;
+    const covered = actions.filter((rect) => overlaps(above ? y - box.height : y, rect));
+    if (covered.length) {
+      // Move outward on the same side; moving below a selected source line
+      // would intercept the next line number when extending the range.
+      const top = above
+        ? Math.min(...covered.map((rect) => rect.top)) - gap - box.height
+        : Math.max(...covered.map((rect) => rect.bottom)) + gap;
+      if (top >= gap && top + box.height <= window.innerHeight - gap && !actions.some((rect) => overlaps(top, rect)))
+        y = above ? top + box.height : top;
+    }
     if (x !== current.x || y !== current.y || above !== current.above)
       setCurrent({ ...current, x, y, above });
   }, [current, busy, error]);

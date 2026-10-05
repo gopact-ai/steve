@@ -341,10 +341,39 @@ try{
  await page.getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('menuitem',{name:'Annotate',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Annotate material'});await dialog.getByRole('textbox',{name:'Annotation',exact:true}).fill('Verify the result');await dialog.getByRole('button',{name:'Save',exact:true}).click();await waitFor(()=>f.notes.length===1,'annotation persisted');await dialog.waitFor({state:'hidden'});await page.getByText('Verify the result',{exact:true}).waitFor();assert.equal(f.notes.length,1);assert.equal(f.posts.length,0);console.log('PASS reply capture, explicit draft target, local pin and durable annotation');
  // Source and deleted-side line ranges use different immutable commits.
  await page.getByRole('tab',{name:'Artifacts',exact:true}).click();await page.getByRole('button',{name:/^(浏览文件|Browse files)$/}).click();await page.getByRole('button',{name:'app.ts',exact:true}).first().click();
- const source=page.getByRole('region',{name:'app.ts file content'});await source.getByRole('button',{name:'Select line 2',exact:true}).click();await source.getByRole('button',{name:'Select line 3',exact:true}).click({modifiers:['Shift']});
- await page.getByRole('region',{name:'Source app.ts',exact:true}).getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('menuitem',{name:'Add to Material conversation',exact:true}).click();
+ const source=page.getByRole('region',{name:'app.ts file content'}),sourceActions=page.getByRole('region',{name:'Source app.ts',exact:true}).getByRole('button',{name:'Actions',exact:true}),selectionBar=page.getByRole('toolbar',{name:'Selection actions',exact:true});
+ for(const viewport of [{width:1600,height:1000},{width:780,height:540},{width:390,height:844},{width:1600,height:1000}]){
+  await page.setViewportSize(viewport);
+  await source.getByRole('button',{name:'Select line 2',exact:true}).click();await source.getByRole('button',{name:'Select line 3',exact:true}).click({modifiers:['Shift']});
+  await selectionBar.getByText('Selected L2–L3',{exact:true}).waitFor();
+  const hit=await sourceActions.evaluate(el=>{const rect=el.getBoundingClientRect(),point={x:rect.x+rect.width/2,y:rect.y+rect.height/2},target=document.elementFromPoint(point.x,point.y);return {point,button:rect.toJSON(),target:target?.outerHTML,receivesPointer:el.contains(target)};});
+  console.log('Material Actions center hit-test',JSON.stringify({viewport,...hit}));
+  if(process.env.MATERIAL_UPLOAD_ARTIFACTS){await mkdir(process.env.MATERIAL_UPLOAD_ARTIFACTS,{recursive:true});await page.screenshot({path:path.join(process.env.MATERIAL_UPLOAD_ARTIFACTS,'material-actions-hit-'+viewport.width+'.png')});}
+  assert.equal(hit.receivesPointer,true,'L2–L3 selection toolbar must not intercept the real source Actions center');
+  assert.ok(await selectionBar.evaluate(el=>{const r=el.getBoundingClientRect();return r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight;}),'selection toolbar stays within the viewport');
+  assert.ok(await selectionBar.getByRole('button').evaluateAll(buttons=>buttons.every(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})),'selection toolbar buttons still receive real pointer hits');
+ }
+ await page.keyboard.press('Shift+F10');assert.equal(await selectionBar.getByRole('button',{name:'Add to chat',exact:true}).evaluate(el=>document.activeElement===el),true);
+ await page.keyboard.press('ArrowRight');assert.equal(await selectionBar.getByRole('button',{name:'More details',exact:true}).evaluate(el=>document.activeElement===el),true);
+ await page.keyboard.press('Home');assert.equal(await selectionBar.getByRole('button',{name:'Add to chat',exact:true}).evaluate(el=>document.activeElement===el),true);
+ // Keep the original real mouse action and resulting immutable source ref.
+ assert.ok(await selectionBar.isVisible(),'keyboard navigation must not hide the toolbar');
+ assert.ok(await sourceActions.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),'Actions center stays clickable while the keyboard-focused toolbar is still present');
+ await sourceActions.click();await page.getByRole('menuitem',{name:'Add to Material conversation',exact:true}).click();
  await waitFor(()=>f.captures.at(-1)?.source.commit===after,'source snapshot capture');assert.equal(f.captures.at(-1).source.commit,after);
- await page.getByRole('button',{name:'Diff',exact:true}).click();await page.getByRole('button',{name:'Before · Select line 1',exact:true}).click();await page.locator('.review-diff').getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('menuitem',{name:'Add to Material conversation',exact:true}).click();await waitFor(()=>f.captures.at(-1)?.source.commit===base,'base snapshot capture');assert.equal(f.captures.at(-1).source.commit,base);
+ // The floating toolbar is still an operable control, not a pointer-events
+ // workaround. Its normal preview action works with keyboard and mouse.
+ for(const keyboard of [true,false]){
+  await source.getByRole('button',{name:'Select line 3',exact:true}).click();await selectionBar.getByText('Selected L3–L3',{exact:true}).waitFor();
+  if(keyboard){await page.keyboard.press('Shift+F10');await page.keyboard.press('ArrowRight');await page.keyboard.press('Enter');}
+  else await selectionBar.getByRole('button',{name:'More details',exact:true}).click();
+  const preview=page.getByRole('dialog',{name:'Preview',exact:true});await preview.getByText('third',{exact:true}).waitFor();await preview.getByRole('button',{name:'Close',exact:true}).click();await preview.waitFor({state:'hidden'});
+ }
+ console.log('PASS selected material Actions hit areas, keyboard navigation and live floating actions without bypass');
+ await page.getByRole('button',{name:'Diff',exact:true}).click();await page.getByRole('button',{name:'Before · Select line 1',exact:true}).click();
+ const diffActions=page.locator('.review-diff').getByRole('button',{name:'Actions',exact:true});
+ assert.ok(await diffActions.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),'deleted-side Actions center is not blocked by its selection toolbar');
+ await diffActions.click();await page.getByRole('menuitem',{name:'Add to Material conversation',exact:true}).click();await waitFor(()=>f.captures.at(-1)?.source.commit===base,'base snapshot capture');assert.equal(f.captures.at(-1).source.commit,base);
  await page.getByRole('button',{name:'Back',exact:true}).click();const refs=await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.draft.materials:'+A)),A);assert.ok(refs.some(r=>r.selector?.start===2&&r.selector?.end===3));assert.ok(refs.some(r=>r.selector?.start===1&&r.selector?.end===1));console.log('PASS source range and deleted diff range anchor exact snapshots');
  await page.getByRole('button',{name:'Hide details',exact:true}).click();
  await page.getByLabel('Attach files',{exact:true}).setInputFiles([{name:'pixel.png',mimeType:'image/png',buffer:png},{name:'notes.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-1.4 fixture')}]);await page.getByRole('list',{name:'Attached materials'}).getByText('notes.pdf',{exact:true}).waitFor();
