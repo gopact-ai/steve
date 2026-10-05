@@ -520,6 +520,9 @@ type ObservationStore interface {
 type LedgerSource interface {
 	LiveAttempts(ctx context.Context) ([]Attempt, error)
 	RecentLandings(ctx context.Context) ([]Landing, error)
+	// TaskLandingBlockers is complete standing work, independent of the
+	// capped recent landing history and bounded child pages.
+	TaskLandingBlockers(ctx context.Context) ([]string, error)
 	// Conflicts is every project's standing merge conflict.
 	Conflicts(ctx context.Context) ([]Conflict, error)
 	Facts(ctx context.Context) (Facts, error)

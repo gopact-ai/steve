@@ -850,6 +850,10 @@
       "wired": true
     },
     {
+      "name": "ledger-task-landings",
+      "wired": true
+    },
+    {
       "name": "ledger-facts",
       "wired": true
     },
