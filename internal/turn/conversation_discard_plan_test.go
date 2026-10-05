@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -335,5 +336,134 @@ func TestDiscardConversationRefusesUnreadablePlanRunOwnership(t *testing.T) {
 	}
 	if _, found := c.tasks.Get(tracked.ID); !found {
 		t.Fatal("unreadable run lost its possible task authority")
+	}
+}
+
+func TestDiscardConversationRefusesRunOwnedElsewhereButUsingItsToken(t *testing.T) {
+	for _, route := range []string{"public-discard", "deletion-transaction"} {
+		t.Run(route, func(t *testing.T) {
+			c := discardPlanCoordinator(t)
+			doomed := discardPlanTask(t, c, "console:owner-conflict", "")
+			other := discardPlanTask(t, c, "console:other-owner", "")
+			own := discardPlanRun(t, c, doomed.ID, exec.RunExecuting)
+			conflict := discardPlanRun(t, c, other.ID, exec.RunExecuting)
+			conflict.Execution = own.Execution
+			book := ledgerOf(t, c)
+			op, _ := readDiscardRun(t, book, conflict.ID)
+			if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
+				if err := tx.SetData(&op, conflict); err != nil {
+					return err
+				}
+				return tx.RecordTransition(op, exec.RunExecuting, "fixture-owner-conflict")
+			}); err != nil {
+				t.Fatal(err)
+			}
+			binding, err := c.projects.Bind(t.Context(), doomed.Channel, "p", "fixture")
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := c.tasks.List("")
+			ownBefore, _ := readDiscardRun(t, book, own.ID)
+			conflictBefore, _ := readDiscardRun(t, book, conflict.ID)
+			if route == "public-discard" {
+				err = c.DiscardConversation(t.Context(), doomed.Channel)
+			} else {
+				_, err = c.tasks.DeleteChannelWith(t.Context(), doomed.Channel, checkConversationRetirement, func(tx *ledger.Tx, ids []string) error {
+					if err := exec.DiscardTaskRunsTx(tx, ids); err != nil {
+						return err
+					}
+					return project.DiscardConversationBindingTx(tx, doomed.Channel)
+				})
+			}
+			if err == nil {
+				t.Error("cross-owner run escaped retirement admission")
+			}
+			if !reflect.DeepEqual(before, c.tasks.List("")) {
+				t.Error("refused deletion changed cached tasks")
+			}
+			reopened, err := task.OpenLedger(book)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, found := reopened.Get(doomed.ID); !found {
+				t.Error("conflicting token lost durable task authority")
+			}
+			if got, _ := readDiscardRun(t, book, own.ID); !reflect.DeepEqual(ownBefore, got) {
+				t.Error("refused deletion retired a valid run")
+			}
+			if got, _ := readDiscardRun(t, book, conflict.ID); !reflect.DeepEqual(conflictBefore, got) {
+				t.Error("refused deletion rewrote conflicting history")
+			}
+			if got, found, err := c.projects.Binding(t.Context(), doomed.Channel); err != nil || !found || !reflect.DeepEqual(binding, got) {
+				t.Errorf("refused deletion lost binding: %+v %t %v", got, found, err)
+			}
+			if name, found, err := book.Name(t.Context(), "conversation/"+doomed.Channel+"/project"); err != nil || !found || name.Version != binding.Version {
+				t.Errorf("refused deletion lost binding name: %+v %t %v", name, found, err)
+			}
+		})
+	}
+}
+
+func TestDiscardConversationSelectsEveryPossibleRunOwnershipAnchor(t *testing.T) {
+	for _, scenario := range []string{"selected-owner", "selected-token", "empty-owner", "selected-plan", "selected-operation-id", "foreign-plan", "sink-token", "unknown-token", "unrelated-valid"} {
+		t.Run(scenario, func(t *testing.T) {
+			c := discardPlanCoordinator(t)
+			doomed := discardPlanTask(t, c, "console:ownership-anchors", "")
+			other := discardPlanTask(t, c, "console:unrelated", "")
+			own := discardPlanRun(t, c, doomed.ID, exec.RunExecuting)
+			foreign := discardPlanRun(t, c, other.ID, exec.RunExecuting)
+			target := foreign.ID
+			switch scenario {
+			case "selected-owner":
+				foreign.TaskID = doomed.ID
+			case "selected-token":
+				foreign.Execution = own.Execution
+			case "empty-owner":
+				foreign.TaskID = ""
+				foreign.Execution = own.Execution
+			case "selected-plan":
+				foreign.PlanID = own.PlanID
+			case "selected-operation-id":
+				target = own.ID
+			case "foreign-plan":
+				foreign.TaskID = doomed.ID
+				foreign.Execution = own.Execution
+			case "sink-token":
+				foreign.Sinks = []exec.Sink{{StepID: "foreign", Source: &artifact.Source{Execution: own.Execution, AttemptID: "fixture"}}}
+			case "unknown-token":
+				foreign.Execution = &task.ExecutionToken{}
+			}
+			book := ledgerOf(t, c)
+			op, _ := readDiscardRun(t, book, target)
+			if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
+				if err := tx.SetData(&op, foreign); err != nil {
+					return err
+				}
+				return tx.RecordTransition(op, exec.RunExecuting, "fixture-ownership-anchor")
+			}); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := readDiscardRun(t, book, target)
+			err := c.DiscardConversation(t.Context(), doomed.Channel)
+			if scenario == "unrelated-valid" {
+				if err != nil {
+					t.Fatal("unrelated legal history permanently blocked discard", err)
+				}
+				if op, _ := readDiscardRun(t, book, own.ID); op.State != exec.RunCompleted {
+					t.Fatal("owned run was not retired")
+				}
+			} else {
+				if err == nil {
+					t.Fatal("possible related owner conflict was missed", scenario)
+				}
+				if _, found := c.tasks.Get(doomed.ID); !found {
+					t.Fatal("conflict deleted task authority")
+				}
+			}
+			after, _ := readDiscardRun(t, book, target)
+			if !reflect.DeepEqual(before, after) {
+				t.Fatal("ownership check rewrote history")
+			}
+		})
 	}
 }

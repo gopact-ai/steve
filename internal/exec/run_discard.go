@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -39,13 +40,49 @@ func taskRunsForDiscardTx(tx ledger.Reader, taskIDs []string) ([]retiringRun, er
 	for _, id := range taskIDs {
 		selected[id] = true
 	}
+	byPlan, err := plan.RetirementPlansTx(tx, taskIDs)
+	if err != nil {
+		return nil, err
+	}
+	planIDs := make([]string, 0)
+	runIDs := make([]string, 0)
+	for id, p := range byPlan {
+		if selected[p.TaskID] {
+			planIDs = append(planIDs, id)
+			runIDs = append(runIDs, planRunID(id))
+		}
+	}
+	planRaw, err := json.Marshal(planIDs)
+	if err != nil {
+		return nil, err
+	}
+	runRaw, err := json.Marshal(runIDs)
+	if err != nil {
+		return nil, err
+	}
 	var runs []retiringRun
 	after := ""
 	for {
 		op := ledger.Operation{Kind: runKind}
 		var raw string
-		// Unreadable task ownership cannot prove a run belongs elsewhere.
-		err := tx.QueryRow(`SELECT id,state,revision,data FROM operations WHERE kind=? AND id>? AND (json_type(data,'$.task_id') IS NOT 'text' OR json_extract(data,'$.task_id') IN (SELECT value FROM json_each(?))) ORDER BY id LIMIT 1`, runKind, after, string(ids)).Scan(&op.ID, &op.State, &op.Revision, &raw)
+		// Select all possible ownership anchors before validating consistency.
+		// Missing/null execution carries no token; unreadable token ownership
+		// cannot establish that an otherwise unrelated run belongs elsewhere.
+		err := tx.QueryRow(`SELECT id,state,revision,data FROM operations WHERE kind=? AND id>? AND (
+			json_type(data,'$.task_id') IS NOT 'text'
+			OR json_extract(data,'$.task_id') IN (SELECT value FROM json_each(?))
+			OR (json_type(data,'$.execution') IS NOT NULL AND json_type(data,'$.execution') IS NOT 'null' AND (
+				json_type(data,'$.execution') IS NOT 'object'
+				OR json_type(data,'$.execution.task_id') IS NOT 'text'
+				OR json_extract(data,'$.execution.task_id')=''
+				OR json_extract(data,'$.execution.task_id') IN (SELECT value FROM json_each(?))))
+			OR EXISTS(SELECT 1 FROM json_each(data,'$.sinks') AS sink WHERE
+				json_type(sink.value,'$.source') IS NOT NULL AND json_type(sink.value,'$.source') IS NOT 'null' AND (
+					json_type(sink.value,'$.source.execution.task_id') IS NOT 'text'
+					OR json_extract(sink.value,'$.source.execution.task_id')=''
+					OR json_extract(sink.value,'$.source.execution.task_id') IN (SELECT value FROM json_each(?))))
+			OR json_extract(data,'$.plan_id') IN (SELECT value FROM json_each(?))
+			OR id IN (SELECT value FROM json_each(?))) ORDER BY id LIMIT 1`, runKind, after, string(ids), string(ids), string(ids), string(planRaw), string(runRaw)).Scan(&op.ID, &op.State, &op.Revision, &raw)
 		if errors.Is(err, sql.ErrNoRows) {
 			return runs, nil
 		}
@@ -53,17 +90,17 @@ func taskRunsForDiscardTx(tx ledger.Reader, taskIDs []string) ([]retiringRun, er
 			return nil, fmt.Errorf("read retiring plan runs: %w", err)
 		}
 		op.Data = json.RawMessage(raw)
-		var rec RunRecord
-		if err := json.Unmarshal(op.Data, &rec); err != nil {
-			return nil, fmt.Errorf("read plan run %s: %w", op.ID, err)
+		rec, err := decodeRun(op)
+		if err != nil {
+			return nil, err
 		}
-		if !selected[rec.TaskID] || rec.PlanID == "" || rec.ID != op.ID || rec.ID != planRunID(rec.PlanID) || rec.Phase != op.State || rec.Execution != nil && rec.Execution.TaskID != rec.TaskID {
-			return nil, fmt.Errorf("invalid retiring plan run %s", op.ID)
+		if !selected[rec.TaskID] {
+			return nil, fmt.Errorf("invalid retiring plan run ownership %s", op.ID)
 		}
-		switch op.State {
-		case RunExecuting, RunLanding, RunCompleted:
-		default:
-			return nil, fmt.Errorf("plan run %s has unknown phase %s", op.ID, op.State)
+		if p, found := byPlan[rec.PlanID]; found {
+			if err := rec.checkPlan(p); err != nil {
+				return nil, err
+			}
 		}
 		if op.State != RunCompleted {
 			var held int
