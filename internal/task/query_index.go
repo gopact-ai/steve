@@ -236,6 +236,40 @@ func (r *readIndex) insert(t *Task, meta Meta, summary ReadSummary, tasks map[st
 	r.count(t, summary, 1)
 }
 
+// dependentBlockersBefore snapshots old contributions only for unchanged
+// suppressed children whose direct parent's terminal state will change.
+// Rewritten children already go through the ordinary old/new index passes.
+func (r *readIndex) dependentBlockersBefore(tasks map[string]*Task, changes []recordChange, rewritten map[string][]int) map[string]int {
+	dependentBlockers := map[string]int{}
+	for _, change := range changes {
+		if change.kind != taskKind {
+			continue
+		}
+		old := tasks[change.id]
+		wasEnded := old != nil && old.State.Terminal()
+		head, exists := change.value.(taskHead)
+		if wasEnded == (exists && head.State.Terminal()) {
+			continue
+		}
+		for child := range r.suppressed[change.id] {
+			if _, rewritten := rewritten[child]; !rewritten {
+				dependentBlockers[child] = localBlocker(tasks[child], tasks)
+			}
+		}
+	}
+	return dependentBlockers
+}
+
+// applyDependentBlockers propagates each unchanged child's committed blocker
+// difference through its ancestor path, before their headers are refreshed.
+func (r *readIndex) applyDependentBlockers(tasks map[string]*Task, previous map[string]int, affected map[string]bool) {
+	for id, before := range previous {
+		if delta := localBlocker(tasks[id], tasks) - before; delta != 0 {
+			r.addTree(tasks, id, treeSummary{blockers: delta}, affected)
+		}
+	}
+}
+
 // Own accounting is adjusted only for changed rows. Subtree blockers and
 // plan presence are propagated only through affected ancestor paths.
 // apply installs the write between the two passes: removals read the
@@ -260,26 +294,7 @@ func (s *Store) updateReadIndexLocked(changes []recordChange, apply func()) {
 			}
 		}
 	}
-	// A parent can end without writing the suppressed children that depend
-	// on it. Recompute only unchanged dependents; rewritten children already
-	// have their entire old/new contribution handled by the ordinary passes.
-	dependentBlockers := map[string]int{}
-	for _, change := range changes {
-		if change.kind != taskKind {
-			continue
-		}
-		old := s.data.Tasks[change.id]
-		wasEnded := old != nil && old.State.Terminal()
-		head, exists := change.value.(taskHead)
-		if wasEnded == (exists && head.State.Terminal()) {
-			continue
-		}
-		for child := range r.suppressed[change.id] {
-			if _, rewritten := changed[child]; !rewritten {
-				dependentBlockers[child] = localBlocker(s.data.Tasks[child], s.data.Tasks)
-			}
-		}
-	}
+	dependentBlockers := r.dependentBlockersBefore(s.data.Tasks, changes, changed)
 	// Every changed key is removed using the old order before any replacement
 	// key is inserted. Unchanged members preserve their backing index arrays.
 	affected := map[string]bool{}
@@ -358,11 +373,7 @@ func (s *Store) updateReadIndexLocked(changes []recordChange, apply func()) {
 			affected[t.Parent] = true
 		}
 	}
-	for id, before := range dependentBlockers {
-		if delta := localBlocker(next.Tasks[id], next.Tasks) - before; delta != 0 {
-			r.addTree(next.Tasks, id, treeSummary{blockers: delta}, affected)
-		}
-	}
+	r.applyDependentBlockers(next.Tasks, dependentBlockers, affected)
 	for id := range affected {
 		if r.refreshTree(next.Tasks, id) {
 			r.touchHeader(next, id)
