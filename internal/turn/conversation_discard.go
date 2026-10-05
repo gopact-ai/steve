@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/project"
 )
 
 // ErrConversationBusy is a conversation that cannot be discarded yet
@@ -19,8 +22,8 @@ var ErrConversationBusy = errors.New("conversation has a turn in flight")
 // nothing is destroyed for a delete that will not happen. Then the agent
 // sessions it holds are closed on the machines that run them, the tasks
 // it opened go with everything delegated from them, the schedules that
-// fire into it are dropped, and the records that would resume any of it
-// are forgotten.
+// fire into it are dropped, and its project binding is forgotten. Plan runs
+// are retired with the tasks; plan revisions remain historical facts.
 //
 // Sessions close before the tasks are deleted, because a node session is
 // authorized by the task it belongs to.
@@ -37,7 +40,12 @@ func (c *Coordinator) DiscardConversation(ctx context.Context, conversationID st
 	if err := c.closeConversationSessions(ctx, conversationID); err != nil {
 		return err
 	}
-	if _, err := c.tasks.DeleteChannel(ctx, conversationID, checkConversationRetirement); err != nil {
+	if _, err := c.tasks.DeleteChannelWith(ctx, conversationID, checkConversationRetirement, func(tx *ledger.Tx, ids []string) error {
+		if err := exec.DiscardTaskRunsTx(tx, ids); err != nil {
+			return err
+		}
+		return project.DiscardConversationBindingTx(tx, conversationID)
+	}); err != nil {
 		return err
 	}
 	for _, job := range c.schedules.List(conversationID) {

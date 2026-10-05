@@ -15,6 +15,9 @@ const MaxSteps = 64
 // would deadlock, a dangling dependency would never become ready, and a step
 // with no verification decision is exactly the case that ships untested work.
 func Validate(p Plan) error {
+	if p.Execution != nil && (p.TaskID == "" || p.Execution.TaskID != p.TaskID) {
+		return fmt.Errorf("plan execution owner differs from task %s", p.TaskID)
+	}
 	if len(p.Steps) == 0 {
 		return fmt.Errorf("plan has no steps")
 	}

@@ -2,7 +2,6 @@ package exec
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -36,7 +35,8 @@ type Sink struct {
 }
 
 // RunRecord keeps execution responsibility until all promised landings and
-// task completion are durable. Completed records remain replayable facts.
+// task completion are durable, or its conversation is explicitly discarded.
+// Completed records remain replayable facts, not necessarily successes.
 type RunRecord struct {
 	Target    project.Home `json:"target"`
 	fresh     bool
@@ -89,18 +89,8 @@ func (s *Supervisor) loadRun(ctx context.Context, id string) (RunRecord, bool, e
 	if err != nil || !found {
 		return RunRecord{}, found, err
 	}
-	if op.Kind != runKind {
-		return RunRecord{}, false, errors.New("plan run identity belongs to another operation")
-	}
-	var rec RunRecord
-	if err := json.Unmarshal(op.Data, &rec); err != nil {
-		return rec, false, err
-	}
-	if rec.ID != id || rec.PlanID == "" {
-		return rec, false, errors.New("invalid plan run identity")
-	}
-	rec.Phase = op.State
-	return rec, true, nil
+	rec, err := decodeRun(op)
+	return rec, err == nil, err
 }
 
 func (s *Supervisor) opened(ctx context.Context, p plan.Plan) (RunRecord, error) {
@@ -109,6 +99,9 @@ func (s *Supervisor) opened(ctx context.Context, p plan.Plan) (RunRecord, error)
 	}
 	id := planRunID(p.ID)
 	if rec, found, err := s.loadRun(ctx, id); err != nil || found {
+		if err == nil {
+			err = s.checkRunAdmission(ctx, rec, p)
+		}
 		return rec, err
 	}
 	if s.deps.Artifacts == nil {
@@ -132,7 +125,19 @@ func (s *Supervisor) opened(ctx context.Context, p plan.Plan) (RunRecord, error)
 		}
 		rec.Execution = &token
 	}
-	_, err = s.ledger.Begin(ctx, id, runKind, RunExecuting, s.owner, rec)
+	if rec.Execution != nil {
+		token := *rec.Execution
+		rec.Execution = &token
+	}
+	if err := s.checkRunAdmission(ctx, rec, p); err != nil {
+		return rec, err
+	}
+	_, err = s.ledger.BeginGuarded(ctx, id, runKind, RunExecuting, s.owner, rec, func(tx *ledger.Tx) error {
+		if err := rec.checkIdentity(); err != nil {
+			return err
+		}
+		return task.CheckExecutionTx(tx, rec.Execution)
+	})
 	rec.fresh = err == nil
 	return rec, err
 }
@@ -160,10 +165,23 @@ func (s *Supervisor) prepareBase(ctx context.Context, rec *RunRecord, p *plan.Pl
 }
 
 func (s *Supervisor) saveRun(ctx context.Context, rec *RunRecord, phase string) error {
+	if err := rec.checkIdentity(); err != nil {
+		return err
+	}
 	from := rec.Phase
 	next := *rec
 	next.Phase = phase
 	_, err := s.ledger.Transition(ctx, rec.ID, from, phase, s.owner, runFence(ctx), nil, func(tx *ledger.Tx, op *ledger.Operation) error {
+		current, err := decodeRun(*op)
+		if err != nil {
+			return err
+		}
+		if !current.sameOwner(next) {
+			return fmt.Errorf("%w: plan run %s ownership changed", ErrRecovery, rec.ID)
+		}
+		if err := next.checkIdentity(); err != nil {
+			return err
+		}
 		if phase != RunCompleted {
 			if err := task.CheckExecutionTx(tx, next.Execution); err != nil {
 				return err
@@ -200,8 +218,8 @@ func (s *Supervisor) retainedRuns(ctx context.Context, completed bool) ([]RunRec
 		if op.State == RunCompleted && !completed {
 			continue
 		}
-		var rec RunRecord
-		if err := json.Unmarshal(op.Data, &rec); err != nil {
+		rec, err := decodeRun(op)
+		if err != nil {
 			return out, err
 		}
 		if s.deps.Artifacts != nil {
@@ -219,6 +237,9 @@ func (s *Supervisor) retainedRuns(ctx context.Context, completed bool) ([]RunRec
 }
 
 func (s *Supervisor) runOwner(ctx context.Context, rec RunRecord, work func(context.Context, RunRecord) (Outcome, error)) (Outcome, error) {
+	if err := rec.checkIdentity(); err != nil {
+		return Outcome{}, err
+	}
 	project, found, err := s.deps.Artifacts.Project(ctx, rec.ProjectID)
 	if err != nil {
 		return Outcome{}, err
@@ -253,6 +274,9 @@ func (s *Supervisor) runOwner(ctx context.Context, rec RunRecord, work func(cont
 	if err != nil {
 		return Outcome{}, err
 	}
+	if !rec.sameOwner(fresh) {
+		return Outcome{}, fmt.Errorf("%w: plan run %s ownership changed", ErrRecovery, rec.ID)
+	}
 	return work(ctx, fresh)
 }
 
@@ -275,13 +299,16 @@ func (s *Supervisor) Resume(ctx context.Context, rec RunRecord) (Outcome, error)
 		}
 		return Outcome{RunID: latest.RunID}, nil
 	}
-	return s.runOwner(ctx, rec, func(ctx context.Context, rec RunRecord) (Outcome, error) {
+	return s.runOwner(ctx, latest, func(ctx context.Context, rec RunRecord) (Outcome, error) {
 		if s.plans == nil {
 			return Outcome{}, errors.New("plan store is not configured")
 		}
 		p, ok := s.plans.Latest(rec.PlanID)
 		if !ok {
 			return Outcome{}, fmt.Errorf("plan %s vanished", rec.PlanID)
+		}
+		if err := rec.checkPlan(p); err != nil {
+			return Outcome{}, err
 		}
 		if rec.Phase == RunLanding || rec.Phase == RunCompleted {
 			return s.finishRun(ctx, rec, p, Outcome{RunID: rec.RunID})
