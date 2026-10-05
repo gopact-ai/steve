@@ -27,13 +27,20 @@ var ErrRetirementPending = errors.New("task native cleanup is pending")
 // open execution refuses, and the caller stops it first. The supplied owner
 // guard checks native cleanup in the same transaction that deletes the tree.
 func (s *Store) DeleteChannel(ctx context.Context, channel string, guard func(ledger.Reader, []string) error) ([]string, error) {
+	return s.DeleteChannelWith(ctx, channel, guard, nil)
+}
+
+// DeleteChannelWith commits related retirement facts with the guarded task
+// deletion. commit uses only tx, never another store write or external call.
+// It also runs for an empty tree, so a retry can retire conversation bindings.
+func (s *Store) DeleteChannelWith(ctx context.Context, channel string, guard func(ledger.Reader, []string) error, commit func(*ledger.Tx, []string) error) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ids, err := s.deletableLocked(channel)
 	if err != nil {
 		return nil, err
 	}
-	if len(ids) == 0 {
+	if len(ids) == 0 && commit == nil {
 		return ids, nil
 	}
 	next := s.draft()
@@ -41,8 +48,18 @@ func (s *Store) DeleteChannel(ctx context.Context, channel string, guard func(le
 		next.remove(id)
 	}
 	var check func(*ledger.Tx) error
-	if guard != nil {
-		check = func(tx *ledger.Tx) error { return guard(tx, ids) }
+	if guard != nil || commit != nil {
+		check = func(tx *ledger.Tx) error {
+			if guard != nil {
+				if err := guard(tx, ids); err != nil {
+					return err
+				}
+			}
+			if commit != nil {
+				return commit(tx, ids)
+			}
+			return nil
+		}
 	}
 	if err := s.replaceRecordsLocked(ctx, next, check); err != nil {
 		return nil, err

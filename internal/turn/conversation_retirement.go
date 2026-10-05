@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
@@ -22,5 +23,5 @@ func checkConversationRetirement(tx ledger.Reader, ids []string) error {
 		}
 		return err
 	}
-	return nil
+	return exec.CheckTaskRunRetirementTx(tx, ids)
 }
