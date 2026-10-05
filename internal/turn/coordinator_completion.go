@@ -2,6 +2,7 @@ package turn
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -9,6 +10,8 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/state"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 // ConsoleCompletionGuard checks console-owned attention and delivery facts
@@ -32,6 +35,20 @@ type ConsoleCompletionGuard func(tx *ledger.Tx, ids map[string]bool, conversatio
 // what comes next, while /complete and the idle close wait for them.
 func CheckTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string, spareQueued bool, console ConsoleCompletionGuard) error {
 	if err := attempt.CheckTaskCompletionTx(tx, ids); err != nil {
+		return err
+	}
+	// A settled prompt does not discharge a native session close still
+	// owed by the node. Keep that obligation's task authority until cleanup.
+	var closing []string
+	for id, selected := range ids {
+		if selected {
+			closing = append(closing, id)
+		}
+	}
+	if err := state.CheckTaskDeletionTx(tx, closing); err != nil {
+		if errors.Is(err, state.ErrCloseOwed) {
+			return fmt.Errorf("%w: %w", task.ErrCompleteBusy, err)
+		}
 		return err
 	}
 	if err := artifact.CheckTaskLandingsTx(tx, ids); err != nil {

@@ -637,7 +637,7 @@ bash -lc 'exec /home/me/steve-bin/steve-node mcp-broker -config /home/me/steve-b
 
 验收通过后，在主任务详情点击“完成任务” / “Complete task”，或发送 `/tasks complete ID`（别名 `done`、`完成`）。省略编号优先选择当前会话最新的运行中或待验收聊天主任务；重复完成同一编号返回稳定的已完成确认。完成不会重置会话或 native context；下一条新消息打开新主任务，旧 continuation 和 resume 不能重开已关闭任务。
 
-这是显式验收操作，不是“回合结束即任务完成”。准入仅限运行中或待验收的聊天主任务；计划、定时任务和委派子任务不能借此标为成功。暂停、失败、取消保留原操作。所有后代须已关闭（done/cancelled）、结果落盘且 delivery 为 delivered；仍可重试的 failed 子任务、suppressed/queued/uncertain 收据都不算收齐。任何未结束 attempt（含旧 epoch）、活动或保留执行、隔离/未知执行、待落盘产物、待父处理 continuation、用户问题或待确认外部效果都会拒绝。历史 attempt 缺少确定的物理执行收尾证据也会拒绝，需先由既有恢复流程核实，不能用“完成”绕过。
+这是显式验收操作，不是“回合结束即任务完成”。准入仅限运行中或待验收的聊天主任务；计划、定时任务和委派子任务不能借此标为成功。暂停、失败、取消保留原操作。所有后代须已关闭（done/cancelled）、结果落盘且 delivery 为 delivered；委派后代的直接父任务已结束（done/cancelled）时，持久化的 suppressed 也视为交接已收口，但不冒称已送达。仍可重试的 failed 子任务、pending/queued/uncertain 收据、运行中父任务下的 suppressed 或缺少结果都不算收齐。已由用户 handled/ignored 的 failed 后代沿用手动收口合同，保留失败事实。任何未结束 attempt（含旧 epoch）、活动或保留执行、隔离/未知执行、尚欠的 native session close、待落盘产物、待父处理 continuation、用户问题或待确认外部效果都会拒绝。历史 attempt 缺少确定的物理执行收尾证据也会拒绝，需先由既有恢复流程核实，不能用“完成”绕过。
 
 服务端在会话执行槽和 execution registry 的准入锁内检查空闲，在任务锁及同一 ledger 事务内检查任务树、执行、交接和待处理事项并写入 done，同时撤销整棵树的旧执行 epoch。执行保留事务重新检查原 token，避免与完成竞态。前端 `can_complete` 只是已知状态提示，不是授权；服务端拒绝通过错误反馈展示，不显示为成功回执。
 

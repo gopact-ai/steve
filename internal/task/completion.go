@@ -80,6 +80,10 @@ func completionBlocker(root Task, tree []Task) error {
 	if root.State != StateRunning && root.State != StateReview {
 		return ErrCompleteState
 	}
+	ended := make(map[string]bool, len(tree))
+	for _, member := range tree {
+		ended[member.ID] = member.State.Terminal()
+	}
 	for _, member := range tree {
 		for _, row := range member.Attempts {
 			if row.Open() {
@@ -89,23 +93,34 @@ func completionBlocker(root Task, tree []Task) error {
 		if member.ID == root.ID {
 			continue
 		}
-		// A member its owner has closed by hand is as settled as a
-		// cancelled one: they looked at the failure and decided.
-		if member.Settled() {
-			continue
+		if err := completionWorkBlocker(&member, ended[member.Parent]); err != nil {
+			return fmt.Errorf("%w: #%s", err, member.ID)
 		}
-		if !member.State.Terminal() {
-			return fmt.Errorf("%w: #%s", ErrCompleteChildren, member.ID)
-		}
-		// The durable cancellation itself settles work that produced no
-		// result. Execution/WAL/queue guards still require physical cleanup;
-		// cancellation never invents a successful result or delivery receipt.
-		if member.State == StateCancelled && member.Result == nil && member.Delivery == nil {
-			continue
-		}
-		if member.Result == nil || member.Delivery == nil || member.Delivery.State != DeliveryDelivered {
-			return fmt.Errorf("%w: #%s", ErrCompleteDelivery, member.ID)
-		}
+	}
+	return nil
+}
+
+// completionWorkBlocker is the task-state closure shared by completion and
+// the incremental owner read index. Accounting and physical/durable guards
+// are checked independently; a read summary never grants execution authority.
+func completionWorkBlocker(member *Task, parentEnded bool) error {
+	// The owner's decision closes a failure without erasing it.
+	if member.Settled() {
+		return nil
+	}
+	if !member.State.Terminal() {
+		return ErrCompleteChildren
+	}
+	// Cancellation settles work that produced no result, not its cleanup.
+	if member.State == StateCancelled && member.Result == nil && member.Delivery == nil {
+		return nil
+	}
+	// Suppression closes only delivery to an ended parent; it never claims
+	// that the result was delivered or that execution/landing has finished.
+	deliveryClosed := member.Delivery != nil && (member.Delivery.State == DeliveryDelivered ||
+		member.Delivery.State == DeliverySuppressed && member.Delegated() && parentEnded)
+	if member.Result == nil || !deliveryClosed {
+		return ErrCompleteDelivery
 	}
 	return nil
 }
