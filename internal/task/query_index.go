@@ -8,21 +8,33 @@ import (
 
 type treeSummary struct{ open, blockers, plans int }
 
-func localBlocker(t *Task) int {
-	if t.Settled() {
-		return 0
-	}
-	if !t.State.Terminal() {
-		return 1
-	}
-	if t.State == StateCancelled && t.Result == nil && t.Delivery == nil {
-		return 0
-	}
-	if t.Result == nil || t.Delivery == nil || t.Delivery.State != DeliveryDelivered {
+func localBlocker(t *Task, tasks map[string]*Task) int {
+	parent := tasks[t.Parent]
+	if completionWorkBlocker(t, parent != nil && parent.State.Terminal()) != nil {
 		return 1
 	}
 	return 0
 }
+
+// Only suppressed delegations depend on their direct parent's terminal state.
+// Keep a reverse index so a parent change never scans unrelated task history.
+func (r *readIndex) trackSuppressed(t *Task, add bool) {
+	if t.Parent == "" || !t.Delegated() || t.Delivery == nil || t.Delivery.State != DeliverySuppressed {
+		return
+	}
+	if add {
+		if r.suppressed[t.Parent] == nil {
+			r.suppressed[t.Parent] = map[string]bool{}
+		}
+		r.suppressed[t.Parent][t.ID] = true
+	} else {
+		delete(r.suppressed[t.Parent], t.ID)
+		if len(r.suppressed[t.Parent]) == 0 {
+			delete(r.suppressed, t.Parent)
+		}
+	}
+}
+
 func scopesOf(t *Task) []Scope {
 	scopes := []Scope{{}, {Kind: "children", ID: t.Parent}}
 	if t.ProjectID != "" {
@@ -118,7 +130,7 @@ func (r *readIndex) refreshTree(tasks map[string]*Task, id string) bool {
 	before := summary
 	tree := r.trees[id]
 	summary.CanComplete = t.Parent == "" && t.Origin == "" && t.PreparedPlan == nil &&
-		(t.State == StateRunning || t.State == StateReview) && tree.open == 0 && tree.blockers-localBlocker(t) == 0
+		(t.State == StateRunning || t.State == StateReview) && tree.open == 0 && tree.blockers-localBlocker(t, tasks) == 0
 	summary.PlanInTree = tree.plans > 0
 	summary.Children = len(r.ordered[queryKey{Scope: Scope{Kind: "children", ID: id}}])
 	r.summaries[id] = summary
@@ -151,7 +163,7 @@ func (s *Store) rebuildReadIndexLocked() {
 	r := readIndex{nonce: rand.Text(), revision: old.revision + 1, planTasks: old.planTasks,
 		ordered: map[queryKey][]string{}, summaries: map[string]ReadSummary{}, counts: map[Scope]Counts{},
 		versions: map[queryKey]uint64{},
-		trees:    map[string]treeSummary{}, models: map[string][]int{}, primary: map[string][]int{}, primaryRows: map[string][]int{}}
+		trees:    map[string]treeSummary{}, suppressed: map[string]map[string]bool{}, models: map[string][]int{}, primary: map[string][]int{}, primaryRows: map[string][]int{}}
 	ids := make([]string, 0, len(s.data.Tasks))
 	for id, t := range s.data.Tasks {
 		ids = append(ids, id)
@@ -175,7 +187,8 @@ func (s *Store) rebuildReadIndexLocked() {
 		if r.planTasks[id] {
 			plans = 1
 		}
-		r.addTree(s.data.Tasks, id, treeSummary{summary.OpenExecutions, localBlocker(t), plans}, nil)
+		r.trackSuppressed(t, true)
+		r.addTree(s.data.Tasks, id, treeSummary{summary.OpenExecutions, localBlocker(t, s.data.Tasks), plans}, nil)
 	}
 	sort.Slice(ids, func(i, j int) bool { return taskBefore(s.data.Tasks[ids[i]], s.data.Tasks[ids[j]]) })
 	for _, id := range ids {
@@ -223,6 +236,40 @@ func (r *readIndex) insert(t *Task, meta Meta, summary ReadSummary, tasks map[st
 	r.count(t, summary, 1)
 }
 
+// dependentBlockersBefore snapshots old contributions only for unchanged
+// suppressed children whose direct parent's terminal state will change.
+// Rewritten children already go through the ordinary old/new index passes.
+func (r *readIndex) dependentBlockersBefore(tasks map[string]*Task, changes []recordChange, rewritten map[string][]int) map[string]int {
+	dependentBlockers := map[string]int{}
+	for _, change := range changes {
+		if change.kind != taskKind {
+			continue
+		}
+		old := tasks[change.id]
+		wasEnded := old != nil && old.State.Terminal()
+		head, exists := change.value.(taskHead)
+		if wasEnded == (exists && head.State.Terminal()) {
+			continue
+		}
+		for child := range r.suppressed[change.id] {
+			if _, rewritten := rewritten[child]; !rewritten {
+				dependentBlockers[child] = localBlocker(tasks[child], tasks)
+			}
+		}
+	}
+	return dependentBlockers
+}
+
+// applyDependentBlockers propagates each unchanged child's committed blocker
+// difference through its ancestor path, before their headers are refreshed.
+func (r *readIndex) applyDependentBlockers(tasks map[string]*Task, previous map[string]int, affected map[string]bool) {
+	for id, before := range previous {
+		if delta := localBlocker(tasks[id], tasks) - before; delta != 0 {
+			r.addTree(tasks, id, treeSummary{blockers: delta}, affected)
+		}
+	}
+}
+
 // Own accounting is adjusted only for changed rows. Subtree blockers and
 // plan presence are propagated only through affected ancestor paths.
 // apply installs the write between the two passes: removals read the
@@ -247,6 +294,7 @@ func (s *Store) updateReadIndexLocked(changes []recordChange, apply func()) {
 			}
 		}
 	}
+	dependentBlockers := r.dependentBlockersBefore(s.data.Tasks, changes, changed)
 	// Every changed key is removed using the old order before any replacement
 	// key is inserted. Unchanged members preserve their backing index arrays.
 	affected := map[string]bool{}
@@ -260,7 +308,8 @@ func (s *Store) updateReadIndexLocked(changes []recordChange, apply func()) {
 			if r.planTasks[id] {
 				plans = 1
 			}
-			r.addTree(s.data.Tasks, id, treeSummary{-summary.OpenExecutions, -localBlocker(old), -plans}, affected)
+			r.trackSuppressed(old, false)
+			r.addTree(s.data.Tasks, id, treeSummary{-summary.OpenExecutions, -localBlocker(old, s.data.Tasks), -plans}, affected)
 			if old.Parent != "" {
 				affected[old.Parent] = true
 			}
@@ -317,12 +366,14 @@ func (s *Store) updateReadIndexLocked(changes []recordChange, apply func()) {
 		if r.planTasks[id] {
 			plans = 1
 		}
-		r.addTree(next.Tasks, id, treeSummary{sum.OpenExecutions, localBlocker(t), plans}, affected)
+		r.trackSuppressed(t, true)
+		r.addTree(next.Tasks, id, treeSummary{sum.OpenExecutions, localBlocker(t, next.Tasks), plans}, affected)
 		r.insert(t, next.Meta[id], sum, next.Tasks)
 		if t.Parent != "" {
 			affected[t.Parent] = true
 		}
 	}
+	r.applyDependentBlockers(next.Tasks, dependentBlockers, affected)
 	for id := range affected {
 		if r.refreshTree(next.Tasks, id) {
 			r.touchHeader(next, id)

@@ -98,6 +98,7 @@ type readIndex struct {
 	counts      map[Scope]Counts
 	planTasks   map[string]bool
 	trees       map[string]treeSummary
+	suppressed  map[string]map[string]bool // parent -> dependent child IDs, including hidden/system tasks
 	models      map[string][]int
 	primary     map[string][]int
 	primaryRows map[string][]int
