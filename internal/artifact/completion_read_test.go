@@ -99,7 +99,7 @@ func TestCompletionBlockerReadRejectsUnreadableStandingOrHistoricalRecords(t *te
 	}
 }
 
-func TestCompletionBlockerReadCostDoesNotGrowWithCommittedHistory(t *testing.T) {
+func TestCompletionBlockerReadAllocationsStayBoundedWithCommittedHistory(t *testing.T) {
 	s, _ := newStore(t, &localNode{}, project.Home{Path: t.TempDir()})
 	p := Pending{Artifact: "result", Source: &Source{Execution: &task.ExecutionToken{TaskID: "child", Epoch: 1}}}
 	if err := s.ledger.PutBinding(t.Context(), pendingKind, "p/result", p); err != nil {
@@ -133,7 +133,9 @@ func TestCompletionBlockerReadCostDoesNotGrowWithCommittedHistory(t *testing.T) 
 	}
 }
 
-func TestCompletionBlockerReadCostDoesNotGrowWithSupersededHistory(t *testing.T) {
+// These checks bound decoded payloads and Go allocations, not SQLite work.
+// The query still traverses candidate index keys and performs exact seeks.
+func TestCompletionBlockerReadAllocationsStayBoundedWithSupersededHistory(t *testing.T) {
 	for _, scenario := range []string{"retained-superseded-other-tasks", "same-task-committed-history"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, _ := newStore(t, &localNode{}, project.Home{Path: t.TempDir()})
