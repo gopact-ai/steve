@@ -15,7 +15,7 @@ const browser = await chromium.launch({ headless: true, channel: process.env.BRO
 const A="console:material-ui", at="2026-09-07T01:00:00Z", base="a".repeat(40), after="b".repeat(40);
 const png=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+gxkAAAAASUVORK5CYII=","base64");
 const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:"block"});const page=await context.newPage();page.setDefaultTimeout(7000);
-const f={version:"test",supportsMaterials:true,captures:[],posts:[],queue:[],materials:new Map(),notes:[],answers:[],questions:[],hideQueue:false,reset:false,errors:[],uploads:[],uploadFailure:null};
+const f={version:"test",supportsMaterials:true,captures:[],posts:[],queue:[],materials:new Map(),notes:[],answers:[],questions:[],hideQueue:false,reset:false,errors:[],uploads:[],uploadFailure:null,capabilities:[],capabilityFailure:null,queueReads:0};
 page.on("pageerror",e=>f.errors.push(String(e)));
 function material(id,title,source,kind="text",mime="text/plain",data=Buffer.from("first\nsecond\nthird\n")) {const value={id,project:"p",title,source,kind,mime,size:data.length,digest:"d".repeat(64),created_at:at,...(kind==="image"?{width:1,height:1}:{})};f.materials.set(id,{value,data});return value;}
 const note=material("m-seed-1","Design note",{kind:'upload'});material("m-seed-2","Trace log",{kind:'upload'});
@@ -40,6 +40,12 @@ await page.route("**/*",async route=>{
  if(p==="/console/verbs")return route.fulfill({json:{verbs:[]}});
  if(p==="/console/suggest")return route.fulfill({json:{suggestions:[]}});
  if(p==="/console/queue"){
+  if(req.method()==="GET")f.queueReads++;
+  if(req.method()==="GET"&&f.capabilityFailure?.queue){const failure=f.capabilityFailure;return route.fulfill({status:failure.status,contentType:failure.contentType||'application/json',body:failure.body});}
+  if(req.method()==="GET"&&u.searchParams.get('capabilities')==='1'){
+   f.capabilities.push(req.url());
+   if(f.capabilityFailure){const failure=f.capabilityFailure;if(failure.abort)return route.abort('failed');return route.fulfill({status:failure.status,contentType:failure.contentType||'application/json',body:failure.body});}
+  }
   if(req.method()==="POST"){f.posts.push(input);let item=f.queue.find(e=>e.key==="client:"+input.command_id);if(!item){item={id:"e"+(f.queue.length+1),conversation:input.conversation,key:"client:"+input.command_id,input:input.input,refs:input.refs,locale:input.locale,quotes:input.quotes,state:"queued",enqueued_at:at};f.queue.push(item);}if(f.reset){f.reset=false;return route.abort('connectionreset');}return route.fulfill({json:item});}
   return route.fulfill({json:{queue:f.hideQueue?[]:f.queue,submission_keys:true,material_refs:f.supportsMaterials,interactive_requests:true}});
  }
@@ -99,7 +105,14 @@ async function uploadErrorRegressions() {
   {name:'service.pdf',status:503,body:'<html>'+privatePath+' '+secret+'</html>',contentType:'text/html',reason:/try again later/i},
   {name:'offline.pdf',abort:true,reason:/read.*file.*connection/i},
   {name:'unreadable.pdf',local:true,reason:/read.*file.*connection/i},
-  {name:'invalid-ack.pdf',status:200,body:'not JSON '+privatePath+' '+secret,contentType:'text/plain',reason:/read.*file.*connection/i},
+  {name:'invalid-ack.pdf',status:200,body:'not JSON '+privatePath+' '+secret,contentType:'text/plain',reason:/receipt.*invalid.*cannot be confirmed/i},
+  ...[
+   ['null-ack.pdf',null],['empty-ack.pdf',{}],['missing-id.pdf',{project:'p',title:'fixture',kind:'binary',mime:'application/pdf',size:12}],
+   ['wrong-project.pdf',{...note,id:'foreign',project:'other'}],['bad-kind.pdf',{...note,kind:'surprise'}],
+   ['bad-size.pdf',{...note,size:-1}],['bad-title.pdf',{...note,title:privatePath,mime:null}],
+   ['wrong-name.pdf',{...note,title:privatePath}],['bad-digest.pdf',{...note,digest:'invalid'}],['bad-date.pdf',{...note,created_at:'invalid'}],
+   ['bad-source.pdf',{...note,source:{kind:'reply'}}],['bad-image.pdf',{...note,kind:'image',mime:'image/png',width:0,height:1}],
+  ].map(([name,body])=>({name,status:200,body:JSON.stringify(body),reason:/receipt.*invalid.*cannot be confirmed/i})),
  ];
  await page.evaluate(({privatePath,secret})=>{
   const fetch=window.fetch;
@@ -123,14 +136,75 @@ async function uploadErrorRegressions() {
    const alert=page.locator('.composer-dock [role="alert"]').filter({hasText:failure.name});
    assert.equal(await alert.count(),1,'file-specific failure is visible beside the composer, not raw toolbar text');
    const text=await alert.innerText();
-   if(failure.status>=400)assert.match(text,new RegExp('HTTP '+failure.status));
-   assert.match(text,failure.reason);assert.match(text,/select.*again|try again/i);assert.match(text,/message.*attached materials.*retained/i);
+   if(failure.status!==undefined)assert.match(text,new RegExp('HTTP '+failure.status));
+   assert.match(text,failure.reason);assert.match(text,/select.*again|try again|check.*materials/i);assert.match(text,/message.*attached materials.*retained/i);
    assert.doesNotMatch(text,/\{"error"|invalid material|Load failed|fixture-private|secret.png|Bearer|Hub.*(offline|unreachable|disconnect)/i);
+   if(failure.status===200)assert.doesNotMatch(text,/file was uploaded|read the local file|connection works/i);
    assert.deepEqual(await saved(),initial,'every upload failure keeps text, previous draft refs and pending submission');
    assert.equal(f.posts.length,postCount,'no submission/replay from upload failure');
    assert.equal(f.uploads.length,before+(failure.local?0:1),'no transparent upload retry');
    assert.equal(await input.inputValue(),'','same file can be selected again');
    if(failure.name==='broken.png'&&process.env.MATERIAL_UPLOAD_ARTIFACTS){await mkdir(process.env.MATERIAL_UPLOAD_ARTIFACTS,{recursive:true});await page.screenshot({path:path.join(process.env.MATERIAL_UPLOAD_ARTIFACTS,'upload-error-en-desktop.png')});}
+  });
+ }
+ // Initial support is true. Only the upload's mandatory capability recheck
+ // fails: the File POST must never happen, and no other visible status surface
+ // may echo the private response or confuse preflight with reading a file.
+ for(const failure of [
+  {status:401,body:JSON.stringify({error:privatePath+' Bearer '+secret}),reason:/sign-in.*permissions/i},
+  {status:403,body:privatePath+' Bearer '+secret,contentType:'text/plain',reason:/sign-in.*permissions/i},
+  {status:500,body:'<html>'+privatePath+' Bearer '+secret+'</html>',contentType:'text/html',reason:/attachment support.*not.*confirmed/i},
+  {abort:true,reason:/attachment support.*not.*confirmed/i},
+ ]) {
+  f.uploadFailure=null;f.capabilityFailure=null;
+  await page.evaluate(async()=>{await (await import('/src/lib/api/console.ts')).checkSubmissionSupport();});
+  const file='preflight-'+(failure.status||'no-response')+'.pdf',before=f.capabilities.length,uploads=f.uploads.length;
+  f.capabilityFailure=failure;
+  await input.setInputFiles({name:file,mimeType:'application/pdf',buffer:Buffer.from('do not upload')});
+  await waitFor(()=>f.capabilities.length>before,'upload capability recheck attempted');await waitFor(()=>input.isEnabled(),'preflight failure settles');
+  await check('preflight UI preserves stage/status and all visible privacy '+(failure.status||'no-response'),async()=>{
+   const alert=page.locator('.composer-dock [role="alert"]').filter({hasText:file});const text=await alert.innerText();
+   const visible=await page.locator('.composer-dock').innerText()+' '+await page.locator('.console-status').innerText()+' '+await page.locator('.console-status').getAttribute('title');
+   assert.doesNotMatch(visible,/fixture-private|secret.png|Bearer|\{"error"|<html>/i);
+   assert.match(text,failure.reason);assert.doesNotMatch(text,/read the local file|connection works|file was uploaded/i);
+   if(failure.status)assert.match(text,new RegExp('HTTP '+failure.status));
+   assert.deepEqual(await saved(),initial);assert.equal(f.uploads.length,uploads);assert.equal(f.posts.length,postCount);
+   assert.equal(f.capabilities.length,before+1,'no transparent preflight retry');
+  });
+  const result=await page.evaluate(async()=>{
+   const {uploadMaterial}=await import('/src/lib/api/material.ts'),{HTTPError}=await import('/src/lib/http.ts'),api=await import('/src/lib/api/console.ts');
+   try{await uploadMaterial('p',new File(['no upload'],'preflight-api.pdf'),'en');return {ok:true};}
+   catch(error){const support=api.getSubmissionSupport();return {http:error instanceof HTTPError,status:error.status,phase:error.phase,supportError:support.error,supportHTTP:support.failure instanceof HTTPError,supportStatus:support.failure?.status,supportMessage:support.failure?.message};}
+  });
+  await check('preflight API keeps HTTPError and capability phase '+(failure.status||'no-response'),async()=>{
+   assert.doesNotMatch(result.supportError+' '+result.supportMessage,/fixture-private|secret.png|Bearer|\{"error"|<html>/i);
+   assert.equal(result.phase,'capability');assert.equal(result.http,!!failure.status);assert.equal(result.status,failure.status);assert.equal(result.supportHTTP,!!failure.status);assert.equal(result.supportStatus,failure.status);
+   assert.doesNotMatch(result.supportError,/fixture-private|secret.png|Bearer|\{"error"|<html>/i);assert.equal(f.uploads.length,uploads);
+  });
+ }
+ // The shared queue read error can also reach the toolbar. Probe that real
+ // event-driven path, not only the new attachment warning surface.
+ f.capabilityFailure={queue:true,status:403,body:JSON.stringify({error:privatePath+' Bearer '+secret})};
+ const queueReads=f.queueReads;
+ await page.evaluate(e=>window.emit(e),{kind:'console.queue',conversation:A,at});
+ await waitFor(()=>f.queueReads>queueReads,'queue error read after capability failure');
+ await check('shared queue/support status never renders raw failure or title',async()=>{
+  await page.locator('.console-status').filter({hasText:/HTTP 403/}).waitFor();
+  const visible=await page.locator('.composer-dock').innerText()+' '+await page.locator('.console-status').innerText()+' '+await page.locator('.console-status').getAttribute('title');
+  assert.doesNotMatch(visible,/fixture-private|secret.png|Bearer|\{"error"|<html>/i);assert.deepEqual(await saved(),initial);
+ });
+ f.capabilityFailure=null;await page.evaluate(e=>window.emit(e),{kind:'console.queue',conversation:A,at});
+ await page.evaluate(async()=>{await (await import('/src/lib/api/console.ts')).checkSubmissionSupport();});
+ for(const body of ['not JSON '+privatePath+' Bearer '+secret,'null','{}',JSON.stringify({...note,id:'foreign',project:'other'}),JSON.stringify({...note,kind:'wrong'})]) {
+  f.uploadFailure={name:'receipt-api.pdf',status:200,body,contentType:'application/json'};
+  const result=await page.evaluate(async()=>{
+   const {uploadMaterial}=await import('/src/lib/api/material.ts'),{HTTPError}=await import('/src/lib/http.ts');
+   try{const material=await uploadMaterial('p',new File(['uploaded bytes'],'receipt-api.pdf',{type:'application/pdf'}),'en');return {ok:true,material};}
+   catch(error){return {http:error instanceof HTTPError,status:error.status,phase:error.phase,message:error.message};}
+  });
+  await check('receipt API rejects invalid acknowledgement '+JSON.stringify(body),async()=>{
+   assert.equal(result.http,true);assert.equal(result.status,200);assert.equal(result.phase,'receipt');
+   assert.doesNotMatch(result.message,/fixture-private|secret.png|Bearer|<html>|not JSON/i);
   });
  }
  // File.name is normally a basename, but injected/clipboard File values
@@ -247,7 +321,7 @@ try{
  await page.goto(url+'#/console');await page.getByRole('heading',{name:'Material conversation',exact:true}).waitFor();await page.getByRole('button',{name:'Actions',exact:true}).waitFor();
  await uploadErrorRegressions();
  if(!process.env.MATERIAL_UPLOAD_ERRORS_ONLY){
-  f.materials=new Map(initialMaterials);f.uploadFailure=null;f.uploads=[];f.posts=[];f.queue=[];f.questions=[];f.hideQueue=false;
+  f.materials=new Map(initialMaterials);f.uploadFailure=null;f.capabilityFailure=null;f.capabilities=[];f.uploads=[];f.posts=[];f.queue=[];f.questions=[];f.hideQueue=false;
   await page.evaluate(()=>{localStorage.clear();localStorage.setItem('steve.ui.locale','en');});await page.setViewportSize({width:1600,height:1000});await page.reload();await page.getByRole('heading',{name:'Material conversation',exact:true}).waitFor();await page.getByRole('button',{name:'Actions',exact:true}).waitFor();
  // The sent line shows what it carried, each kind in its own shape, and
  // says so rather than going quiet when a reference cannot be resolved.

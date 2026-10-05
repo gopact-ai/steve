@@ -41,7 +41,7 @@ import { RecoveryWorkspaceNotice } from "@/components/steve/recovery-workspace";
 import { beginSubmission, retrySubmission, failSubmission, finishSubmission, restoreSubmission, updateDraft, useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission, useMaterials, removeDraftMaterial, submissionRefs, useRewind, beginRewind, endRewind, rewindOf } from "@/lib/drafts";
 import { useI18n } from "@/providers/locale-provider";
 import { useMaterial } from "@/providers/material-provider";
-import { uploadMaterial, refKey } from "@/lib/api/material";
+import { uploadMaterial, materialUploadPhase, refKey, type MaterialUploadPhase } from "@/lib/api/material";
 import { MaterialPreview } from "@/components/steve/material-shelf";
 import { QuestionPanel } from "@/components/steve/question-panel";
 import type { MaterialRef } from "@/lib/types";
@@ -92,7 +92,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
     const materials = useMaterial();
     const side = useSideChat();
     const [uploading, setUploading] = useState(false);
-    const [uploadError, setUploadError] = useState<{ conversation: string; project: string; file: string; uploaded: boolean; status?: number; remaining: number } | null>(null);
+    const [uploadError, setUploadError] = useState<{ conversation: string; project: string; file: string; phase: MaterialUploadPhase | "draft"; status?: number; remaining: number } | null>(null);
     const [openedMaterial, setOpenedMaterial] = useState<MaterialRef | null>(null);
     const { intent, consume } = useIntent();
     const [conversation, setConversation] = useState(initialConversation);
@@ -497,18 +497,23 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
                     // from a transport failure. Never label it a Hub outage or
                     // expose the browser/server's raw error (paths or credentials).
                     const name = file.name.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, "") || t("materials.binary");
-                    setUploadError({ conversation: target.conversation, project: target.project, file: name, uploaded, status, remaining: chosen.length - index - 1 });
+                    setUploadError({ conversation: target.conversation, project: target.project, file: name, phase: uploaded ? "draft" : materialUploadPhase(error) ?? "transfer", status, remaining: chosen.length - index - 1 });
                     break;
                 }
             }
         } finally { setUploading(false); }
     }
-    const uploadErrorReason = uploadError?.uploaded ? "materials.uploadDraftFailed"
+    const uploadErrorReason = uploadError?.phase === "draft" ? "materials.uploadDraftFailed"
+        : uploadError?.phase === "receipt" ? "materials.uploadReceiptInvalid"
+        : uploadError?.phase === "capability" ? (uploadError.status === 401 || uploadError.status === 403 ? "materials.uploadPreflightDenied" : "materials.uploadPreflightFailed")
         : uploadError?.status === 400 ? "materials.uploadInvalid"
         : uploadError?.status === 413 ? "materials.uploadTooLarge"
         : uploadError?.status === 401 || uploadError?.status === 403 ? "materials.uploadDenied"
         : uploadError?.status !== undefined ? "materials.uploadRejected" : "materials.uploadUnconfirmed";
-    const toolbarStatus = stopState?.uncertain ? t("console.stopUncertain") : status || contextError || conversationsError || (queueError ? readErrorText(queueError) : "") || (replyError ? readErrorText(replyError) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "");
+    const supportStatus = submissionSupport.failure instanceof HTTPError ? submissionSupport.failure.status : undefined;
+    const queueFailureText = queueError ? (queueError instanceof HTTPError
+        ? t("console.queueReadHTTPFailed", { status: queueError.status }) : t("console.queueReadFailed")) : "";
+    const toolbarStatus = stopState?.uncertain ? t("console.stopUncertain") : status || contextError || conversationsError || queueFailureText || (replyError ? readErrorText(replyError) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "");
     const listed = useMemo(() => conversations.some((c) => c.id === conversation && c.transport !== "feishu") ? conversations : [{ id: conversation, title: t("console.newConversation"), last_at: "", count: 0, running: false, project: context?.project?.id, agent: context?.agent?.id }, ...conversations], [conversations, conversation, t, context?.project?.id, context?.agent?.id]);
     const agents = useMemo(() => context?.agents ?? [], [context?.agents]);
 
@@ -667,7 +672,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
                             {draftIssue && <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary"><p>{t(draftIssue === "conflict" ? "console.draftConflict" : draftIssue === "unavailable" ? "console.draftLockUnavailable" : "console.draftStorage")}</p>{draftIssue === "conflict" && <><pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words">{savedDraft}</pre><div className="mt-2 flex flex-wrap gap-3"><button type="button" className="underline" onClick={() => void resolveDraftConflict(conversation, "local")}>{t("console.keepLocalDraft")}</button><button type="button" className="underline" onClick={() => void resolveDraftConflict(conversation, "remote")}>{t("console.useSavedDraft")}</button></div></>}</div>}
                             {!canSubmit && <div role="status" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
                                 <p>{submissionSupport.state === "unsupported" ? t("console.unsupportedHub") : submissionSupport.error ? t("console.unknownHub") : t("console.checkingHub")}</p>
-                                {submissionSupport.error && <p className="mt-1 break-words">{submissionSupport.error}</p>}
+                                {submissionSupport.error && supportStatus !== undefined && <p className="mt-1 break-words">{t("console.supportHTTP", { status: supportStatus })}</p>}
                                 <button type="button" className="mt-1 underline disabled:opacity-50" disabled={submissionSupport.checking} onClick={() => void checkSubmissionSupport()}>{submissionSupport.checking ? t("console.checking") : t("console.checkAgain")}</button>
                             </div>}
                             {submission && !submission.active && <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
