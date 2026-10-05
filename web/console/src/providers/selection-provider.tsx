@@ -67,7 +67,7 @@ export function SelectionProvider({ children }: { children: ReactNode }) {
   active.current = current;
   const materials = useMaterial(),
     side = useSideChat(),
-    { t } = useI18n();
+    { t, locale } = useI18n();
   const support = useSyncExternalStore(
     subscribeSubmissionSupport,
     getSubmissionSupport,
@@ -253,44 +253,54 @@ export function SelectionProvider({ children }: { children: ReactNode }) {
     }
   }
   useLayoutEffect(() => {
-    if (!current || !toolbar.current) return;
-    const anchor = current.range.getBoundingClientRect(),
-      box = toolbar.current.getBoundingClientRect(),
-      gap = 8;
-    const x = Math.max(
-      gap,
-      Math.min(
-        anchor.left + anchor.width / 2 - box.width / 2,
-        window.innerWidth - box.width - gap,
-      ),
-    );
-    const above = anchor.top - box.height - gap >= gap;
-    let y = above
-      ? anchor.top - gap
-      : Math.max(
-          gap,
-          Math.min(anchor.bottom + gap, window.innerHeight - box.height - gap),
-        );
-    // A selected line's floating toolbar must not cover the same material's
-    // inline Actions trigger. Keep the usual placement unless it overlaps.
-    const actions = Array.from(current.surface.element.querySelectorAll<HTMLElement>("[data-material-actions]"))
-      .map((element) => element.getBoundingClientRect())
-      .filter((rect) => rect.width > 0 && rect.height > 0);
-    const overlaps = (top: number, rect: DOMRect) =>
-      x < rect.right && x + box.width > rect.left && top < rect.bottom && top + box.height > rect.top;
-    const covered = actions.filter((rect) => overlaps(above ? y - box.height : y, rect));
-    if (covered.length) {
-      // Move outward on the same side; moving below a selected source line
-      // would intercept the next line number when extending the range.
-      const top = above
-        ? Math.min(...covered.map((rect) => rect.top)) - gap - box.height
-        : Math.max(...covered.map((rect) => rect.bottom)) + gap;
-      if (top >= gap && top + box.height <= window.innerHeight - gap && !actions.some((rect) => overlaps(top, rect)))
-        y = above ? top + box.height : top;
-    }
-    if (x !== current.x || y !== current.y || above !== current.above)
-      setCurrent({ ...current, x, y, above });
-  }, [current, busy, error]);
+    const element = toolbar.current;
+    if (!current || !element) return;
+    const measure = () => {
+      const anchor = current.range.getBoundingClientRect(),
+        box = element.getBoundingClientRect(),
+        gap = 8;
+      const x = Math.max(
+        gap,
+        Math.min(
+          anchor.left + anchor.width / 2 - box.width / 2,
+          window.innerWidth - box.width - gap,
+        ),
+      );
+      const above = anchor.top - box.height - gap >= gap;
+      let y = above
+        ? anchor.top - gap
+        : Math.max(
+            gap,
+            Math.min(anchor.bottom + gap, window.innerHeight - box.height - gap),
+          );
+      // A selected line's floating toolbar must not cover the same material's
+      // inline Actions trigger. Keep the usual placement unless it overlaps.
+      const actions = Array.from(current.surface.element.querySelectorAll<HTMLElement>("[data-material-actions]"))
+        .map((element) => element.getBoundingClientRect())
+        .filter((rect) => rect.width > 0 && rect.height > 0);
+      const overlaps = (top: number, rect: DOMRect) =>
+        x < rect.right && x + box.width > rect.left && top < rect.bottom && top + box.height > rect.top;
+      const covered = actions.filter((rect) => overlaps(above ? y - box.height : y, rect));
+      if (covered.length) {
+        // Move outward on the same side; moving below a selected source line
+        // would intercept the next line number when extending the range.
+        const top = above
+          ? Math.min(...covered.map((rect) => rect.top)) - gap - box.height
+          : Math.max(...covered.map((rect) => rect.bottom)) + gap;
+        if (top >= gap && top + box.height <= window.innerHeight - gap && !actions.some((rect) => overlaps(top, rect)))
+          y = above ? top + box.height : top;
+      }
+      if (x !== current.x || y !== current.y || above !== current.above)
+        setCurrent({ ...current, x, y, above });
+    };
+    measure();
+    // Locale and font/layout changes can resize an already-open popover
+    // without changing the selection. Only observe this active surface.
+    const observer = new ResizeObserver(measure);
+    observer.observe(element, { box: "border-box" });
+    observer.observe(current.surface.element, { box: "border-box" });
+    return () => observer.disconnect();
+  }, [current, busy, error, locale]);
   const value = useMemo<SelectionContext>(
     () => ({ register, show }),
     [register, show],
