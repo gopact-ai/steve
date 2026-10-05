@@ -256,7 +256,7 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .composer-action:enabled:active { transform: scale(.97); }
 .composer-action:disabled { opacity: .4; cursor: default; }
 /* A run that is still going should be visible without reading a word.
-   The stop control takes the primary slot while a turn is alive and
+   The stop control has its own slot while a turn is alive and
    breathes once a cycle; nothing spins, so the composer stays calm. */
 @keyframes steve-breathe { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
 @keyframes steve-halo {

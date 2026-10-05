@@ -191,11 +191,15 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                             <Square className="size-3.5" />
                         </button>
                     )}
-                    {p.busy ? (p.value.trim() || p.hasMaterials) && p.queueing !== false && (
+                    {p.busy ? (p.value.trim() || p.hasMaterials) && p.queueing !== false ? (
                         <button type="button" aria-label={t("consoleChrome.queue")} title={p.pending ? t("console.sending") : t("consoleChrome.queueHint")} disabled={p.disabled || p.pending || p.stopping} onClick={p.onSubmit}
                             className="composer-action">
                             <CornerDownRight className="size-4" />
                         </button>
+                    ) : (
+                        // Clearing a submitted draft must not move Stop into
+                        // the slot where a second pointer click will land.
+                        <span aria-hidden="true" className="composer-action invisible" />
                     ) : (
                         <button type="button" aria-label={t("consoleChrome.send")} title={p.pending ? t("console.sending") : t("consoleChrome.sendHint")} disabled={p.disabled || p.pending || (!p.value.trim() && !p.hasMaterials)} onClick={p.onSubmit}
                             className="composer-action is-send">
