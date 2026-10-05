@@ -353,11 +353,18 @@ try{
   assert.ok(await selectionBar.evaluate(el=>{const r=el.getBoundingClientRect();return r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight;}),'selection toolbar stays within the viewport');
   assert.ok(await selectionBar.getByRole('button').evaluateAll(buttons=>buttons.every(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})),'selection toolbar buttons still receive real pointer hits');
  }
- // A locale change grows the same live popover; no reselect, resize event
- // or dismissal may substitute for remeasuring its material action hit area.
+ // Locale changes must preserve the live selection. A supported UI-font
+ // preference supplies real size growth independent of installed font metrics.
  const dynamicBar=page.locator('.selection-toolbar'),dynamicActions=page.locator('.source-view [data-material-actions] button[aria-haspopup="true"]');
  const setLocale=async(locale)=>{await page.evaluate(locale=>{localStorage.setItem('steve.ui.locale',locale);window.dispatchEvent(new StorageEvent('storage',{key:'steve.ui.locale',newValue:locale,storageArea:localStorage}));},locale);await page.waitForFunction(locale=>document.documentElement.lang===(locale==='zh'?'zh-CN':'en'),locale);};
  const afterPaint=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ const originalAppearance=await page.evaluate(()=>localStorage.getItem('steve.ui.appearance'));
+ const setUIFont=async(size)=>{
+  await page.evaluate(size=>{const key='steve.ui.appearance';const a=JSON.parse(localStorage.getItem(key)||'null')||{version:1,mode:'system',light:'light',dark:'dark',fonts:{ui:{family:'system',size:14},heading:{family:'system',scale:1},reading:{family:'system',size:16},code:{family:'mono',size:13}},custom:[]};a.fonts.ui.size=size;localStorage.setItem(key,JSON.stringify(a));window.dispatchEvent(new StorageEvent('storage',{key,newValue:JSON.stringify(a),storageArea:localStorage}));},size);
+  await page.waitForFunction(size=>getComputedStyle(document.documentElement).getPropertyValue('--ui-font-size').trim()===`${size}px`,size);await afterPaint();
+ };
+ await setUIFont(12);
+
  await setLocale('zh');
  const chineseSource=page.getByRole('region',{name:'app.ts 文件内容',exact:true});
  await chineseSource.getByRole('button',{name:'选择第 2 行',exact:true}).click();await chineseSource.getByRole('button',{name:'选择第 3 行',exact:true}).click({modifiers:['Shift']});
@@ -365,15 +372,19 @@ try{
  const beforeReflow=await dynamicBar.evaluate(el=>{window.materialReflowToolbar=el;return el.getBoundingClientRect().toJSON();});
  assert.ok(await dynamicActions.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),'small localized toolbar begins with reachable Actions');
  await setLocale('en');await afterPaint();
+ assert.equal(await dynamicBar.evaluate(el=>el===window.materialReflowToolbar),true,'locale change retains the same toolbar');
+ assert.ok(await dynamicActions.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),'localized selection keeps Actions reachable');
+ await setUIFont(18);
  const afterReflow=await dynamicBar.evaluate(el=>({rect:el.getBoundingClientRect().toJSON(),same:el===window.materialReflowToolbar,label:el.querySelector('.selection-label')?.textContent}));
  const reflowHit=await dynamicActions.evaluate(el=>{const r=el.getBoundingClientRect(),point={x:r.x+r.width/2,y:r.y+r.height/2},target=document.elementFromPoint(point.x,point.y);return {point,button:r.toJSON(),target:target?.outerHTML,receivesPointer:el.contains(target)};});
  console.log('Material toolbar reflow hit-test',JSON.stringify({before:beforeReflow,after:afterReflow,...reflowHit}));
  if(process.env.MATERIAL_UPLOAD_ARTIFACTS){await mkdir(process.env.MATERIAL_UPLOAD_ARTIFACTS,{recursive:true});await page.screenshot({path:path.join(process.env.MATERIAL_UPLOAD_ARTIFACTS,'material-toolbar-reflow-locale.png')});}
  assert.equal(afterReflow.same,true,'locale change must preserve the existing toolbar');assert.match(afterReflow.label,/L2–L3/);
- assert.ok(afterReflow.rect.height>beforeReflow.height,'rendered toolbar height actually grows without reselection');
+ assert.ok(afterReflow.rect.height>beforeReflow.height,'supported UI font setting grows the actual toolbar without reselection');
  assert.equal(reflowHit.receivesPointer,true,'existing selection reflow must remeasure material Actions hit avoidance');
  assert.ok(await dynamicBar.getByRole('button').evaluateAll(buttons=>buttons.every(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})),'resized floating buttons remain clickable');
- console.log('PASS active material toolbar remeasures locale-driven size changes');
+ console.log('PASS active material toolbar preserves locale and remeasures real font-size changes');
+ await page.evaluate(value=>{const key='steve.ui.appearance';if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value);window.dispatchEvent(new StorageEvent('storage',{key,newValue:value,storageArea:localStorage}));},originalAppearance);await afterPaint();
  await page.keyboard.press('Shift+F10');assert.equal(await selectionBar.getByRole('button',{name:'Add to chat',exact:true}).evaluate(el=>document.activeElement===el),true);
  await page.keyboard.press('ArrowRight');assert.equal(await selectionBar.getByRole('button',{name:'More details',exact:true}).evaluate(el=>document.activeElement===el),true);
  await page.keyboard.press('Home');assert.equal(await selectionBar.getByRole('button',{name:'Add to chat',exact:true}).evaluate(el=>document.activeElement===el),true);
