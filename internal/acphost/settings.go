@@ -364,8 +364,8 @@ func (h *Host) SetOption(ctx context.Context, sid acp.SessionID, generation uint
 }
 
 // ListSessions asks the agent which sessions it still holds. Steve's own
-// record can outlive the agent's, so this is how a stored session id is
-// checked before trying to resume it.
+// record can outlive the agent's. Listing is discovery, not proof that an
+// unlisted session cannot be resumed.
 func (h *Host) ListSessions(ctx context.Context) ([]acp.SessionInfo, error) {
 	if err := h.ensureStarted(ctx); err != nil {
 		return nil, err
@@ -381,28 +381,30 @@ func (h *Host) ListSessions(ctx context.Context) ([]acp.SessionInfo, error) {
 	}
 	var out []acp.SessionInfo
 	var cursor *string
+	seen := map[string]bool{}
 	for {
 		resp, err := caller.ListSessions(ctx, &acp.ListSessionsRequest{Cursor: cursor})
 		if err != nil {
 			return nil, fmt.Errorf("session/list: %w", err)
 		}
 		out = append(out, resp.Sessions...)
-		if resp.NextCursor == nil || *resp.NextCursor == "" || len(resp.Sessions) == 0 {
+		if resp.NextCursor == nil || *resp.NextCursor == "" {
 			return out, nil
 		}
+		if seen[*resp.NextCursor] {
+			return nil, fmt.Errorf("session/list: repeated pagination cursor")
+		}
+		seen[*resp.NextCursor] = true
 		cursor = resp.NextCursor
 	}
 }
 
-// DeleteSession asks the agent to forget a session for good, where
-// CloseSession only releases it. Steve closes rather than deletes when a
-// conversation ends, because a closed session can still be resumed; delete
-// is for the case where Steve has dropped its own pointer and the session
-// would otherwise sit in the agent's store forever with nothing able to
-// reach it.
+// DeleteSession asks the agent to remove a session from its list. This does
+// not confirm data erasure or native resource cleanup. Unsupported deletion
+// is explicit and never removes Steve's session bookkeeping.
 func (h *Host) DeleteSession(ctx context.Context, sid acp.SessionID) error {
 	h.mu.Lock()
-	if h.active[sid] != 0 {
+	if h.active[sid] != 0 || h.opening[sid] != 0 {
 		h.mu.Unlock()
 		return ErrSessionBusy
 	}

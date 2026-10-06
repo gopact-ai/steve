@@ -30,6 +30,7 @@ type Image struct {
 }
 
 var ErrResumeUnsupported = errors.New("agent does not support session resume")
+var ErrLoadUnsupported = errors.New("agent does not support session history replay")
 var ErrSessionBusy = errors.New("session already has a running turn")
 var ErrClosed = errors.New("host is closed")
 var ErrListUnsupported = errors.New("agent does not support session listing")
@@ -101,6 +102,9 @@ type Config struct {
 type SessionConfig struct {
 	Workdir    string
 	MCPServers []acp.MCPServer
+	// ReplayHistory requests session/load to rebuild a missing transcript.
+	// Otherwise an existing session prefers resume, which does not replay it.
+	ReplayHistory bool
 }
 
 // Host owns the agent subprocess and its ACP connection. It restarts the
@@ -816,6 +820,11 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		h.shutdownLocked()
 		return fmt.Errorf("initialize: %w", err)
 	}
+	if resp.ProtocolVersion != acp.ProtocolVersionV1 {
+		proc.Kill()
+		h.shutdownLocked()
+		return fmt.Errorf("initialize: unsupported protocol version %d (client supports %d)", resp.ProtocolVersion, acp.ProtocolVersionV1)
+	}
 	name := "unknown"
 	if resp.AgentInfo != nil {
 		name = fmt.Sprintf("%s %s", resp.AgentInfo.Name, resp.AgentInfo.Version)
@@ -904,20 +913,27 @@ func endConnection(conn *acp.Conn, proc Process) {
 }
 
 func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg SessionConfig) (acp.SessionID, uint64, error) {
+	if cfg.ReplayHistory && sessionID == "" {
+		return "", 0, fmt.Errorf("history replay requires an existing session id")
+	}
 	if err := h.ensureStarted(ctx); err != nil {
 		return "", 0, err
 	}
 	h.mu.Lock()
 	generation := h.generation
-	if h.sessions[sessionID] != nil {
+	if sessionID != "" && h.opening[sessionID] != 0 {
+		h.mu.Unlock()
+		return "", 0, fmt.Errorf("session %q is already being opened", sessionID)
+	}
+	if h.sessions[sessionID] != nil && !cfg.ReplayHistory {
 		h.mu.Unlock()
 		return sessionID, generation, nil
 	}
 	caller, capabilities := h.caller, h.capabilities
 	if sessionID != "" {
-		if h.opening[sessionID] != 0 {
+		if h.active[sessionID] != 0 {
 			h.mu.Unlock()
-			return "", 0, fmt.Errorf("session %q is already being opened", sessionID)
+			return "", 0, ErrSessionBusy
 		}
 		h.opening[sessionID] = generation
 		defer func() {
@@ -936,14 +952,7 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 		request := acp.LoadSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers}
 		var state *sessionState
 		switch {
-		case capabilities != nil && capabilities.LoadSession:
-			resp, err := caller.LoadSession(ctx, &request)
-			if err != nil {
-				return "", 0, fmt.Errorf("session/load: %w", err)
-			}
-			state = newSessionState(resp.Modes, resp.ConfigOptions)
-			state.setMode(h.applyMode(ctx, caller, sessionID, resp.Modes))
-		case capabilities != nil && capabilities.SessionCapabilities != nil && capabilities.SessionCapabilities.Resume != nil:
+		case !cfg.ReplayHistory && capabilities != nil && capabilities.SessionCapabilities != nil && capabilities.SessionCapabilities.Resume != nil:
 			resp, err := caller.ResumeSession(ctx, &acp.ResumeSessionRequest{
 				SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers,
 			})
@@ -952,6 +961,15 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 			}
 			state = newSessionState(resp.Modes, resp.ConfigOptions)
 			state.setMode(h.applyMode(ctx, caller, sessionID, resp.Modes))
+		case capabilities != nil && capabilities.LoadSession:
+			resp, err := caller.LoadSession(ctx, &request)
+			if err != nil {
+				return "", 0, fmt.Errorf("session/load: %w", err)
+			}
+			state = newSessionState(resp.Modes, resp.ConfigOptions)
+			state.setMode(h.applyMode(ctx, caller, sessionID, resp.Modes))
+		case cfg.ReplayHistory:
+			return "", 0, ErrLoadUnsupported
 		default:
 			return "", 0, ErrResumeUnsupported
 		}
@@ -1034,7 +1052,7 @@ func (h *Host) PromptTurn(
 		h.mu.Unlock()
 		return "", nil, fmt.Errorf("agent process changed before prompt")
 	}
-	if h.active[sid] != 0 {
+	if h.active[sid] != 0 || h.opening[sid] != 0 {
 		h.mu.Unlock()
 		return "", nil, ErrSessionBusy
 	}
@@ -1212,9 +1230,12 @@ func (h *Host) ProcessStopped(generation uint64) bool {
 	return false
 }
 
+// CloseSession releases a protocol session when supported, otherwise only its
+// local bookkeeping. Neither outcome confirms that the owned process stopped;
+// native resource cleanup remains the execution owner's responsibility.
 func (h *Host) CloseSession(ctx context.Context, sid acp.SessionID) error {
 	h.mu.Lock()
-	if h.active[sid] != 0 {
+	if h.active[sid] != 0 || h.opening[sid] != 0 {
 		h.mu.Unlock()
 		return ErrSessionBusy
 	}
