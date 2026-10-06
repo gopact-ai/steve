@@ -60,6 +60,8 @@ type snapshotBuilder struct {
 	attentionKnown  bool
 	landingBlockers []string
 	landingUnknown  bool
+	closeBlockers   []string
+	closeUnknown    bool
 }
 
 // fleet lists the hub's machine first, then the workers, and fills each
@@ -153,11 +155,13 @@ func (b *snapshotBuilder) plansAndTasks(references []string) {
 		references = append(references, request.TaskID)
 	}
 	if m.src.Tasks != nil {
-		for _, id := range b.landingBlockers {
-			// A retained result of a task already removed has no surviving
-			// tree to block; do not turn it into a global completion refusal.
-			if _, exists := m.src.Tasks.Header(id); exists {
-				references = append(references, id)
+		for _, blockers := range [][]string{b.landingBlockers, b.closeBlockers} {
+			for _, id := range blockers {
+				// A standing obligation of a task already removed has no surviving
+				// tree to block; do not turn it into a global completion refusal.
+				if _, exists := m.src.Tasks.Header(id); exists {
+					references = append(references, id)
+				}
 			}
 		}
 	}
@@ -212,7 +216,7 @@ func (b *snapshotBuilder) sources() {
 		{Name: "tasks", Wired: m.src.Tasks != nil}, {Name: "plans", Wired: m.src.Plans != nil},
 		{Name: "ledger", Wired: m.src.Ledger != nil}, {Name: "schedules", Wired: m.src.Schedules != nil},
 	}
-	for _, name := range []string{"ledger-live", "ledger-projects", "ledger-landings", "ledger-task-landings", "ledger-facts", "ledger-attention"} {
+	for _, name := range []string{"ledger-live", "ledger-projects", "ledger-landings", "ledger-task-landings", "ledger-task-closes", "ledger-facts", "ledger-attention"} {
 		snap.Sources = append(snap.Sources, SourceHealth{Name: name, Wired: m.src.Ledger != nil})
 	}
 }
@@ -325,6 +329,10 @@ func (b *snapshotBuilder) ledgerFacts(ctx context.Context) {
 	if b.live != nil {
 		snap.Attempts = b.live
 	}
+	var closeErr error
+	b.closeBlockers, closeErr = m.src.Ledger.TaskCloseBlockers(ctx)
+	b.closeUnknown = closeErr != nil
+	m.markLedgerSource(snap, "task-closes", closeErr)
 	var blockerErr error
 	b.landingBlockers, blockerErr = m.src.Ledger.TaskLandingBlockers(ctx)
 	b.landingUnknown = blockerErr != nil
@@ -411,11 +419,13 @@ func (b *snapshotBuilder) taskAxes() {
 	for _, t := range snap.Tasks {
 		parent[t.ID] = t.Parent
 	}
-	landing := map[string]bool{}
-	for _, id := range b.landingBlockers {
-		landing[id] = true
+	blocked := map[string]bool{}
+	for _, blockers := range [][]string{b.landingBlockers, b.closeBlockers} {
+		for _, id := range blockers {
+			blocked[id] = true
+		}
 	}
-	rolledLanding := map[string]bool{}
+	rolledBlocked := map[string]bool{}
 	rolledPending, rolledUncertain := map[string]int{}, map[string]int{}
 	rolledPlan := map[string]bool{}
 	rolledLive, rolledUnsettled, rolledAttention := map[string]bool{}, map[string]bool{}, map[string]int{}
@@ -442,8 +452,8 @@ func (b *snapshotBuilder) taskAxes() {
 			if t.PlanID != "" {
 				rolledPlan[id] = true
 			}
-			if landing[t.ID] {
-				rolledLanding[id] = true
+			if blocked[t.ID] {
+				rolledBlocked[id] = true
 			}
 			if live[t.ID] {
 				rolledLive[id] = true
@@ -474,7 +484,7 @@ func (b *snapshotBuilder) taskAxes() {
 		}
 		t.Attention = rolledAttention[t.ID]
 		t.PendingResults, t.UncertainResults = rolledPending[t.ID], rolledUncertain[t.ID]
-		t.CanComplete = t.CanComplete && t.Execution == ExecutionIdle && b.attentionKnown && !b.landingUnknown && !rolledLanding[t.ID] &&
+		t.CanComplete = t.CanComplete && t.Execution == ExecutionIdle && b.attentionKnown && !b.landingUnknown && !b.closeUnknown && !rolledBlocked[t.ID] &&
 			t.Attention == 0 && t.PendingResults == 0 && t.UncertainResults == 0 && !rolledPlan[t.ID] && !t.planInTree
 		t.Lane = lane(*t)
 		if t.Lane == "pending" && !b.attentionKnown {

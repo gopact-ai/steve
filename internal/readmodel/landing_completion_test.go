@@ -15,6 +15,11 @@ import (
 
 func completionLandingModel(t *testing.T) (*Model, *ledger.Ledger, *artifact.Store) {
 	t.Helper()
+	return completionLandingModelWithTasks(t, nil)
+}
+
+func completionLandingModelWithTasks(t *testing.T, arrange func(map[string]*task.Task)) (*Model, *ledger.Ledger, *artifact.Store) {
+	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -31,6 +36,9 @@ func completionLandingModel(t *testing.T) (*Model, *ledger.Ledger, *artifact.Sto
 		id := fmt.Sprintf("recent-%02d", i)
 		in.Tasks[id] = &task.Task{ID: id, Parent: "root", ProjectID: "p", State: task.StateCancelled, UpdatedAt: old.Add(time.Duration(i+1) * time.Second)}
 	}
+	if arrange != nil {
+		arrange(in.Tasks)
+	}
 	if err := book.Update(t.Context(), func(tx *ledger.Tx) error { return task.ImportProjectTx(tx, in) }); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +50,7 @@ func completionLandingModel(t *testing.T) (*Model, *ledger.Ledger, *artifact.Sto
 	artifacts := artifact.New(t.TempDir(), book, projects, nil)
 	f := newSourceFixture()
 	f.disclosures, f.effects = nil, nil
-	adapter := f.adapter()
+	adapter := f.adapter().Ledger
 	adapter.Book, adapter.Artifacts = book, artifacts
 	return New(Sources{Tasks: tasks, Ledger: adapter}), book, artifacts
 }

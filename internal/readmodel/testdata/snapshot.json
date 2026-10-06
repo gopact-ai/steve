@@ -854,6 +854,10 @@
       "wired": true
     },
     {
+      "name": "ledger-task-closes",
+      "wired": true
+    },
+    {
       "name": "ledger-facts",
       "wired": true
     },

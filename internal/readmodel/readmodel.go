@@ -523,6 +523,9 @@ type LedgerSource interface {
 	// TaskLandingBlockers is complete standing work, independent of the
 	// capped recent landing history and bounded child pages.
 	TaskLandingBlockers(ctx context.Context) ([]string, error)
+	// TaskCloseBlockers is every standing native close obligation, including
+	// those belonging to historical descendants outside the displayed pages.
+	TaskCloseBlockers(ctx context.Context) ([]string, error)
 	// Conflicts is every project's standing merge conflict.
 	Conflicts(ctx context.Context) ([]Conflict, error)
 	Facts(ctx context.Context) (Facts, error)
