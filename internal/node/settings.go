@@ -10,10 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/fsx"
+	"github.com/gopact-ai/steve/internal/launchconfig"
 	"github.com/gopact-ai/steve/internal/mcpscan"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
@@ -63,7 +63,7 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 		if h.Adapter != nil && *h.Adapter != previous.Adapter {
 			return fmt.Errorf("harness %s adapter changes require configuration and restart", id)
 		}
-		if previous.Adapter != "" && (h.Command != previous.Command || !slices.Equal(h.Args, previous.Args)) {
+		if previous.Adapter != "" && h.Command != previous.Command {
 			return fmt.Errorf("harness %s has a pinned adapter; its generated command and arguments cannot be edited", id)
 		}
 		if h.Permission != nil && *h.Permission != "" {
@@ -81,6 +81,13 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 				return fmt.Errorf("harness %s slots must be nonnegative", id)
 			}
 			previous.Slots = *h.Slots
+		}
+		command := previous.Command
+		if previous.Adapter != "" {
+			command = ""
+		}
+		if err := launchconfig.Validate(previous.Adapter, command, previous.Args, previous.Env); err != nil {
+			return fmt.Errorf("harness %q: %w", id, err)
 		}
 		next.Harnesses[id] = previous
 	}

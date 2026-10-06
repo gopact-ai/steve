@@ -22,6 +22,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/adapter"
 	"github.com/gopact-ai/steve/internal/agenttools"
+	"github.com/gopact-ai/steve/internal/launchconfig"
 	"github.com/gopact-ai/steve/internal/logs"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/processrestart"
@@ -209,15 +210,8 @@ func decodeNodeConfig(raw []byte) (node.ServerConfig, error) {
 	}
 	for id, spec := range cfg.Harnesses {
 		spec.ProcessDir = absolute(spec.ProcessDir)
-		switch {
-		case spec.Adapter != "" && spec.Command != "":
-			return node.ServerConfig{}, fmt.Errorf("harness %q sets both adapter and command; pick one", id)
-		case spec.Adapter != "" && len(spec.Args) > 0:
-			return node.ServerConfig{}, fmt.Errorf("harness %q: an adapter takes no args", id)
-		case spec.Adapter != "":
-			if _, known := adapter.Catalog[spec.Adapter]; !known {
-				return node.ServerConfig{}, fmt.Errorf("harness %q: adapter %q is not one of %s", id, spec.Adapter, strings.Join(adapter.Names(), ", "))
-			}
+		if err := launchconfig.Validate(spec.Adapter, spec.Command, spec.Args, spec.Env); err != nil {
+			return node.ServerConfig{}, fmt.Errorf("harness %q: %w", id, err)
 		}
 		cfg.Harnesses[id] = spec
 	}

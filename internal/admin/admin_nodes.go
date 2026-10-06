@@ -20,6 +20,7 @@ import (
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/launchconfig"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -162,6 +163,13 @@ func (a *Service) hubHarnessSettings(text i18n.Catalog, settings map[string]node
 		}
 		if _, err := permission.New(item.Permission); err != nil {
 			return nil, err
+		}
+		command := item.Command
+		if item.Adapter != "" {
+			command = ""
+		}
+		if err := launchconfig.Validate(item.Adapter, command, item.Args, item.Env); err != nil {
+			return nil, fmt.Errorf("harness %q: %w", id, err)
 		}
 		harnesses[id] = item
 	}
