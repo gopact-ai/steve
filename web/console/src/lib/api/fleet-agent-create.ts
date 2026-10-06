@@ -111,7 +111,10 @@ export async function inspectFleetAgent(receipt: FleetAgentReceipt, ports: Fleet
     }
     if (await launchFingerprint(launch) !== receipt.launch) throw new FleetAgentCreateError("configurationChanged");
     // A matching name binding does not confirm the original launch save.
-    if (agent) return { ...receipt, phase: "bound", revision: settings.revision };
+    if (agent && (receipt.phase === "bind-unknown" || receipt.phase === "bound")) return { ...receipt, phase: "bound", revision: settings.revision };
+    // An existing binding cannot skip this operation's permission confirmation.
+    // Only a dispatched binding can be reconciled as complete; a saved launch
+    // still needs the owner's separate policy confirmation and asserted POST.
     if (receipt.phase === "save-unknown" || receipt.phase === "save-rejected") return { ...receipt, revision: settings.revision, phase: "saved" };
     return { ...receipt, revision: settings.revision };
 }

@@ -1,6 +1,7 @@
 import type { fleetZh } from "../zh/fleet.ts";
 
 export const fleetEn = {
+    "fleet.permissionSubmitted": "This policy snapshot was confirmed for the submitted request. Its outcome is unknown; checking it does not authorize another submission.",
     "fleet.permissionTitle": "Execution permission",
     "fleet.permissionPolicy": "Policy: {policy}",
     "fleet.permissionSource": "Source: {source}",

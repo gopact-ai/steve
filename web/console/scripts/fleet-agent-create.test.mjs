@@ -200,3 +200,52 @@ test("only exact typed permission errors authorize confirmation refresh; generic
     assert.equal(permissionConfirmationRejected(400, "agent_permission_conflict"), false);
     assert.equal(permissionConfirmationRejected(409, "some_other_conflict"), false);
 });
+
+test("all five coordinator policies can be read and explicitly asserted without a settings policy write", async () => {
+    for (const permission of ["read", "write", "deny", "auto", "always_allow"]) {
+        const { f, ports, remember } = fixture(); const receipt = await prepareFleetAgent(binding, f.settings, launch, ports, remember);
+        ports.readPermission = async (node, harness) => policy(node, harness, permission, "hub_harness", `opaque-${permission}`);
+        const fact = await readFleetAgentPermission(receipt, ports);
+        assert.equal(f.posts.length, 0);
+        await submitFleetAgent(receipt, ports, remember, fact);
+        assert.equal(f.posts[0].expected_permission, permission); assert.equal(f.posts[0].expected_permission_revision, fact.revision);
+        assert.equal(f.saved[0].settings.harnesses[binding.harness].permission, undefined, "assertion is never a node settings policy setter");
+    }
+});
+
+test("the actual HTTP client preserves typed rejection codes and permission GET is scoped and no-store", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const ts = (await import("typescript")).default;
+    const previous = { window: globalThis.window, sessionStorage: globalThis.sessionStorage, fetch: globalThis.fetch };
+    globalThis.window = { location: { search: "?token=fixture-owner-token" } };
+    globalThis.sessionStorage = { getItem: () => "fixture-owner-token", setItem() {} };
+    let response = { status: 200, value: policy(binding.node, binding.harness) };
+    const requests = [];
+    globalThis.fetch = async (url, init) => { requests.push({ url, init }); return new Response(JSON.stringify(response.value), { status: response.status }); };
+    try {
+        const compile = source => ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
+        const httpURL = `data:text/javascript;base64,${Buffer.from(compile(await readFile(new URL("../src/lib/http.ts", import.meta.url), "utf8"))).toString("base64")}`;
+        let fleet = compile(await readFile(new URL("../src/lib/api/fleet.ts", import.meta.url), "utf8"));
+        fleet = fleet.replace('from "../http"', `from ${JSON.stringify(httpURL)}`).replace('from "../i18n"', `from ${JSON.stringify(new URL("../src/lib/i18n.ts", import.meta.url).href)}`);
+        const api = await import(`data:text/javascript;base64,${Buffer.from(fleet).toString("base64")}`);
+        const fact = await api.fetchAgentPermission(binding.node, binding.harness);
+        assert.deepEqual(fact, policy(binding.node, binding.harness));
+        assert.equal(requests[0].url, "./console/agents/permission?node=remote&harness=my-acp");
+        assert.equal(requests[0].init.cache, "no-store"); assert.equal(requests[0].init.headers.get("Authorization"), "Bearer fixture-owner-token");
+        for (const [status, code] of [[409, "agent_permission_conflict"], [400, "agent_permission_confirmation_invalid"], [400, undefined]]) {
+            response = { status, value: { error: "fixture rejection", ...(code ? { code } : {}) } };
+            await assert.rejects(api.addAgent({ ...binding, expected_permission: "read", expected_permission_revision: "opaque-original" }), error => error.status === status && error.code === code);
+            const sent = JSON.parse(requests.at(-1).init.body);
+            assert.equal(sent.expected_permission, "read"); assert.equal(sent.expected_permission_revision, "opaque-original");
+        }
+    } finally { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; } }
+});
+
+test("a matching existing Agent cannot skip confirmation of a newly saved launch", async () => {
+    const { f, ports, remember } = fixture(); const receipt = await prepareFleetAgent(binding, f.settings, launch, ports, remember);
+    f.agents.push({ ...binding });
+    assert.equal((await inspectFleetAgent(receipt, ports)).phase, "saved");
+    assert.equal((await inspectFleetAgent({ ...receipt, phase: "save-unknown" }, ports)).phase, "saved");
+    assert.equal((await inspectFleetAgent({ ...receipt, phase: "bind-rejected" }, ports)).phase, "bind-rejected");
+    assert.equal(f.posts.length, 0, "checking a matching old binding is not an asserted POST");
+});
