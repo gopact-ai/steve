@@ -15,7 +15,7 @@ const browser = await chromium.launch({ headless: true, channel: process.env.BRO
 const A="console:material-ui", at="2026-09-07T01:00:00Z", base="a".repeat(40), after="b".repeat(40);
 const png=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+gxkAAAAASUVORK5CYII=","base64");
 const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:"block"});const page=await context.newPage();page.setDefaultTimeout(7000);
-const f={version:"test",supportsMaterials:true,captures:[],posts:[],queue:[],materials:new Map(),notes:[],answers:[],questions:[],hideQueue:false,reset:false,errors:[],uploads:[],uploadFailure:null,capabilities:[],capabilityFailure:null,queueReads:0};
+const f={version:"test",supportsMaterials:true,captures:[],posts:[],queue:[],materials:new Map(),notes:[],answers:[],questions:[],hideQueue:false,reset:false,errors:[],uploads:[],uploadFailure:null,contextMissing:false,uploadHold:null,capabilities:[],capabilityFailure:null,queueReads:0};
 page.on("pageerror",e=>f.errors.push(String(e)));
 function material(id,title,source,kind="text",mime="text/plain",data=Buffer.from("first\nsecond\nthird\n")) {const value={id,project:"p",title,source,kind,mime,size:data.length,digest:"d".repeat(64),created_at:at,...(kind==="image"?{width:1,height:1}:{})};f.materials.set(id,{value,data});return value;}
 const note=material("m-seed-1","Design note",{kind:'upload'});material("m-seed-2","Trace log",{kind:'upload'});
@@ -34,7 +34,7 @@ await page.route("**/*",async route=>{
  if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
  if(p==="/console/desktop")return route.fulfill({json:{enabled:false,setup_required:false,agent_count:0}});
  if(p==="/state")return route.fulfill({json:workState({at,hub:{node:"test-hub",version:f.version},nodes:[],agents:[],projects:[{id:"p",node:"test-hub",path:"/work/p",repo:"inplace",level:"public",agents:[],workspaces:[]}],tasks:[{id:"11",channel:A,project_id:"p",goal:"Code task",state:"running",lifecycle:"running",execution:"idle",lane:"pending",attention:0,turns:1,max_turns:10,updated_at:at}],plans:[],attempts:[],landings:[]})});
- if(p==="/console/context")return route.fulfill({json:{enabled:true,context:{conversation:A,project:{id:"p",node:"test-hub",path:"/work/p",repo:"inplace",level:"public",bound:true},agents:[]}}});
+ if(p==="/console/context")return route.fulfill({json:{enabled:true,context:f.contextMissing?null:{conversation:A,project:{id:"p",node:"test-hub",path:"/work/p",repo:"inplace",level:"public",bound:true},agents:[]}}});
  if(p==="/console/replies")return route.fulfill({json:{enabled:true,replies:[{id:"r0",conversation:A,kind:"sent",at,input:"Look at these",project_id:"p",...carried},{id:"r1",conversation:A,kind:"reply",at,text:"Reference reply",project_id:"p",revision:"reply-version-1"}]}});
  if(p==="/console/conversations")return route.fulfill({json:{conversations:[{id:A,title:"Material conversation",project:"p",count:1,last_at:at,running:false}]}});
  if(p==="/console/verbs")return route.fulfill({json:{verbs:[]}});
@@ -58,6 +58,7 @@ await page.route("**/*",async route=>{
    if(failure.abort)return route.abort('failed');
    return route.fulfill({status:failure.status,contentType:failure.contentType||'application/json',body:failure.body});
   }
+  if(f.uploadHold && f.uploadHold.name===u.searchParams.get('name'))await f.uploadHold.promise;
   const kind=req.headers()['content-type'].startsWith('image/')?'image':'binary';return route.fulfill({json:material("m-upload-"+f.materials.size,u.searchParams.get('name'),{kind:'upload'},kind,req.headers()['content-type'],req.postDataBuffer())});}
  if(p.match(/^\/console\/materials\/[^/]+\/content$/)){const m=f.materials.get(p.split('/')[3]);return route.fulfill({contentType:m.value.mime,body:m.data});}
  if(p.match(/^\/console\/materials\/[^/]+$/)){const m=f.materials.get(p.split('/')[3]);return route.fulfill({json:m.value});}
@@ -74,6 +75,99 @@ await page.route("**/*",async route=>{
 });
 await page.addInitScript((conversation)=>{sessionStorage.setItem('steve.conversation',conversation);if(!localStorage.getItem('steve.ui.locale'))localStorage.setItem('steve.ui.locale','en');window.sources=[];window.EventSource=class{addEventListener(){}constructor(){window.sources.push(this);setTimeout(()=>this.onopen?.(),0)}close(){window.sources=window.sources.filter(s=>s!==this)}};window.emit=(e)=>window.sources.forEach(s=>s.onmessage?.({data:JSON.stringify(e)}));},A);
 async function waitFor(test,label){for(let i=0;i<100;i++){if(await test())return;await new Promise(r=>setTimeout(r,30));}assert.fail(label);}
+async function fileDropRegressions() {
+ // DOM DragEvents cover the browser input contract. Native Finder gestures
+ // and real backend byte receipts are separate acceptance evidence.
+ f.uploadFailure=null;f.contextMissing=false;f.supportsMaterials=true;f.queue=[];f.hideQueue=true;
+ await page.evaluate(A=>{for(const kind of ['submission','materials','text'])localStorage.removeItem('steve.console.draft.'+kind+':'+A);},A);
+ await page.setViewportSize({width:1600,height:1000});await page.reload();
+ const message=page.getByRole('textbox',{name:'Message',exact:true});await message.waitFor();
+ await message.fill('Keep this body unchanged');
+ await page.getByLabel('Attach files',{exact:true}).setInputFiles({name:'drop-existing.txt',mimeType:'text/plain',buffer:Buffer.from('existing attachment')});
+ await page.getByRole('list',{name:'Attached materials'}).getByText('drop-existing.txt',{exact:true}).waitFor();
+ const saved=()=>page.evaluate(A=>({text:localStorage.getItem('steve.console.draft.text:'+A),refs:JSON.parse(localStorage.getItem('steve.console.draft.materials:'+A)||'[]')}),A);
+ const baseline=await saved(),posts=f.posts.length;
+ const drop=async (selector,files,text='FILE_FALLBACK_MUST_NOT_ENTER_BODY')=>page.evaluate(({selector,files,text})=>{
+  const target=document.querySelector(selector),data=new DataTransfer();
+  for(const file of files)data.items.add(new File([new Uint8Array(file.bytes)],file.name,{type:file.mime}));
+  data.setData('text/plain',text);data.setData('text/uri-list','file:///fixture/drop.txt');
+  const r=target.getBoundingClientRect(),init={dataTransfer:data,bubbles:true,cancelable:true,clientX:r.x+Math.min(12,r.width/2),clientY:r.y+Math.min(12,r.height/2)};
+  const over=new DragEvent('dragover',init);target.dispatchEvent(over);
+  const event=new DragEvent('drop',init);target.dispatchEvent(event);
+  return {over:over.defaultPrevented,drop:event.defaultPrevented};
+ },{selector,files,text});
+ const file=(name,text,mime='text/plain')=>({name,mime,bytes:[...Buffer.from(text)]});
+ const before=f.uploads.length;
+ const handled=await drop('[aria-label="Message"]',[file('dropped.txt','ACTUAL_DROPPED_FILE_BYTES 中文')]);
+ await waitFor(()=>f.uploads.length===before+1,'file drop must upload instead of becoming draft text');
+ await page.getByRole('list',{name:'Attached materials'}).getByText('dropped.txt',{exact:true}).waitFor();
+ assert.deepEqual(handled,{over:true,drop:true});assert.equal(await draftOf(message),baseline.text);
+ assert.equal(f.uploads.at(-1).data.toString(),'ACTUAL_DROPPED_FILE_BYTES 中文');
+ assert.equal(f.uploads.length,before+1);assert.equal(f.uploads.at(-1).name,'dropped.txt');assert.deepEqual((await saved()).refs.slice(0,baseline.refs.length),baseline.refs);assert.equal(f.posts.length,posts);
+ // The controls and padding accept files too; drop retains real names.
+ await drop('.composer-controls',[{name:'image.png',mime:'image/png',bytes:[...png]}]);
+ await page.getByRole('list',{name:'Attached materials'}).getByText('image.png',{exact:true}).waitFor();
+ assert.equal(f.uploads.at(-1).name,'image.png');assert.equal(await draftOf(message),baseline.text);
+ const batchBefore=f.uploads.length;
+ await drop('[aria-label="Message"]',[file('drop-batch-a.txt','batch a'),file('drop-batch-b.txt','batch b')]);
+ await page.getByRole('list',{name:'Attached materials'}).getByText('drop-batch-b.txt',{exact:true}).waitFor();
+ assert.equal(f.uploads.length,batchBefore+2);assert.deepEqual(f.uploads.slice(batchBefore).map(x=>x.name),['drop-batch-a.txt','drop-batch-b.txt']);assert.equal(await draftOf(message),baseline.text);
+ const repeatBefore=f.uploads.length;
+ await page.evaluate(()=>{
+  const box=document.querySelector('[aria-label="Message"]');
+  for(let i=0;i<2;i++){const data=new DataTransfer();data.items.add(new File(['repeat bytes'],'drop-repeat.txt',{type:'text/plain'}));box.dispatchEvent(new DragEvent('drop',{dataTransfer:data,bubbles:true,cancelable:true}));}
+ });
+ await page.getByRole('list',{name:'Attached materials'}).getByText('drop-repeat.txt',{exact:true}).waitFor();
+ await page.waitForTimeout(100);assert.equal(f.uploads.length,repeatBefore+1,'same-tick repeated drops cannot start overlapping uploads');assert.equal(await draftOf(message),baseline.text);
+ let releaseUpload;f.uploadHold={name:'drop-held.txt',promise:new Promise(resolve=>{releaseUpload=resolve;})};
+ const heldBefore=f.uploads.length;
+ await drop('[aria-label="Message"]',[file('drop-held.txt','held first bytes')]);
+ await waitFor(()=>f.uploads.length===heldBefore+1,'first slow drop is in flight');
+ await drop('.composer-controls',[file('drop-second.txt','second distinct bytes')]);
+ await page.getByText('An upload is already in progress. The new files were not accepted; select or drop them again after it finishes.',{exact:true}).waitFor();
+ assert.equal(f.uploads.length,heldBefore+1);assert.equal(await draftOf(message),baseline.text);
+ releaseUpload();await page.getByRole('list',{name:'Attached materials'}).getByText('drop-held.txt',{exact:true}).waitFor();f.uploadHold=null;
+ await drop('.composer-controls',[file('drop-second.txt','second distinct bytes')]);
+ await page.getByRole('list',{name:'Attached materials'}).getByText('drop-second.txt',{exact:true}).waitFor();
+ assert.deepEqual(f.uploads.slice(heldBefore).map(x=>x.name),['drop-held.txt','drop-second.txt']);assert.equal(f.posts.length,posts);
+ const preserved=await saved();f.uploadFailure={name:'drop-refused.pdf',status:403,body:JSON.stringify({error:'fixture denied'})};
+ await drop('[aria-label="Message"]',[file('drop-refused.pdf','refused bytes','application/pdf')]);
+ await page.locator('.composer-dock [role="alert"]').filter({hasText:'drop-refused.pdf'}).waitFor();
+ assert.deepEqual(await saved(),preserved);assert.equal(f.posts.length,posts);
+ f.uploadFailure=null;f.supportsMaterials=false;
+ await page.evaluate(async()=>{await (await import('/src/lib/api/console.ts')).checkSubmissionSupport();});
+ const unsupportedUploads=f.uploads.length;
+ await drop('[aria-label="Message"]',[file('unsupported-drop.txt','MUST_NOT_INSERT_UNSUPPORTED')]);
+ await page.getByText('This Hub does not support material references; dropped files were not attached.',{exact:true}).waitFor();
+ assert.equal(f.uploads.length,unsupportedUploads);assert.deepEqual(await saved(),preserved);
+ f.supportsMaterials=true;f.contextMissing=true;await page.reload();await message.waitFor();
+ await waitFor(async()=>await message.getAttribute('aria-disabled')==='true','no context disables composer');
+ const disabledUploads=f.uploads.length;
+ const disabledEditor=await drop('[aria-label="Message"]',[file('disabled-drop.txt','MUST_NOT_INSERT_DISABLED')]);
+ const disabledRoot=await drop('.composer-controls',[file('disabled-root.txt','MUST_NOT_INSERT_ROOT')]);
+ assert.deepEqual(disabledEditor,{over:true,drop:true});assert.deepEqual(disabledRoot,{over:true,drop:true});
+ await page.waitForTimeout(100);assert.equal(f.uploads.length,disabledUploads);assert.deepEqual(await saved(),preserved);assert.equal(f.posts.length,posts);
+ f.contextMissing=false;await page.reload();await message.waitFor();
+ await waitFor(async()=>await message.getAttribute("aria-disabled")!=="true","restored context enables composer before the unavailable-file case");
+ // A file-bearing transfer can lose file access while still carrying a text
+ // fallback. It must neither insert that fallback nor invent an attachment.
+ await page.evaluate(()=>{
+  const box=document.querySelector('[aria-label="Message"]'),data=new DataTransfer();
+  data.items.add(new File(['unavailable'],'unavailable-drop.txt',{type:'text/plain'}));
+  data.setData('text/plain','INACCESSIBLE_FILE_TEXT_MUST_NOT_ENTER_BODY');
+  const empty=new DataTransfer();Object.defineProperty(data,'files',{get:()=>empty.files});
+  box.dispatchEvent(new DragEvent('drop',{dataTransfer:data,bubbles:true,cancelable:true}));
+ });
+ await page.getByText('The dropped files could not be read. Use Attach files to select them. Your text and existing attachments are unchanged.',{exact:true}).waitFor();
+ assert.equal(f.uploads.length,disabledUploads);assert.deepEqual(await saved(),preserved);assert.equal(f.posts.length,posts);
+ // Non-file text keeps CodeMirror's existing drop behavior.
+ await drop('[aria-label="Message"]',[],'PLAIN_TEXT_DROP');
+ await waitFor(async()=> (await draftOf(message)).includes('PLAIN_TEXT_DROP'),'plain text drag must still insert text');
+ assert.equal(f.uploads.length,disabledUploads);assert.equal(f.posts.length,posts);
+ console.log('PASS file drop uploads exact bytes once without changing body/old refs; dock target, errors, unsupported/disabled and text fallback');
+ f.materials=new Map(initialMaterials);f.uploads=[];f.uploadFailure=null;f.contextMissing=false;
+}
+
 async function uploadErrorRegressions() {
  // These are observed backend/browser failures, driven through the actual Console
  // and material API. All writes are intercepted, including capability checks.
@@ -319,6 +413,7 @@ async function uploadErrorRegressions() {
 }
 try{
  await page.goto(url+'#/console');await page.getByRole('heading',{name:'Material conversation',exact:true}).waitFor();await page.getByRole('button',{name:'Actions',exact:true}).waitFor();
+ await fileDropRegressions();
  await uploadErrorRegressions();
  if(!process.env.MATERIAL_UPLOAD_ERRORS_ONLY){
   f.materials=new Map(initialMaterials);f.uploadFailure=null;f.capabilityFailure=null;f.capabilities=[];f.uploads=[];f.posts=[];f.queue=[];f.questions=[];f.hideQueue=false;

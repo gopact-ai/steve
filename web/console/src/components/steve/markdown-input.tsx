@@ -26,6 +26,7 @@ export interface MarkdownInputProps {
     // completion list. Anything it takes is marked handled and stops here.
     onKey?: (event: KeyboardEvent) => void;
     onPasteFiles?: (files: File[]) => void;
+    onDropFiles?: (files: File[]) => void;
     placeholder: string;
     label: string;
     disabled?: boolean;
@@ -101,6 +102,19 @@ export function MarkdownInput(p: MarkdownInputProps) {
                             return false;
                         },
                         keyup: () => { confirming.current = false; return false; },
+                        dragover: (event) => {
+                            if (!live.current.onDropFiles || !Array.from(event.dataTransfer?.types ?? []).includes("Files")) return false;
+                            if (event.dataTransfer) event.dataTransfer.dropEffect = live.current.disabled ? "none" : "copy";
+                            return true;
+                        },
+                        drop: (event) => {
+                            const files = Array.from(event.dataTransfer?.files ?? []);
+                            if (!live.current.onDropFiles || (!files.length && !Array.from(event.dataTransfer?.types ?? []).includes("Files"))) return false;
+                            // Files are attachments. Handling them before CodeMirror
+                            // prevents its default text-file insertion into the draft.
+                            if (!live.current.disabled) live.current.onDropFiles(files);
+                            return true;
+                        },
                         paste: (event) => {
                             const files = Array.from(event.clipboardData?.files ?? []);
                             if (files.length) live.current.onPasteFiles?.(files);
