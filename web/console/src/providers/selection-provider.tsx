@@ -184,12 +184,25 @@ export function SelectionProvider({ children }: { children: ReactNode }) {
     const move = () => {
       if (!pending.current) setCurrent(null);
     };
+    const scroll = (event: Event) => {
+      const element = active.current?.surface.element,
+        target = event.target;
+      if (!element) return;
+      // Other panes can auto-scroll while this selection stays in place.
+      if (
+        target === document ||
+        target === window ||
+        (target instanceof Node &&
+          (element.contains(target) || target.contains(element)))
+      )
+        move();
+    };
     document.addEventListener("pointerdown", down);
     document.addEventListener("selectionchange", update);
     document.addEventListener("pointerup", update);
     document.addEventListener("keyup", update);
     document.addEventListener("keydown", keyboard, true);
-    window.addEventListener("scroll", move, true);
+    window.addEventListener("scroll", scroll, true);
     window.addEventListener("resize", move);
     return () => {
       cancelAnimationFrame(frame);
@@ -198,7 +211,7 @@ export function SelectionProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("pointerup", update);
       document.removeEventListener("keyup", update);
       document.removeEventListener("keydown", keyboard, true);
-      window.removeEventListener("scroll", move, true);
+      window.removeEventListener("scroll", scroll, true);
       window.removeEventListener("resize", move);
     };
   }, []);
