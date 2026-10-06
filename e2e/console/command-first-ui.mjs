@@ -17,7 +17,7 @@ const f = {
     settings: {
         "fixture-hub": baseSettings({ "unbound-acp": { command: "/fixture/未知 agent", args: ["acp", "", "含 空格"] }, pinned: { command: "/fixture/pinned", adapter: "codex-acp" } }),
         "fixture-remote": baseSettings({ "remote-alone": { command: "/remote/fixture-acp", args: ["--stdio"] }, "remote-pinned": { command: "/remote/pinned", adapter: "claude-agent-acp" } }),
-    }, agents: [], writes: [], reads: [], errors: [], rejectBind: false, resetBind: false, resetSave: false, commitSave: false, readError: false, holdBind: false, release: null,
+    }, agents: [], writes: [], reads: [], errors: [], permissionReads: 0, policy: "read", policySource: "default_read", policyRevision: "opaque-permission-r1", conflictPermission: false, rejectBind: false, resetBind: false, resetSave: false, commitSave: false, readError: false, holdBind: false, release: null,
 };
 const unverified = "ACP not verified. Saving or binding is not an ACP handshake.";
 page.on("pageerror", error => f.errors.push(String(error)));
@@ -46,8 +46,16 @@ await page.route("**/*", async route => {
         f.settings[node] = saved;
         return route.fulfill({ json: { settings: saved } });
     }
+    if (p === "/console/agents/permission") {
+        assert.equal(req.method(), "GET"); f.permissionReads++;
+        return route.fulfill({ json: { node: url.searchParams.get("node"), harness: url.searchParams.get("harness"), permission: f.policy, source: f.policySource, revision: f.policyRevision } });
+    }
     if (p === "/console/agents" && req.method() === "POST") {
         const body = req.postDataJSON(); f.writes.push({ p, body });
+        assert.equal(typeof body.expected_permission, "string");
+        assert.equal(typeof body.expected_permission_revision, "string");
+        if (f.conflictPermission) { f.conflictPermission = false; f.policy = "auto"; f.policySource = "shared_remote_permissions"; f.policyRevision = "opaque-permission-r2"; return route.fulfill({ status: 409, json: { error: "Policy changed", code: "agent_permission_conflict" } }); }
+        assert.equal(body.expected_permission, f.policy); assert.equal(body.expected_permission_revision, f.policyRevision);
         if (f.holdBind) await new Promise(resolve => { f.release = resolve; });
         if (f.rejectBind) { f.rejectBind = false; return route.fulfill({ status: 403, json: { error: "Fixture binding rejected" } }); }
         if (f.resetBind) { f.resetBind = false; return route.abort("connectionreset"); }
@@ -69,6 +77,14 @@ async function open(viaResource = false) {
     return dialog;
 }
 async function choose(dialog, label, value) { await dialog.getByRole("button", { name: new RegExp(label + "$") }).click(); await page.getByRole("option", { name: value, exact: true }).click(); }
+async function confirmPermission(dialog) {
+    const checkbox = dialog.getByRole("checkbox", { name: "I confirm this execution permission and its source", exact: true });
+    await checkbox.waitFor();
+    const submit = dialog.getByRole("button", { name: "Bind Agent with confirmed permission", exact: true });
+    assert.equal(await submit.isDisabled(), true, "policy read is not consent");
+    await dialog.getByText("I confirm this execution permission and its source", { exact: true }).click();
+    assert.equal(await checkbox.isChecked(), true); await submit.click();
+}
 async function close(dialog) { await dialog.getByRole("button", { name: "Done", exact: true }).click(); await dialog.waitFor({ state: "hidden" }); }
 async function custom(dialog, id, harness, args = [], env = []) {
     await choose(dialog, "Machine", "fixture-remote");
@@ -96,10 +112,11 @@ try {
     assert.equal(await dialog.getByRole("button", { name: "Add argument", exact: true }).count(), 0, "pinned launch has no argv editor");
     await choose(dialog, "Harness \/ command", "unbound-acp");
     await dialog.getByRole("textbox", { name: "Name", exact: true }).fill("local-reviewer");
-    await dialog.getByRole("button", { name: "Add agent", exact: true }).click();
+    await dialog.getByRole("button", { name: "Review execution permission", exact: true }).click();
+    await confirmPermission(dialog);
     await dialog.getByText("Agent binding confirmed", { exact: true }).waitFor();
     await dialog.getByText(unverified, { exact: true }).waitFor();
-    assert.deepEqual(f.writes, [{ p: "/console/agents", body: { id: "local-reviewer", harness: "unbound-acp" } }]);
+    assert.deepEqual(f.writes, [{ p: "/console/agents", body: { id: "local-reviewer", harness: "unbound-acp", expected_permission: "read", expected_permission_revision: "opaque-permission-r1" } }]);
     await close(dialog);
     console.log("PASS local unbound choices, pinned adapter read-only launch, final argv and unverified binding");
 
@@ -111,9 +128,10 @@ try {
     assert.equal(await page.getByRole("option", { name: "unbound-acp", exact: true }).count(), 0, "choices cannot bleed between nodes");
     await page.getByRole("option", { name: "remote-alone", exact: true }).click();
     await dialog.getByRole("textbox", { name: "Name", exact: true }).fill("remote-reviewer");
-    await dialog.getByRole("button", { name: "Add agent", exact: true }).click();
+    await dialog.getByRole("button", { name: "Review execution permission", exact: true }).click();
+    await confirmPermission(dialog);
     await dialog.getByText("Agent binding confirmed", { exact: true }).waitFor();
-    assert.deepEqual(f.writes.at(-1).body, { id: "remote-reviewer", harness: "remote-alone", node: "fixture-remote" });
+    assert.deepEqual(f.writes.at(-1).body, { id: "remote-reviewer", harness: "remote-alone", node: "fixture-remote", expected_permission: "read", expected_permission_revision: "opaque-permission-r1" });
     await close(dialog);
     console.log("PASS remote machine uses its complete configured harnesses, not the hub roster");
 
@@ -121,7 +139,7 @@ try {
     dialog = await open(); await custom(dialog, "custom-reviewer", "new-acp", argv, ["MODE=ordinary", "MODE=duplicate"]);
     const before = structuredClone(f.settings["fixture-remote"]);
     await dialog.getByText(/Non-secret values only/).waitFor();
-    await dialog.getByRole("button", { name: "Save command and bind Agent", exact: true }).click();
+    await dialog.getByRole("button", { name: "Save command and review permission", exact: true }).click();
     await dialog.getByRole("alert").filter({ hasText: 'duplicate environment key "MODE"' }).waitFor();
     assert.equal(f.writes.at(-1).p, "/console/nodes/fixture-remote/settings");
     await dialog.getByRole("button", { name: "Check saved outcome (read-only)", exact: true }).click();
@@ -129,7 +147,8 @@ try {
     assert.equal(await dialog.getByRole("textbox", { name: "Argument 2", exact: true }).inputValue(), "");
     await dialog.getByRole("button", { name: "Remove environment entry 2", exact: true }).click();
     f.rejectBind = true;
-    await dialog.getByRole("button", { name: "Save command and bind Agent", exact: true }).click();
+    await dialog.getByRole("button", { name: "Save command and review permission", exact: true }).click();
+    await confirmPermission(dialog);
     await dialog.getByRole("alert").filter({ hasText: "Fixture binding rejected" }).waitFor();
     const put = f.writes.at(-2);
     assert.deepEqual(put.body, { ...before, harnesses: { ...before.harnesses, "new-acp": { command: "/fixture/未知 agent with spaces", args: argv, env: ["MODE=ordinary"] } } });
@@ -143,7 +162,7 @@ try {
     assert.equal(await dialog.evaluate(element => element.contains(document.activeElement)), true);
     await shot("custom-partial-narrow-light");
     await page.evaluate(() => document.documentElement.classList.add("dark-mode")); await shot("custom-partial-narrow-dark");
-    await dialog.getByRole("button", { name: "Bind the same Agent", exact: true }).click();
+    await confirmPermission(dialog);
     await dialog.getByText("Agent binding confirmed", { exact: true }).waitFor();
     assert.equal(f.writes.length, beforeRetry + 1); assert.deepEqual(f.writes.at(-1).body, heldBinding);
     assert.ok(f.settings["fixture-remote"].capabilities.includes("another-users-setting"), "no rollback overwrites another setting");
@@ -152,10 +171,34 @@ try {
     console.log("PASS exact custom argv, duplicate env feedback, saved revision, explicit same-scope bind retry and narrow themes/focus");
 
     dialog = await open(); await choose(dialog, "Harness \/ command", "unbound-acp");
+    await dialog.getByRole("textbox", { name: "Name", exact: true }).fill("permission-drift");
+    await dialog.getByRole("button", { name: "Review execution permission", exact: true }).click();
+    await dialog.getByText("Policy: read", { exact: true }).waitFor();
+    const beforeConflict = f.writes.length, permissionReads = f.permissionReads;
+    f.conflictPermission = true;
+    await confirmPermission(dialog);
+    await dialog.getByText("Policy: auto", { exact: true }).waitFor();
+    await dialog.getByText("Source: Coordinator shared remote policy", { exact: true }).waitFor();
+    await dialog.getByText(/auto \/ always_allow may approve/).waitFor();
+    assert.equal(await dialog.getByRole("checkbox", { name: "I confirm this execution permission and its source", exact: true }).isChecked(), false);
+    assert.equal(await dialog.getByRole("button", { name: "Bind Agent with confirmed permission", exact: true }).isDisabled(), true);
+    assert.equal(f.writes.length, beforeConflict + 1, "409 cannot silently submit the new auto policy");
+    assert.ok(f.permissionReads > permissionReads, "typed conflict rereads permission");
+    assert.deepEqual(f.writes.at(-1).body, { id: "permission-drift", harness: "unbound-acp", expected_permission: "read", expected_permission_revision: "opaque-permission-r1" });
+    await confirmPermission(dialog);
+    await dialog.getByText("Agent binding confirmed", { exact: true }).waitFor();
+    assert.deepEqual(f.writes.at(-1).body, { id: "permission-drift", harness: "unbound-acp", expected_permission: "auto", expected_permission_revision: "opaque-permission-r2" });
+    assert.equal(f.writes.length, beforeConflict + 2); await close(dialog);
+    f.policy = "read"; f.policySource = "default_read"; f.policyRevision = "opaque-permission-r1";
+    console.log("PASS typed permission conflict rereads source/revision and requires a new explicit broad-policy confirmation");
+
+    dialog = await open(); await choose(dialog, "Harness \/ command", "unbound-acp");
     await dialog.getByRole("textbox", { name: "Name", exact: true }).fill("unknown-binding");
     f.resetBind = true; f.holdBind = true;
     const beforeUnknown = f.writes.length;
-    await dialog.getByRole("button", { name: "Add agent", exact: true }).focus(); await page.keyboard.press("Enter");
+    await dialog.getByRole("button", { name: "Review execution permission", exact: true }).click();
+    await dialog.getByText("I confirm this execution permission and its source", { exact: true }).click();
+    await dialog.getByRole("button", { name: "Bind Agent with confirmed permission", exact: true }).focus(); await page.keyboard.press("Enter");
     await waitFor(() => f.writes.length === beforeUnknown + 1, "one held POST");
     await page.keyboard.press("Enter"); await page.keyboard.press("Escape"); assert.equal(f.writes.length, beforeUnknown + 1);
     assert.equal(await dialog.isVisible(), true, "in-flight write cannot be dismissed");
@@ -163,7 +206,7 @@ try {
     await dialog.getByRole("button", { name: "Check saved outcome (read-only)", exact: true }).waitFor();
     await dialog.getByRole("button", { name: "Check saved outcome (read-only)", exact: true }).click();
     assert.equal(f.writes.length, beforeUnknown + 1);
-    assert.equal(await dialog.getByRole("button", { name: "Bind the same Agent", exact: true }).count(), 0, "unknown POST is not retryable");
+    assert.equal(await dialog.getByRole("button", { name: "Bind Agent with confirmed permission", exact: true }).count(), 0, "unknown POST is not retryable");
     await page.reload(); dialog = await open();
     assert.equal(await dialog.getByRole("textbox", { name: "Name", exact: true }).inputValue(), "unknown-binding");
     assert.equal(await dialog.getByRole("textbox", { name: "Name", exact: true }).isDisabled(), true);
@@ -176,14 +219,14 @@ try {
     dialog = await open(); await custom(dialog, "save-unknown", "saved-after-loss", ["", "acp"]);
     const beforeSaveLoss = f.writes.length;
     f.resetSave = true; f.commitSave = true;
-    await dialog.getByRole("button", { name: "Save command and bind Agent", exact: true }).click();
+    await dialog.getByRole("button", { name: "Save command and review permission", exact: true }).click();
     await dialog.getByText("Harness save outcome unconfirmed", { exact: true }).waitFor();
     assert.equal(f.writes.length, beforeSaveLoss + 1);
     await page.reload(); dialog = await open();
     await dialog.getByRole("button", { name: "Check saved outcome (read-only)", exact: true }).click();
-    await dialog.getByRole("button", { name: "Bind the same Agent", exact: true }).waitFor();
+    await dialog.getByRole("button", { name: "Bind Agent with confirmed permission", exact: true }).waitFor();
     assert.equal(f.writes.length, beforeSaveLoss + 1, "checking lost PUT does not auto-bind or rewrite");
-    await dialog.getByRole("button", { name: "Bind the same Agent", exact: true }).click();
+    await confirmPermission(dialog);
     await dialog.getByText("Agent binding confirmed", { exact: true }).waitFor();
     assert.equal(f.writes.length, beforeSaveLoss + 2); assert.equal(f.writes.at(-1).p, "/console/agents"); await close(dialog);
     console.log("PASS lost save reply reconciles exact node-local launch and revision without a second PUT");

@@ -1,3 +1,4 @@
+import type { AgentPermissionFact, AgentPermissionPolicy } from "../agent-permission";
 import type { Snapshot } from "../types";
 import { request } from "../http";
 import { LocalizedError, translate } from "../i18n";
@@ -29,7 +30,7 @@ export interface NodeSettings {
 export interface AgentSpec { harness: string; node?: string; model?: string; options?: Record<string, string>; about?: string; requires: string[]; mcp_servers: string[] }
 
 export const addNode = (body: { name: string; addr: string; level: string }) => request<AddNodeResult>("/console/nodes", { method: "POST", body });
-export const addAgent = (body: { id: string; harness: string; node?: string; model?: string }) => request<{ ok: boolean }>("/console/agents", { method: "POST", body });
+export const addAgent = (body: { id: string; harness: string; node?: string; model?: string; expected_permission?: AgentPermissionPolicy; expected_permission_revision?: string }) => request<{ ok: boolean }>("/console/agents", { method: "POST", body });
 export const fetchNodeSettings = (name: string, signal?: AbortSignal) => request<{ settings: NodeSettings }>(`/console/nodes/${encodeURIComponent(name)}/settings`, { signal });
 export const saveNodeSettings = (name: string, settings: NodeSettings) => {
     if (!settings.revision) return Promise.reject(new LocalizedError((locale) => translate(locale, "settingsEditor.reloadBeforeSaving")));
@@ -38,3 +39,5 @@ export const saveNodeSettings = (name: string, settings: NodeSettings) => {
 export const updateAgent = (id: string, body: AgentSpec) => request<{ ok: boolean }>(`/console/agents/${encodeURIComponent(id)}`, { method: "PUT", body });
 export const removeAgent = (id: string) => request<{ ok: boolean }>(`/console/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
 export const removeNode = (name: string) => request<{ ok: boolean }>(`/console/nodes/${encodeURIComponent(name)}`, { method: "DELETE" });
+
+export const fetchAgentPermission = (node: string, harness: string, signal?: AbortSignal) => request<AgentPermissionFact>(`/console/agents/permission?${new URLSearchParams({ node, harness })}`, { signal, cache: "no-store" });
