@@ -17,7 +17,7 @@ const f = {
     settings: {
         "fixture-hub": baseSettings({ "unbound-acp": { command: "/fixture/未知 agent", args: ["acp", "", "含 空格"] }, pinned: { command: "/fixture/pinned", adapter: "codex-acp" } }),
         "fixture-remote": baseSettings({ "remote-alone": { command: "/remote/fixture-acp", args: ["--stdio"] }, "remote-pinned": { command: "/remote/pinned", adapter: "claude-agent-acp" } }),
-    }, agents: [], writes: [], reads: [], errors: [], permissionReads: 0, policy: "read", policySource: "default_read", policyRevision: "opaque-permission-r1", conflictPermission: false, rejectBind: false, resetBind: false, resetSave: false, commitSave: false, readError: false, holdBind: false, release: null,
+    }, agents: [], writes: [], reads: [], errors: [], permissionReads: 0, policy: "read", policySource: "default_read", policyRevision: "opaque-permission-r1", conflictPermission: false, invalidConfirmation: false, generic400: false, rejectBind: false, resetBind: false, resetSave: false, commitSave: false, readError: false, holdBind: false, release: null,
 };
 const unverified = "ACP not verified. Saving or binding is not an ACP handshake.";
 page.on("pageerror", error => f.errors.push(String(error)));
@@ -55,6 +55,8 @@ await page.route("**/*", async route => {
         assert.equal(typeof body.expected_permission, "string");
         assert.equal(typeof body.expected_permission_revision, "string");
         if (f.conflictPermission) { f.conflictPermission = false; f.policy = "auto"; f.policySource = "shared_remote_permissions"; f.policyRevision = "opaque-permission-r2"; return route.fulfill({ status: 409, json: { error: "Policy changed", code: "agent_permission_conflict" } }); }
+        if (f.invalidConfirmation) { f.invalidConfirmation = false; return route.fulfill({ status: 400, json: { error: "Incomplete permission assertion", code: "agent_permission_confirmation_invalid" } }); }
+        if (f.generic400) { f.generic400 = false; return route.fulfill({ status: 400, json: { error: "fixture node transport uncertain" } }); }
         assert.equal(body.expected_permission, f.policy); assert.equal(body.expected_permission_revision, f.policyRevision);
         if (f.holdBind) await new Promise(resolve => { f.release = resolve; });
         if (f.rejectBind) { f.rejectBind = false; return route.fulfill({ status: 403, json: { error: "Fixture binding rejected" } }); }
@@ -191,6 +193,30 @@ try {
     assert.equal(f.writes.length, beforeConflict + 2); await close(dialog);
     f.policy = "read"; f.policySource = "default_read"; f.policyRevision = "opaque-permission-r1";
     console.log("PASS typed permission conflict rereads source/revision and requires a new explicit broad-policy confirmation");
+
+    dialog = await open(); await choose(dialog, "Harness \/ command", "unbound-acp");
+    await dialog.getByRole("textbox", { name: "Name", exact: true }).fill("invalid-confirmation");
+    await dialog.getByRole("button", { name: "Review execution permission", exact: true }).click();
+    const beforeInvalid = f.writes.length, readsBeforeInvalid = f.permissionReads;
+    f.invalidConfirmation = true; await confirmPermission(dialog);
+    await waitFor(() => f.permissionReads > readsBeforeInvalid, "typed invalid confirmation rereads policy");
+    await waitFor(async () => !await dialog.getByRole("checkbox", { name: "I confirm this execution permission and its source", exact: true }).isChecked(), "invalid confirmation cleared consent");
+    assert.equal(f.writes.length, beforeInvalid + 1);
+    await confirmPermission(dialog); await dialog.getByText("Agent binding confirmed", { exact: true }).waitFor(); await close(dialog);
+
+    dialog = await open(); await choose(dialog, "Harness \/ command", "unbound-acp");
+    await dialog.getByRole("textbox", { name: "Name", exact: true }).fill("generic-400");
+    await dialog.getByRole("button", { name: "Review execution permission", exact: true }).click();
+    const beforeGeneric = f.writes.length;
+    f.generic400 = true; await confirmPermission(dialog);
+    await dialog.getByRole("alert").filter({ hasText: "fixture node transport uncertain" }).waitFor();
+    await dialog.getByRole("button", { name: "Check saved outcome (read-only)", exact: true }).click();
+    assert.equal(f.writes.length, beforeGeneric + 1);
+    assert.equal(await dialog.getByRole("button", { name: "Bind Agent with confirmed permission", exact: true }).count(), 0, "generic 400 is not definite rejection");
+    bind({ id: "generic-400", harness: "unbound-acp" });
+    await dialog.getByRole("button", { name: "Check saved outcome (read-only)", exact: true }).click();
+    await dialog.getByText("Agent binding confirmed", { exact: true }).waitFor(); await close(dialog);
+    console.log("PASS typed invalid 400 requires reconfirmation; generic 400 retains unknown without another POST");
 
     dialog = await open(); await choose(dialog, "Harness \/ command", "unbound-acp");
     await dialog.getByRole("textbox", { name: "Name", exact: true }).fill("unknown-binding");

@@ -49,6 +49,10 @@ export function FleetAgentCreate({ hub, machines, initialNode, onChanged, onBusy
     const [readVersion, setReadVersion] = useState(0);
     const acting = useRef(false);
     const latestReceipt = useRef(receipt);
+    const permissionPanel = useRef<HTMLElement>(null);
+    useEffect(() => {
+        if (permission && (receipt?.phase === "saved" || receipt?.phase === "bind-rejected")) { permissionPanel.current?.focus({ preventScroll: true }); permissionPanel.current?.scrollIntoView({ block: "nearest" }); }
+    }, [permission, receipt?.phase]);
     useEffect(() => {
         let alive = true;
         const controller = new AbortController();
@@ -125,6 +129,7 @@ export function FleetAgentCreate({ hub, machines, initialNode, onChanged, onBusy
     const saved = receipt && ["saved", "bind-unknown", "bind-rejected", "bound"].includes(receipt.phase);
     const unknown = receipt?.phase === "save-unknown" || receipt?.phase === "bind-unknown";
     const bound = receipt?.phase === "bound";
+    const shownPermission = permission || (unknown ? receipt?.confirmation : undefined);
     return <div className="flex min-w-0 flex-col gap-4">
         {!bound && <fieldset disabled={locked} className="flex min-w-0 flex-col gap-4">
             <legend className="mb-3 text-sm font-semibold text-primary">{t("fleet.commandBinding")}</legend>
@@ -165,14 +170,14 @@ export function FleetAgentCreate({ hub, machines, initialNode, onChanged, onBusy
             <p className="text-xs leading-5 text-warning-primary">{t("fleet.commandUnverified")}</p>
             {!bound && <p className="text-xs leading-5 text-tertiary">{t(unknown ? "fleet.commandUnknownHint" : "fleet.commandRetryHint")}</p>}
         </section>}
-        {!bound && permission && <section aria-label={t("fleet.permissionTitle")} className="min-w-0 space-y-3 rounded-lg border border-secondary p-3">
+        {!bound && shownPermission && <section ref={permissionPanel} tabIndex={-1} aria-label={t("fleet.permissionTitle")} className="min-w-0 space-y-3 rounded-lg border border-secondary p-3">
             <h3 className="text-sm font-medium text-primary">{t("fleet.permissionTitle")}</h3>
-            <p className="break-all text-sm text-secondary">{t("fleet.permissionPolicy", { policy: permission.permission })}</p>
-            <p className="break-words text-xs text-tertiary">{t("fleet.permissionSource", { source: t(`fleet.permissionSource.${permission.source}`) })}</p>
-            <p className="break-all font-mono text-xs text-tertiary">{t("fleet.permissionRevision", { revision: permission.revision })}</p>
+            <p className="break-all text-sm text-secondary">{t("fleet.permissionPolicy", { policy: shownPermission.permission })}</p>
+            <p className="break-words text-xs text-tertiary">{t("fleet.permissionSource", { source: t(`fleet.permissionSource.${shownPermission.source}`) })}</p>
+            <p className="break-all font-mono text-xs text-tertiary">{t("fleet.permissionRevision", { revision: shownPermission.revision })}</p>
             <p className="text-xs leading-5 text-warning-primary">{t("fleet.permissionBoundary")}</p>
-            {(permission.permission === "auto" || permission.permission === "always_allow") && <p role="alert" className="text-xs leading-5 text-warning-primary">{t("fleet.permissionBroad")}</p>}
-            <Checkbox size="md" isSelected={confirmed} isDisabled={busy || unknown} onChange={setConfirmed} aria-label={t("fleet.permissionConfirm")} label={t("fleet.permissionConfirm")} />
+            {(shownPermission.permission === "auto" || shownPermission.permission === "always_allow") && <p role="alert" className="text-xs leading-5 text-warning-primary">{t("fleet.permissionBroad")}</p>}
+            {unknown ? <p className="text-xs leading-5 text-tertiary">{t("fleet.permissionSubmitted")}</p> : <Checkbox size="md" isSelected={confirmed} isDisabled={busy} onChange={setConfirmed} aria-label={t("fleet.permissionConfirm")} label={t("fleet.permissionConfirm")} />}
         </section>}
         {!secure && <div role="alert" className="text-sm text-error-primary">{t("fleet.commandError.secureContext")}</div>}
         {error && <div role="alert" className="break-words text-sm text-error-primary">{error}</div>}

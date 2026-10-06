@@ -1,4 +1,5 @@
 export const fleetZh = {
+    "fleet.permissionSubmitted": "此策略快照已用于确认提交的请求。结果仍未知；核对不代表可以再次提交。",
     "fleet.permissionTitle": "执行权限",
     "fleet.permissionPolicy": "策略：{policy}",
     "fleet.permissionSource": "来源：{source}",
