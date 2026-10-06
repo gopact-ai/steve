@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/state"
 )
 
 // Ledger adapts the attempt and artifact services to the read model.
@@ -49,6 +50,26 @@ func (l Ledger) TaskLandingBlockers(ctx context.Context) ([]string, error) {
 		return nil, errors.New("artifact source is not configured")
 	}
 	return l.Artifacts.CompletionBlockers(ctx)
+}
+
+// TaskCloseBlockers uses the same strict document read as the mutation guard,
+// not a cached store or the recent execution/session history.
+func (l Ledger) TaskCloseBlockers(ctx context.Context) ([]string, error) {
+	if l.Book == nil {
+		return nil, errors.New("native close source is not configured")
+	}
+	var ids []string
+	err := l.Book.Read(ctx, func(tx *ledger.ReadTx) error {
+		owed, err := state.OwedClosesTx(tx)
+		if err != nil {
+			return err
+		}
+		for _, close := range owed {
+			ids = append(ids, close.TaskID)
+		}
+		return nil
+	})
+	return ids, err
 }
 
 // UsageSamples are the spend fields of the attempts that reached a terminal

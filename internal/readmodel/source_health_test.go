@@ -34,8 +34,18 @@ func newSourceFixture() *sourceFixture {
 		effects:     []intent.Intent{{ID: "effect", TaskID: "1", Tool: "send"}},
 	}
 }
-func (s *sourceFixture) adapter() Ledger {
-	return Ledger{Attempts: s, Artifacts: s, Projects: s, Intents: s}
+
+type fixtureLedger struct {
+	Ledger
+	source *sourceFixture
+}
+
+func (l fixtureLedger) TaskCloseBlockers(context.Context) ([]string, error) {
+	return nil, l.source.fail["task-closes"]
+}
+
+func (s *sourceFixture) adapter() fixtureLedger {
+	return fixtureLedger{Ledger: Ledger{Attempts: s, Artifacts: s, Projects: s, Intents: s}, source: s}
 }
 func (s *sourceFixture) Live(context.Context) ([]attempt.Record, error) {
 	return s.live, s.fail["live"]
@@ -88,7 +98,7 @@ func sourceHealth(t *testing.T, snap Snapshot, name string) SourceHealth {
 }
 
 func TestLedgerQueriesReportErrorsAndKeepPartialContributions(t *testing.T) {
-	for _, query := range []string{"live", "projects", "landings"} {
+	for _, query := range []string{"live", "projects", "landings", "task-closes"} {
 		t.Run(query, func(t *testing.T) {
 			s := newSourceFixture()
 			s.live = []attempt.Record{{Spec: attempt.Spec{ID: "live", Agent: "local", TaskID: "2", Workspace: project.Workspace{Path: "/work/p"}}, State: attempt.Running}}
@@ -223,7 +233,7 @@ func TestUnreadAttentionDoesNotBecomeNoPendingWork(t *testing.T) {
 
 func TestAllQueryFailuresAreAggregatedWithoutOverwriting(t *testing.T) {
 	s := newSourceFixture()
-	queries := []string{"live", "projects", "landings", "reservations", "attestations", "replicas", "disclosures", "grants", "effects"}
+	queries := []string{"live", "projects", "landings", "task-closes", "reservations", "attestations", "replicas", "disclosures", "grants", "effects"}
 	for _, query := range queries {
 		s.fail[query] = errors.New("injected " + query)
 	}
