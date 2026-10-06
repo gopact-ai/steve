@@ -42,7 +42,7 @@ func (h *Host) beginSessionOperationLocked(ctx context.Context, sid acp.SessionI
 	if err := h.SessionBlockedLocked(sid); err != nil {
 		return nil, err
 	}
-	if h.active[sid] != 0 || h.opening[sid] != 0 {
+	if (method != "configure" && h.active[sid] != 0) || h.opening[sid] != 0 {
 		return nil, ErrSessionBusy
 	}
 	if ctx == nil {
@@ -52,7 +52,7 @@ func (h *Host) beginSessionOperationLocked(ctx context.Context, sid acp.SessionI
 		return nil, fmt.Errorf("session/%s: %w", method, err)
 	}
 	op := &sessionOperation{method: method, generation: h.generation, process: h.proc, pending: true, original: h.sessions[sid]}
-	if method == "load" || method == "resume" {
+	if method == "load" || method == "resume" || method == "configure" {
 		op.state = copySessionState(op.original)
 	}
 	if h.sessionOperations == nil {
@@ -69,6 +69,10 @@ func (h *Host) finishSessionOperationLocked(ctx context.Context, sid acp.Session
 		var response *acp.Error
 		localCancel := ctx.Err() != nil && errors.Is(err, context.Cause(ctx))
 		if !localCancel && errors.As(err, &response) {
+			// Restore failure does not retract independent confirmations that
+			// arrived before the response. Publish them into the same original
+			// object only; never create a cold session or touch a replacement.
+			h.preserveOperationNotificationsLocked(sid, op)
 			delete(h.sessionOperations, sid)
 			return fmt.Errorf("session/%s: %w", op.method, err)
 		}
@@ -86,6 +90,11 @@ func (h *Host) finishSessionOperationLocked(ctx context.Context, sid acp.Session
 			return fmt.Errorf("session/%s: original process ended", op.method)
 		}
 		h.sessions[sid] = op.state
+	case "configure":
+		if !h.alive || h.generation != op.generation || h.sessions[sid] != op.original {
+			return fmt.Errorf("session/configure: original session changed")
+		}
+		h.preserveOperationNotificationsLocked(sid, op)
 	case "close", "delete":
 		if h.generation == op.generation && h.sessions[sid] == op.original {
 			delete(h.sessions, sid)
@@ -195,5 +204,48 @@ func (h *Host) deleteSession(ctx context.Context, sid acp.SessionID) error {
 	_, err = caller.DeleteSession(ctx, &acp.DeleteSessionRequest{SessionID: sid})
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.finishSessionOperationLocked(ctx, sid, op, err)
+}
+
+// preserveOperationNotificationsLocked keeps independent confirmations on a
+// known original session after explicit rejection, without admitting a cold
+// session or pretending the lifecycle request succeeded. h.mu must be held.
+func (h *Host) preserveOperationNotificationsLocked(sid acp.SessionID, op *sessionOperation) {
+	if op.state == nil || op.original == nil || !h.alive || h.generation != op.generation || h.sessions[sid] != op.original {
+		return
+	}
+	copyConfirmedState(op.original, op.state)
+}
+func copyConfirmedState(dst, src *sessionState) {
+	snapshot := copySessionState(src)
+	dst.mu.Lock()
+	defer dst.mu.Unlock()
+	dst.options = snapshot.options
+	dst.modes = snapshot.modes
+	dst.modeID = snapshot.modeID
+	dst.commands = snapshot.commands
+}
+
+// beginConfigOperationLocked reserves an already-open session across a config
+// RPC. An existing prompt may keep running, but lifecycle changes and new
+// prompts cannot enter this SID until the reservation completes. h.mu is held
+// only for admission/publication, never while doing protocol I/O.
+func (h *Host) beginConfigOperationLocked(ctx context.Context, sid acp.SessionID, generation uint64) (*sessionOperation, error) {
+	if err := h.SessionBlockedLocked(sid); err != nil {
+		return nil, err
+	}
+	if !h.alive || h.caller == nil || h.generation != generation || h.sessions[sid] == nil {
+		return nil, fmt.Errorf("session/configure: original session is not open")
+	}
+	return h.beginSessionOperationLocked(ctx, sid, "configure")
+}
+
+// finishConfigOperationLocked consumes the reservation after the caller has
+// validated its response. It never treats a requested value as confirmation.
+// response publication ordering still needs a real SDK ingress receipt.
+func (h *Host) finishConfigOperationLocked(ctx context.Context, sid acp.SessionID, op *sessionOperation, err error) error {
+	if op == nil || op.method != "configure" {
+		return errors.New("session/configure: invalid reservation")
+	}
 	return h.finishSessionOperationLocked(ctx, sid, op, err)
 }

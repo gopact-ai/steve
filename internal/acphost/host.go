@@ -576,8 +576,20 @@ func (ch *clientHandler) Update(_ context.Context, n *acp.SessionNotification) e
 	if op := ch.h.sessionOperations[n.SessionID]; op != nil {
 		if op.generation == ch.generation && op.state != nil {
 			applySessionSettings(op.state, n.Update)
+			if op.method == "configure" && op.original != nil && ch.h.sessions[n.SessionID] == op.original {
+				// An independent configuration notification is already an Actual
+				// observation for the still-running original prompt/context.
+				applySessionSettings(op.original, n.Update)
+			}
 		}
+		// Config can run mid-turn. Continue delivering the original prompt's
+		// output/callbacks while keeping lifecycle restore history isolated.
+		col := ch.h.collectors[n.SessionID]
+		forward := op.method == "configure" && op.generation == ch.generation && col != nil && col.generation == ch.generation
 		ch.h.mu.Unlock()
+		if forward {
+			col.handle(n.Update)
+		}
 		return nil
 	}
 	applySessionSettings(ch.h.sessions[n.SessionID], n.Update)

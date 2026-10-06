@@ -13,14 +13,18 @@ import (
 
 type operationParticipant struct {
 	*closeParticipant
-	loadEntered   chan struct{}
-	loadRelease   chan struct{}
-	deleteEntered chan struct{}
-	deleteRelease chan struct{}
-	notify        bool
-	replyOptions  bool
-	loadError     error
-	emptyNotify   bool
+	loadEntered       chan struct{}
+	loadRelease       chan struct{}
+	deleteEntered     chan struct{}
+	deleteRelease     chan struct{}
+	notify            bool
+	replyOptions      bool
+	loadError         error
+	emptyNotify       bool
+	rejectAfterNotify error
+	configEntered     chan struct{}
+	configRelease     chan struct{}
+	configReverse     bool
 }
 
 func (a *operationParticipant) LoadSession(ctx context.Context, req *acp.LoadSessionRequest) (*acp.LoadSessionResponse, error) {
@@ -54,6 +58,9 @@ func (a *operationParticipant) restoreSession(ctx context.Context, req *acp.Load
 		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.CurrentModeUpdateSessionUpdate("notified-mode")}); err != nil {
 			return nil, err
 		}
+	}
+	if a.rejectAfterNotify != nil {
+		return nil, a.rejectAfterNotify
 	}
 	if a.loadEntered != nil {
 		close(a.loadEntered)
@@ -105,7 +112,7 @@ func operationHost(t *testing.T, a *operationParticipant) *Host {
 	h := New(Config{Transport: operationTransport{agent: a}})
 	t.Cleanup(h.Stop)
 	t.Cleanup(func() {
-		for _, release := range []chan struct{}{a.loadRelease, a.deleteRelease, a.release} {
+		for _, release := range []chan struct{}{a.loadRelease, a.deleteRelease, a.release, a.configRelease} {
 			if release != nil {
 				select {
 				case <-release:
@@ -492,4 +499,37 @@ func TestMatchedReplyCannotReplaceConfirmedLaterNotification(t *testing.T) {
 	if !known || !same || settings.Model != "Later model" {
 		t.Fatalf("post-reply notification lost: %+v known=%v same=%v", settings, known, same)
 	}
+}
+
+func (a *operationParticipant) SetSessionConfigOption(ctx context.Context, req *acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
+	a.record("configure")
+	if a.configReverse {
+		response, err := a.client.RequestPermission(ctx, &acp.RequestPermissionRequest{SessionID: req.SessionID, ToolCall: acp.ToolCallUpdate{ToolCallID: "configure-reverse"}, Options: []acp.PermissionOption{{OptionID: "deny", Name: "Deny", Kind: acp.PermissionOptionKindRejectOnce}}})
+		if err != nil {
+			return nil, err
+		}
+		if response.Outcome.OptionID != "deny" {
+			return nil, errors.New("configure callback policy changed")
+		}
+	}
+	if a.configEntered != nil {
+		close(a.configEntered)
+		<-a.configRelease
+	}
+	category := acp.SessionConfigOptionCategoryModel
+	choices := acp.UngroupedSessionConfigSelectOptions{{Value: "configured", Name: "Configured model"}}
+	options := []acp.SessionConfigOption{{ID: "model", Name: "Model", Type: acp.SessionConfigOptionTypeSelect, Category: &category, CurrentValue: acp.SessionConfigValueID("configured"), Options: acp.SessionConfigSelectOptions{Ungrouped: &choices}}}
+	return &acp.SetSessionConfigOptionResponse{ConfigOptions: options}, nil
+}
+
+func (a *operationParticipant) NewSession(ctx context.Context, req *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
+	response, err := a.lifecycleParticipant.NewSession(ctx, req)
+	if err != nil || a.configEntered == nil {
+		return response, err
+	}
+	category := acp.SessionConfigOptionCategoryModel
+	choices := acp.UngroupedSessionConfigSelectOptions{{Value: "before", Name: "Before model"}, {Value: "configured", Name: "Configured model"}}
+	options := []acp.SessionConfigOption{{ID: "model", Name: "Model", Type: acp.SessionConfigOptionTypeSelect, Category: &category, CurrentValue: acp.SessionConfigValueID("before"), Options: acp.SessionConfigSelectOptions{Ungrouped: &choices}}}
+	response.ConfigOptions = &options
+	return response, nil
 }
