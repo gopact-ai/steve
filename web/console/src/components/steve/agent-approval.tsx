@@ -4,7 +4,7 @@ import { DrawerSection } from "@/components/steve/drawer";
 import type { Agent, Selector } from "@/lib/types";
 import { useI18n } from "@/providers/locale-provider";
 
-export const isApprovalSelector = (selector: Selector) => selector.category === "mode" || selector.id === "mode";
+export const isApprovalSelector = (selector: Selector) => selector.type === "select" && (selector.category === "mode" || selector.id === "mode");
 const approvalNames = { ask: "fleet.approval.ask", auto: "fleet.approval.auto", full: "fleet.approval.full" } as const;
 
 // Use the tool's actual selector, just as the runtime does. An unobserved

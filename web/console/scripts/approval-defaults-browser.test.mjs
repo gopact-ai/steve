@@ -18,10 +18,10 @@ try {
     const delayedReads = [];
     const base = { harness: 'fixture', node: 'hub', eligible: true, level: 'internal', approval: 'ask' };
     const agents = [
-        { ...base, id: 'known', options: { effort: 'high', permission: 'workspace' }, selectors: [{ id: 'permission', category: 'mode', name: 'Permissions', values: ['read-only', 'workspace', 'full-access'], choices: ['Read only', 'Workspace', 'Full access'] }, { id: 'effort', choices: ['low', 'high'] }] },
+        { ...base, id: 'known', options: { effort: 'high', permission: 'workspace' }, selectors: [{ id: 'permission', category: 'mode', type: 'select', name: 'Permissions', values: ['read-only', 'workspace', 'full-access'], choices: ['Read only', 'Workspace', 'Full access'] }, { id: 'effort', name: 'Effort', type: 'select', values: ['low', 'high'], choices: ['low', 'high'] }] },
         { ...base, id: 'unknown', harness: 'other-fixture', options: {}, selectors: [] },
         { ...base, id: 'legacy', options: { mode: 'custom-policy' }, selectors: [] },
-        { ...base, id: 'label-pin', options: { mode: 'Full access' }, selectors: [{ id: 'mode', category: 'mode', values: ['read-only', 'full-access'], choices: ['Read only', 'Full access'] }] },
+        { ...base, id: 'label-pin', options: { mode: 'Full access' }, selectors: [{ id: 'mode', category: 'mode', type: 'select', values: ['read-only', 'full-access'], choices: ['Read only', 'Full access'] }] },
     ];
     await page.addInitScript(() => {
         localStorage.setItem('steve.ui.locale', 'zh');
