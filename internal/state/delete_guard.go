@@ -38,7 +38,8 @@ func OwedClosesTx(tx ledger.Reader) ([]OwedClose, error) {
 		return nil, errors.New("cleanup state is not one document")
 	}
 	for _, owed := range stored.OwedCloses {
-		if owed.TaskID == "" || owed.AttemptID == "" || owed.NodeID == "" || owed.HarnessID == "" || owed.UpstreamID == "" {
+		// Like Session.NodeID, an empty node names the hub itself.
+		if owed.TaskID == "" || owed.AttemptID == "" || owed.HarnessID == "" || owed.UpstreamID == "" {
 			return nil, errors.New("native close obligation has incomplete identity")
 		}
 	}

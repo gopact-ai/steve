@@ -15,6 +15,7 @@ func TestTaskDeletionCloseGuardUsesStrictFullDocument(t *testing.T) {
 		`{"unknown":true}`,
 		`{} {}`,
 		`{"owed_closes":[`,
+		`{"owed_closes":[{"node_id":17,"harness_id":"h","upstream_id":"session","task_id":"7","attempt_id":"attempt"}]}`,
 		`null`,
 	} {
 		t.Run(raw, func(t *testing.T) {
@@ -76,10 +77,10 @@ func TestTaskDeletionCloseGuardKeepsItsSnapshotAndTreeBoundary(t *testing.T) {
 }
 
 func TestTaskDeletionCloseGuardValidatesEvenUnrelatedObligations(t *testing.T) {
-	for _, field := range []string{"task_id", "attempt_id", "node_id", "harness_id", "upstream_id"} {
+	for _, field := range []string{"task_id", "attempt_id", "harness_id", "upstream_id"} {
 		t.Run(field, func(t *testing.T) {
 			book := testLedger(t)
-			owed := map[string]string{"task_id": "removed", "attempt_id": "attempt", "node_id": "node", "harness_id": "h", "upstream_id": "session"}
+			owed := map[string]string{"task_id": "removed", "attempt_id": "attempt", "node_id": "", "harness_id": "h", "upstream_id": "session"}
 			owed[field] = ""
 			raw, err := json.Marshal(map[string]any{"owed_closes": []map[string]string{owed}})
 			if err != nil {
@@ -93,4 +94,41 @@ func TestTaskDeletionCloseGuardValidatesEvenUnrelatedObligations(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTaskDeletionCloseGuardHubLocalObligation(t *testing.T) {
+	book := testLedger(t)
+	store, err := OpenLedger(book)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := Session{ConversationID: "chat", AgentID: "agent", HarnessID: "h", UpstreamID: "hub-session"}
+	if err := store.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	owed := OwedClose{HarnessID: session.HarnessID, UpstreamID: session.UpstreamID, TaskID: "7", AttemptID: "hub-attempt"}
+	if err := store.ArchiveSessionOwingClose("chat", "agent", "2026-10-06T00:00:00Z", owed); err != nil {
+		t.Fatal(err)
+	}
+	check := func(ids []string, want error) {
+		t.Helper()
+		for _, write := range []bool{false, true} {
+			var err error
+			if write {
+				err = book.Update(t.Context(), func(tx *ledger.Tx) error { return CheckTaskDeletionTx(tx, ids) })
+			} else {
+				err = book.Read(t.Context(), func(tx *ledger.ReadTx) error { return CheckTaskDeletionTx(tx, ids) })
+			}
+			if !errors.Is(err, want) {
+				t.Errorf("hub-local guard ids=%v write=%v: %v, want %v", ids, write, err, want)
+			}
+		}
+	}
+	check([]string{"7"}, ErrCloseOwed)
+	check([]string{"other"}, nil)
+	if err := store.SettleOwedClose(owed); err != nil {
+		t.Fatal(err)
+	}
+	check([]string{"7"}, nil)
+	check([]string{"other"}, nil)
 }

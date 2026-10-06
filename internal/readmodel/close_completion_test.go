@@ -15,7 +15,12 @@ import (
 
 func recordCompletionClose(t *testing.T, store *state.Store, taskID, name string) state.OwedClose {
 	t.Helper()
-	session := state.Session{ConversationID: "close-" + name, AgentID: "agent", NodeID: "node", HarnessID: "harness", UpstreamID: "session-" + name}
+	return recordCompletionCloseOn(t, store, taskID, name, "node")
+}
+
+func recordCompletionCloseOn(t *testing.T, store *state.Store, taskID, name, node string) state.OwedClose {
+	t.Helper()
+	session := state.Session{ConversationID: "close-" + name, AgentID: "agent", NodeID: node, HarnessID: "harness", UpstreamID: "session-" + name}
 	if err := store.SaveSession(session); err != nil {
 		t.Fatal(err)
 	}
@@ -48,21 +53,25 @@ func assertCompletionCloseViews(t *testing.T, m *Model, root, other bool) {
 	}
 	page, err := m.TaskHistory(t.Context(), task.Query{Scope: task.Scope{Kind: "children"}})
 	if err != nil {
-		t.Fatal(err)
+		t.Errorf("query: %v", err)
+	} else {
+		check(page.Items, "query")
 	}
-	check(page.Items, "query")
 	var details []Task
 	for _, id := range []string{"root", "other"} {
 		detail, err := m.TaskDetail(t.Context(), id)
 		if err != nil {
-			t.Fatal(err)
+			t.Errorf("detail %s: %v", id, err)
+			continue
 		}
 		details = append(details, detail.Task)
 		if id == "root" && (len(detail.Children.Items) != 20 || detail.Children.Total != 26) {
 			t.Fatal("fixture lost its bounded child page")
 		}
 	}
-	check(details, "detail")
+	if len(details) == 2 {
+		check(details, "detail")
+	}
 	check(m.Snapshot(t.Context()).Tasks, "snapshot")
 }
 
@@ -198,7 +207,7 @@ func assertUnreadCloseViews(t *testing.T, m *Model) {
 }
 
 func TestUnreadCloseDocumentFailsClosedInEveryCompletionView(t *testing.T) {
-	valid := `{"node_id":"node","harness_id":"harness","upstream_id":"session","task_id":"removed","attempt_id":"attempt"}`
+	valid := `{"harness_id":"harness","upstream_id":"session","task_id":"removed","attempt_id":"attempt"}`
 	cases := map[string]string{
 		"malformed":       `{"owed_closes":[`,
 		"unknown field":   `{"future_closes":[]}`,
@@ -207,9 +216,10 @@ func TestUnreadCloseDocumentFailsClosedInEveryCompletionView(t *testing.T) {
 		"two documents":   `{}` + `{}`,
 		"null document":   `null`,
 		"bad owed type":   `{"owed_closes":{}}`,
+		"bad node type":   `{"owed_closes":[{"node_id":17,"harness_id":"harness","upstream_id":"session","task_id":"removed","attempt_id":"attempt"}]}`,
 	}
-	for _, field := range []string{"node_id", "harness_id", "upstream_id", "task_id", "attempt_id"} {
-		value := map[string]string{"node_id": "node", "harness_id": "harness", "upstream_id": "session", "task_id": "removed", "attempt_id": "attempt"}[field]
+	for _, field := range []string{"harness_id", "upstream_id", "task_id", "attempt_id"} {
+		value := map[string]string{"harness_id": "harness", "upstream_id": "session", "task_id": "removed", "attempt_id": "attempt"}[field]
 		cases["missing "+field] = `{"owed_closes":[` + strings.Replace(valid, fmt.Sprintf(`"%s":"%s"`, field, value), fmt.Sprintf(`"%s":""`, field), 1) + `]}`
 	}
 	for name, raw := range cases {
@@ -237,6 +247,88 @@ func TestMissingCloseSourceFailsClosedInEveryCompletionView(t *testing.T) {
 				m.src.Ledger = adapter
 			}
 			assertUnreadCloseViews(t, m)
+		})
+	}
+}
+
+func TestCompletionViewsHubLocalOwedClose(t *testing.T) {
+	for _, omitted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("omitted-node=%v", omitted), func(t *testing.T) {
+			m, book, _ := completionLandingModel(t)
+			store, err := state.OpenLedger(book)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owed := recordCompletionCloseOn(t, store, "grandchild", "hub-local", "")
+			if omitted {
+				raw, exists, err := book.Document("state").Load()
+				if err != nil || !exists {
+					t.Fatalf("read saved state: exists=%v err=%v", exists, err)
+				}
+				withoutNode := strings.Replace(string(raw), `"node_id": "",`, "", 1)
+				if withoutNode == string(raw) {
+					t.Fatal("fixture did not omit the owed node alias")
+				}
+				if err := book.Document("state").Save([]byte(withoutNode)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			assertCompletionCloseViews(t, m, false, true)
+			for _, ids := range [][]string{{"root", "child", "grandchild"}, {"other"}} {
+				err := book.Read(t.Context(), func(tx *ledger.ReadTx) error { return state.CheckTaskDeletionTx(tx, ids) })
+				if ids[0] == "root" {
+					if !errors.Is(err, state.ErrCloseOwed) {
+						t.Errorf("hub-local tree guard: %v, want ErrCloseOwed", err)
+					}
+				} else if err != nil {
+					t.Errorf("hub-local debt blocked unrelated tree: %v", err)
+				}
+			}
+			if err := store.SettleOwedClose(owed); err != nil {
+				t.Fatal(err)
+			}
+			assertCompletionCloseViews(t, m, true, true)
+		})
+	}
+}
+
+func TestCompletionViewsMixedLocalAndRemoteCloses(t *testing.T) {
+	for _, localFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("local-first=%v", localFirst), func(t *testing.T) {
+			m, book, _ := completionLandingModel(t)
+			store, err := state.OpenLedger(book)
+			if err != nil {
+				t.Fatal(err)
+			}
+			local := recordCompletionCloseOn(t, store, "grandchild", "local", "")
+			remote := recordCompletionClose(t, store, "grandchild", "remote")
+			other := recordCompletionClose(t, store, "other", "other")
+			assertCompletionCloseViews(t, m, false, false)
+			stale := local
+			stale.NodeID = "node"
+			if err := store.SettleOwedClose(stale); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(store.OwedCloses(), []state.OwedClose{local, remote, other}) {
+				t.Fatal("a different node identity refunded the hub-local obligation")
+			}
+			assertCompletionCloseViews(t, m, false, false)
+			first, last := remote, local
+			if localFirst {
+				first, last = local, remote
+			}
+			if err := store.SettleOwedClose(first); err != nil {
+				t.Fatal(err)
+			}
+			assertCompletionCloseViews(t, m, false, false)
+			if err := store.SettleOwedClose(last); err != nil {
+				t.Fatal(err)
+			}
+			assertCompletionCloseViews(t, m, true, false)
+			if err := store.SettleOwedClose(other); err != nil {
+				t.Fatal(err)
+			}
+			assertCompletionCloseViews(t, m, true, true)
 		})
 	}
 }
