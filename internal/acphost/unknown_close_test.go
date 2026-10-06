@@ -505,3 +505,19 @@ func TestUnknownCloseLocalCancelCauseIsNotPeerRejection(t *testing.T) {
 		t.Fatalf("typed local cause enabled close replay: %v count=%d", err, a.calls.Load())
 	}
 }
+
+func TestUnknownCloseBlocksConfigurationAndProviderDelete(t *testing.T) {
+	h, participant, sid, generation := newCloseParticipant(t, true, false)
+	if err := cancelWireClose(t, h, participant, sid); !errors.Is(err, ErrCloseUnconfirmed) {
+		t.Fatalf("close = %v", err)
+	}
+	if err := h.SetOption(t.Context(), sid, generation, "choice", "value"); !errors.Is(err, ErrCloseUnconfirmed) {
+		t.Fatalf("unknown close allowed configuration RPC: %v", err)
+	}
+	if err := h.DeleteSession(t.Context(), sid); !errors.Is(err, ErrCloseUnconfirmed) {
+		t.Fatalf("unknown close allowed provider delete: %v", err)
+	}
+	if participant.calls.Load() != 1 {
+		t.Fatal("mutation guard replayed a close")
+	}
+}

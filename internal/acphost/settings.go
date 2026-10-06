@@ -334,6 +334,10 @@ func optionsView(options []acp.SessionConfigOption) []view.Option {
 // substitutes a value stays the authority on what it is running.
 func (h *Host) SetOption(ctx context.Context, sid acp.SessionID, generation uint64, id acp.SessionConfigID, value string) error {
 	h.mu.Lock()
+	if err := h.SessionBlockedLocked(sid); err != nil {
+		h.mu.Unlock()
+		return err
+	}
 	if h.generation != generation {
 		h.mu.Unlock()
 		return fmt.Errorf("agent process changed before set option")
