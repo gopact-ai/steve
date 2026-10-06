@@ -354,14 +354,50 @@ func (h *Host) SetOption(ctx context.Context, sid acp.SessionID, generation uint
 		h.mu.Unlock()
 		return fmt.Errorf("agent process changed before set option")
 	}
-	caller := h.caller
 	state := h.sessions[sid]
-	h.mu.Unlock()
-	if caller == nil || state == nil {
+	if h.caller == nil || state == nil || !h.alive {
+		h.mu.Unlock()
 		return fmt.Errorf("session %q is not open", sid)
 	}
+	// Validate and reserve against the same original state. A lifecycle RPC
+	// must not slip between descriptor lookup and configuration dispatch.
+	req, err := configOptionRequest(sid, state.currentOptions(), id, value)
+	if err != nil {
+		h.mu.Unlock()
+		return err
+	}
+	op, err := h.beginConfigOperationLocked(ctx, sid, generation)
+	caller := h.caller
+	h.mu.Unlock()
+	if err != nil {
+		return err
+	}
+
+	// Do not hold the Host lock across I/O: an existing prompt and reverse
+	// callbacks must continue while this SID is reserved against new sources.
+	resp, err := caller.SetSessionConfigOption(ctx, &req)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("session/set_config_option: %w", h.finishConfigOperationLocked(ctx, sid, op, err))
+	}
+	var confirmationErr error
+	if resp == nil || resp.ConfigOptions == nil {
+		confirmationErr = fmt.Errorf("session/set_config_option: agent omitted the required configOptions confirmation")
+	} else {
+		op.state.setOptions(resp.ConfigOptions)
+	}
+	// A matched response with missing confirmation is a local validation
+	// error, not an unanswered RPC. Settle the reservation without inventing
+	// Actual or reclassifying that response as a transport-unknown outcome.
+	if err := h.finishConfigOperationLocked(ctx, sid, op, nil); err != nil {
+		return fmt.Errorf("session/set_config_option: %w", err)
+	}
+	return confirmationErr
+}
+
+func configOptionRequest(sid acp.SessionID, options []acp.SessionConfigOption, id acp.SessionConfigID, value string) (acp.SetSessionConfigOptionRequest, error) {
 	var descriptor *acp.SessionConfigOption
-	options := state.currentOptions()
 	for i := range options {
 		if options[i].ID == id {
 			descriptor = &options[i]
@@ -369,38 +405,23 @@ func (h *Host) SetOption(ctx context.Context, sid acp.SessionID, generation uint
 		}
 	}
 	if descriptor == nil {
-		return fmt.Errorf("session %q exposes no config option %q", sid, id)
+		return acp.SetSessionConfigOptionRequest{}, fmt.Errorf("session %q exposes no config option %q", sid, id)
 	}
-	var req acp.SetSessionConfigOptionRequest
 	switch descriptor.Type {
 	case acp.SessionConfigOptionTypeSelect:
-		req = acp.ValueIDSetSessionConfigOptionRequest(sid, id, acp.SessionConfigValueID(value))
+		return acp.ValueIDSetSessionConfigOptionRequest(sid, id, acp.SessionConfigValueID(value)), nil
 	case acp.SessionConfigOptionTypeBoolean:
 		if string(id) == "model" || string(id) == "mode" ||
 			descriptor.Category != nil && (*descriptor.Category == acp.SessionConfigOptionCategoryModel || *descriptor.Category == acp.SessionConfigOptionCategoryMode) {
-			return fmt.Errorf("config option %q: model and mode require a select descriptor", id)
+			return acp.SetSessionConfigOptionRequest{}, fmt.Errorf("config option %q: model and mode require a select descriptor", id)
 		}
 		if value != "true" && value != "false" {
-			return fmt.Errorf("config option %q: boolean value must be \"true\" or \"false\"", id)
+			return acp.SetSessionConfigOptionRequest{}, fmt.Errorf("config option %q: boolean value must be \"true\" or \"false\"", id)
 		}
-		req = acp.BooleanSetSessionConfigOptionRequest(sid, id, value == "true")
+		return acp.BooleanSetSessionConfigOptionRequest(sid, id, value == "true"), nil
 	default:
-		return fmt.Errorf("config option %q has unsupported type %q", id, descriptor.Type)
+		return acp.SetSessionConfigOptionRequest{}, fmt.Errorf("config option %q has unsupported type %q", id, descriptor.Type)
 	}
-	resp, err := caller.SetSessionConfigOption(ctx, &req)
-	if err != nil {
-		return fmt.Errorf("session/set_config_option: %w", err)
-	}
-	if resp == nil || resp.ConfigOptions == nil {
-		return fmt.Errorf("session/set_config_option: agent omitted the required configOptions confirmation")
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.sessions[sid] != state || h.generation != generation || !h.alive {
-		return fmt.Errorf("agent session ended before confirming settings")
-	}
-	state.setOptions(resp.ConfigOptions)
-	return nil
 }
 
 // ListSessions asks the agent which sessions it still holds. Steve's own

@@ -230,6 +230,12 @@ func TestBooleanSetOptionRejectsInvalidInputBeforeRPC(t *testing.T) {
 				t.Fatal("invalid boolean accepted")
 			}
 			assertOptionActual(t, h, "toggle", "boolean", "true")
+			h.mu.Lock()
+			blocked := h.SessionBlockedLocked("typed")
+			h.mu.Unlock()
+			if blocked != nil {
+				t.Fatalf("validation failure reserved a session: %v", blocked)
+			}
 		})
 	}
 }
@@ -243,6 +249,13 @@ func TestBooleanSetOptionRPCErrorPreservesActual(t *testing.T) {
 		t.Fatal("RPC rejection reported success")
 	}
 	assertOptionActual(t, h, "toggle", "boolean", "true")
+	a.set = func(*acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
+		return &acp.SetSessionConfigOptionResponse{ConfigOptions: wireBoolean(false)}, nil
+	}
+	if err := h.SetOption(t.Context(), "typed", 1, "toggle", "false"); err != nil {
+		t.Fatalf("matched rejection did not release the reservation: %v", err)
+	}
+	assertOptionActual(t, h, "toggle", "boolean", "false")
 }
 
 func TestBooleanSetOptionKeepsSelectFalseAnOpaqueString(t *testing.T) {
@@ -384,6 +397,13 @@ func TestBooleanSetOptionNilConfirmationIsNotSuccess(t *testing.T) {
 		t.Fatal("missing required response was reported as success")
 	}
 	assertOptionActual(t, h, "toggle", "boolean", "true")
+	a.set = func(*acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
+		return &acp.SetSessionConfigOptionResponse{ConfigOptions: wireBoolean(false)}, nil
+	}
+	if err := h.SetOption(t.Context(), "typed", 1, "toggle", "false"); err != nil {
+		t.Fatalf("matched malformed confirmation became a transport-unknown gate: %v", err)
+	}
+	assertOptionActual(t, h, "toggle", "boolean", "false")
 }
 
 func TestBooleanSetOptionDoesNotRelaxClientPermission(t *testing.T) {
@@ -476,5 +496,92 @@ func TestBooleanNewSessionWithoutOptionsRemainsUnspecified(t *testing.T) {
 		if err := h.SetOption(t.Context(), "typed", 1, "toggle", "false"); err == nil {
 			t.Fatal("an absent boolean was set")
 		}
+	}
+}
+
+func TestBooleanPendingConfigurationExcludesMutations(t *testing.T) {
+	h, a, _ := optionWireHost(t, wireBoolean(true))
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	a.set = func(req *acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
+		if value, ok := req.Value.(bool); !ok || value {
+			t.Errorf("expected actual boolean false, got %T %v", req.Value, req.Value)
+		}
+		close(entered)
+		<-release
+		return &acp.SetSessionConfigOptionResponse{ConfigOptions: wireBoolean(false)}, nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- h.SetOption(t.Context(), "typed", 1, "toggle", "false") }()
+	awaitOperation(t, entered)
+	for name, mutate := range map[string]func() error{
+		"set":    func() error { return h.SetOption(t.Context(), "typed", 1, "toggle", "true") },
+		"close":  func() error { return h.CloseSession(t.Context(), "typed") },
+		"delete": func() error { return h.DeleteSession(t.Context(), "typed") },
+	} {
+		if err := mutate(); !errors.Is(err, ErrSessionBusy) {
+			t.Fatalf("%s bypassed pending boolean configuration: %v", name, err)
+		}
+	}
+	assertOptionActual(t, h, "toggle", "boolean", "true")
+	release <- struct{}{}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	assertOptionActual(t, h, "toggle", "boolean", "false")
+}
+
+func TestBooleanCanceledConfigurationKeepsUnknownGate(t *testing.T) {
+	h, a, _ := optionWireHost(t, wireBoolean(true))
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	a.set = func(*acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
+		close(entered)
+		<-release
+		return &acp.SetSessionConfigOptionResponse{ConfigOptions: wireBoolean(false)}, nil
+	}
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	done := make(chan error, 1)
+	go func() { done <- h.SetOption(ctx, "typed", 1, "toggle", "false") }()
+	awaitOperation(t, entered)
+	cause := &acp.Error{Code: acp.ErrorCodeRequestCanceled, Message: "local boolean configuration cancellation"}
+	cancel(cause)
+	if err := <-done; !errors.Is(err, ErrSessionOperationUnconfirmed) || !errors.Is(err, cause) {
+		t.Fatalf("local cancel was misclassified as matched rejection: %v", err)
+	}
+	for name, mutate := range map[string]func() error{
+		"set":    func() error { return h.SetOption(t.Context(), "typed", 1, "toggle", "false") },
+		"close":  func() error { return h.CloseSession(t.Context(), "typed") },
+		"delete": func() error { return h.DeleteSession(t.Context(), "typed") },
+	} {
+		if err := mutate(); !errors.Is(err, ErrSessionOperationUnconfirmed) {
+			t.Fatalf("%s consumed unknown boolean configuration: %v", name, err)
+		}
+	}
+	assertOptionActual(t, h, "toggle", "boolean", "true")
+}
+
+func TestBooleanConfigurationBadContextDoesNotReserve(t *testing.T) {
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	for name, ctx := range map[string]context.Context{"nil": nil, "canceled": canceled} {
+		t.Run(name, func(t *testing.T) {
+			h, a, _ := optionWireHost(t, wireBoolean(true))
+			a.set = func(*acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
+				t.Error("bad-context configuration reached the peer")
+				return &acp.SetSessionConfigOptionResponse{ConfigOptions: wireBoolean(false)}, nil
+			}
+			if err := h.SetOption(ctx, "typed", 1, "toggle", "false"); err == nil {
+				t.Fatal("bad context admitted configuration")
+			}
+			h.mu.Lock()
+			blocked := h.SessionBlockedLocked("typed")
+			h.mu.Unlock()
+			if blocked != nil {
+				t.Fatalf("undispatched configuration left a reservation: %v", blocked)
+			}
+			assertOptionActual(t, h, "toggle", "boolean", "true")
+		})
 	}
 }

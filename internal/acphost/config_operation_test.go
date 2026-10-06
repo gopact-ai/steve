@@ -32,24 +32,10 @@ func TestWarmRestoreNotificationsSurviveExplicitRejection(t *testing.T) {
 	}
 }
 
-// This is the dispatch/finish adapter the typed owner will integrate. Request
-// construction here is only a select fixture, not a rewrite of typed SetOption.
+// Exercise the production typed setter over the same real ACP connection as
+// the lifecycle operations; a standalone reservation adapter is not a gate.
 func runReservedConfig(h *Host, ctx context.Context, sid acp.SessionID, generation uint64) error {
-	h.mu.Lock()
-	op, err := h.beginConfigOperationLocked(ctx, sid, generation)
-	caller := h.caller
-	h.mu.Unlock()
-	if err != nil {
-		return err
-	}
-	req := acp.ValueIDSetSessionConfigOptionRequest(sid, "model", "configured")
-	resp, err := caller.SetSessionConfigOption(ctx, &req)
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err == nil {
-		applyOpenResponse(op.state, nil, &resp.ConfigOptions)
-	}
-	return h.finishConfigOperationLocked(ctx, sid, op, err)
+	return h.SetOption(ctx, sid, generation, "model", "configured")
 }
 func TestConfigReservationExcludesLifecycleAcrossRPC(t *testing.T) {
 	a := &operationParticipant{configEntered: make(chan struct{}), configRelease: make(chan struct{})}
@@ -62,6 +48,9 @@ func TestConfigReservationExcludesLifecycleAcrossRPC(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runReservedConfig(h, t.Context(), sid, gen) }()
 	awaitOperation(t, a.configEntered)
+	if err := h.SetOption(t.Context(), sid, gen, "model", "configured"); !errors.Is(err, ErrSessionBusy) {
+		t.Fatalf("another setter overlapped configure: %v", err)
+	}
 	if err := h.CloseSession(t.Context(), sid); !errors.Is(err, ErrSessionBusy) {
 		t.Fatalf("close overlapped configure: %v", err)
 	}
