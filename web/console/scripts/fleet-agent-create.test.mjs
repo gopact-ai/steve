@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { permissionConfirmationRejected } from "../src/lib/agent-permission.ts";
-import { configuredHarnesses, createFleetAgent as prepareFleetAgent, bindFleetAgent as submitFleetAgent, readFleetAgentPermission, inspectFleetAgent, launchFingerprint, fleetWriteRejected } from "../src/lib/api/fleet-agent-create.ts";
+import { canCancelFleetAgentBinding, configuredHarnesses, createFleetAgent as prepareFleetAgent, bindFleetAgent as submitFleetAgent, readFleetAgentPermission, inspectFleetAgent, launchFingerprint, fleetWriteRejected } from "../src/lib/api/fleet-agent-create.ts";
 const policy = (node, harness, permission = "read", source = "default_read", revision = "policy-fact-r1") => ({ node, harness, permission, source, revision });
 const assertion = { expected_permission: "read", expected_permission_revision: "policy-fact-r1" };
 async function bindFleetAgent(receipt, ports, remember) { return submitFleetAgent(receipt, ports, remember, await readFleetAgentPermission(receipt, ports)); }
@@ -248,4 +248,11 @@ test("a matching existing Agent cannot skip confirmation of a newly saved launch
     assert.equal((await inspectFleetAgent({ ...receipt, phase: "save-unknown" }, ports)).phase, "saved");
     assert.equal((await inspectFleetAgent({ ...receipt, phase: "bind-rejected" }, ports)).phase, "bind-rejected");
     assert.equal(f.posts.length, 0, "checking a matching old binding is not an asserted POST");
+});
+
+test("only known undispatched or rejected bindings can be canceled; unknown receipts remain protected", () => {
+    assert.equal(canCancelFleetAgentBinding(null), false);
+    for (const phase of ["save-unknown", "save-rejected", "saved", "bind-unknown", "bind-rejected", "bound"]) {
+        assert.equal(canCancelFleetAgentBinding({ ...binding, phase, launch: "digest", revision: "r1" }), ["saved", "bind-rejected"].includes(phase), phase);
+    }
 });

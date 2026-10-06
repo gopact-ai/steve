@@ -101,6 +101,42 @@ async function custom(dialog, id, harness, args = [], env = []) {
 async function shot(name) { if (!process.env.COMMAND_FIRST_SCREENSHOTS) return; await mkdir(process.env.COMMAND_FIRST_SCREENSHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.COMMAND_FIRST_SCREENSHOTS, name + ".png"), animations: "disabled" }); }
 try {
     await page.goto(origin + "#/fleet?tab=agents");
+    {
+        f.policy = "auto"; f.policySource = "hub_harness";
+        let declining = await open();
+        await choose(declining, "Harness / command", "unbound-acp");
+        await declining.getByRole("textbox", { name: "Name", exact: true }).fill("declined-policy");
+        await declining.getByRole("button", { name: "Review execution permission", exact: true }).click();
+        await declining.getByText("Policy: auto", { exact: true }).waitFor();
+        assert.equal(f.writes.length, 0, "permission review never submits a binding");
+        await close(declining);
+        declining = await open();
+        const originalReceipt = await page.evaluate(() => {
+            const key = Object.keys(localStorage).find(key => key.includes("fleet-agent.receipt"));
+            return { key, raw: localStorage.getItem(key) };
+        });
+        await page.evaluate(({ key, raw }) => localStorage.setItem(key, JSON.stringify({ ...JSON.parse(raw), id: "another-tabs-binding" })), originalReceipt);
+        await declining.getByRole("button", { name: "Cancel binding", exact: true }).click();
+        assert.equal(await declining.getByRole("textbox", { name: "Name", exact: true }).isDisabled(), true);
+        assert.equal(await page.evaluate(({ key }) => JSON.parse(localStorage.getItem(key)).id, originalReceipt), "another-tabs-binding", "cancel cannot erase another tab's receipt");
+        await page.evaluate(({ key, raw }) => localStorage.setItem(key, raw), originalReceipt);
+        await shot("declining-auto-before-cancel");
+        await declining.getByRole("button", { name: "Cancel binding", exact: true }).click();
+        const name = declining.getByRole("textbox", { name: "Name", exact: true });
+        assert.equal(await name.isDisabled(), false);
+        assert.equal(await name.inputValue(), "");
+        await waitFor(() => name.evaluate(element => element === document.activeElement), "cancel restores name focus");
+        assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.includes("fleet-agent.receipt"))), false);
+        await choose(declining, "Machine", "fixture-remote");
+        assert.equal(f.writes.length, 0, "declining policy must not PUT or POST");
+        await close(declining);
+        declining = await open();
+        assert.equal(await declining.getByRole("textbox", { name: "Name", exact: true }).isDisabled(), false);
+        assert.equal(await declining.getByRole("textbox", { name: "Name", exact: true }).inputValue(), "");
+        await close(declining);
+        f.policy = "read"; f.policySource = "default_read";
+        console.log("PASS declining inherited auto can cancel and choose another binding across reopen without writes");
+    }
     let dialog = await open(true);
     await dialog.getByRole("button", { name: /Harness \/ command$/ }).click();
     await page.getByRole("option", { name: "unbound-acp", exact: true }).waitFor();
@@ -213,6 +249,7 @@ try {
     await dialog.getByRole("button", { name: "Check saved outcome (read-only)", exact: true }).click();
     assert.equal(f.writes.length, beforeGeneric + 1);
     assert.equal(await dialog.getByRole("button", { name: "Bind Agent with confirmed permission", exact: true }).count(), 0, "generic 400 is not definite rejection");
+    assert.equal(await dialog.getByRole("button", { name: "Cancel binding", exact: true }).count(), 0, "unknown binding cannot be abandoned");
     bind({ id: "generic-400", harness: "unbound-acp" });
     await dialog.getByRole("button", { name: "Check saved outcome (read-only)", exact: true }).click();
     await dialog.getByText("Agent binding confirmed", { exact: true }).waitFor(); await close(dialog);
@@ -233,6 +270,7 @@ try {
     await dialog.getByRole("button", { name: "Check saved outcome (read-only)", exact: true }).click();
     assert.equal(f.writes.length, beforeUnknown + 1);
     assert.equal(await dialog.getByRole("button", { name: "Bind Agent with confirmed permission", exact: true }).count(), 0, "unknown POST is not retryable");
+    assert.equal(await dialog.getByRole("button", { name: "Cancel binding", exact: true }).count(), 0, "lost reply keeps the original receipt protected");
     await page.reload(); dialog = await open();
     assert.equal(await dialog.getByRole("textbox", { name: "Name", exact: true }).inputValue(), "unknown-binding");
     assert.equal(await dialog.getByRole("textbox", { name: "Name", exact: true }).isDisabled(), true);
@@ -247,6 +285,7 @@ try {
     f.resetSave = true; f.commitSave = true;
     await dialog.getByRole("button", { name: "Save command and review permission", exact: true }).click();
     await dialog.getByText("Harness save outcome unconfirmed", { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("button", { name: "Cancel binding", exact: true }).count(), 0, "unconfirmed settings save cannot be abandoned");
     assert.equal(f.writes.length, beforeSaveLoss + 1);
     await page.reload(); dialog = await open();
     await dialog.getByRole("button", { name: "Check saved outcome (read-only)", exact: true }).click();
@@ -257,6 +296,35 @@ try {
     assert.equal(f.writes.length, beforeSaveLoss + 2); assert.equal(f.writes.at(-1).p, "/console/agents"); await close(dialog);
     console.log("PASS lost save reply reconciles exact node-local launch and revision without a second PUT");
 
+    {
+        const beforeCancel = f.writes.length;
+        f.policy = "auto"; f.policySource = "shared_remote_permissions";
+        dialog = await open(); await custom(dialog, "decline-custom", "cancel-saved-acp", ["acp", "", "含 空格"]);
+        await dialog.getByRole("button", { name: "Save command and review permission", exact: true }).click();
+        await dialog.getByText("Policy: auto", { exact: true }).waitFor();
+        const savedSettings = structuredClone(f.settings["fixture-remote"]);
+        assert.equal(f.writes.length, beforeCancel + 1);
+        assert.equal(f.writes.at(-1).p, "/console/nodes/fixture-remote/settings");
+        await dialog.getByRole("button", { name: "Cancel binding", exact: true }).click();
+        await dialog.getByRole("textbox", { name: "Name", exact: true }).waitFor();
+        assert.deepEqual(f.settings["fixture-remote"], savedSettings, "cancel preserves saved harness and all unrelated settings");
+        assert.equal(f.writes.length, beforeCancel + 1, "custom cancellation does not rollback or bind");
+        await close(dialog);
+        dialog = await open(); await choose(dialog, "Machine", "fixture-remote");
+        await waitFor(async () => !await dialog.getByRole("button", { name: /Harness \/ command$/ }).isDisabled(), "saved canceled harness is selectable");
+        await choose(dialog, "Harness / command", "cancel-saved-acp");
+        await dialog.getByRole("textbox", { name: "Name", exact: true }).fill("rejected-then-canceled");
+        await dialog.getByRole("button", { name: "Review execution permission", exact: true }).click();
+        f.rejectBind = true; await confirmPermission(dialog);
+        await dialog.getByRole("alert").filter({ hasText: "Fixture binding rejected" }).waitFor();
+        await dialog.getByRole("button", { name: "Cancel binding", exact: true }).click();
+        assert.equal(await dialog.getByRole("textbox", { name: "Name", exact: true }).isDisabled(), false);
+        assert.equal(f.writes.length, beforeCancel + 2, "canceling explicit rejection does not retry POST");
+        assert.deepEqual(f.settings["fixture-remote"], savedSettings);
+        await close(dialog);
+        f.policy = "read"; f.policySource = "default_read";
+        console.log("PASS custom saved harness and explicit rejected binding can be canceled without rollback, deletion or retry");
+    }
     f.readError = true;
     await page.getByRole("button", { name: "Add agent", exact: true }).first().click(); dialog = page.getByRole("dialog", { name: /Add (agent|machine)$/, exact: true });
     await dialog.getByText("Fixture node settings unavailable", { exact: true }).waitFor();

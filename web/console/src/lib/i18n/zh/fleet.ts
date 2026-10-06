@@ -52,6 +52,8 @@ export const fleetZh = {
     "fleet.commandUnverified": "ACP 未验证。保存或绑定不代表已完成 ACP 握手。",
     "fleet.commandUnknownHint": "结果未知。保留同一 Agent 名称、机器与 harness。只读核对配置；查不到不代表可以再次提交。",
     "fleet.commandRetryHint": "保留此机器上已保存的 harness。先核对结果，再明确重试绑定；不回滚配置，也不新建 Agent ID。",
+    "fleet.commandCancelBinding": "取消绑定",
+    "fleet.commandCanceled": "已取消此次绑定流程。机器上已保存的 harness 会保留；未删除 Agent 或设置。",
     "fleet.commandInspect": "核对保存结果（只读）",
     "fleet.commandRetryBind": "绑定同一 Agent",
     "fleet.commandSaveAndBind": "保存命令并绑定 Agent",
