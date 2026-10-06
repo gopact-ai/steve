@@ -114,3 +114,32 @@ test("a definitive settings CAS rejection allows a fresh draft, not stale settin
     assert.equal(await inspectFleetAgent(f.receipt, ports), null); assert.equal(f.posts.length, 0);
     assert.deepEqual(f.settings.capabilities, ["another-change"]);
 });
+
+for (const scenario of ["matching launch", "changed launch", "missing harness", "save unknown with old binding"]) {
+    test(`read-only matching Agent reconciliation verifies the original launch: ${scenario}`, async () => {
+        const { f, ports } = fixture();
+        const receipt = { ...binding, revision: "r1", launch: await launchFingerprint(launch), phase: scenario === "save unknown with old binding" ? "save-unknown" : "bind-unknown" };
+        const original = structuredClone(receipt);
+        f.agents.push({ ...binding });
+        f.settings = { ...f.settings, revision: "r2", harnesses: { ...f.settings.harnesses, [binding.harness]: launch } };
+        if (scenario === "changed launch") f.settings.harnesses[binding.harness] = { ...launch, args: ["replaced"] };
+        if (scenario === "missing harness") delete f.settings.harnesses[binding.harness];
+        if (scenario === "save unknown with old binding") f.settings.harnesses[binding.harness] = { command: "/fixture/old-agent", args: ["old-acp"] };
+        const calls = [];
+        const readOnly = { ...ports,
+            readSettings: async node => { calls.push(["settings", node]); return ports.readSettings(node); },
+            readAgents: async () => { calls.push(["agents"]); return ports.readAgents(); },
+            saveSettings: async () => { assert.fail("read-only inspection must not PUT"); },
+            bind: async () => { assert.fail("read-only inspection must not POST"); },
+        };
+        if (scenario === "matching launch") {
+            const observed = await inspectFleetAgent(receipt, readOnly);
+            assert.equal(observed.phase, "bound"); assert.equal(observed.revision, "r2"); assert.equal(observed.launch, original.launch);
+        } else {
+            await assert.rejects(inspectFleetAgent(receipt, readOnly), { code: "configurationChanged" });
+        }
+        assert.deepEqual(receipt, original, "inspection retains the original identity, launch, phase and revision");
+        assert.deepEqual(calls, [["settings", binding.node], ["agents"]]);
+        assert.equal(f.saved.length, 0); assert.equal(f.posts.length, 0); assert.equal(f.receipts.length, 0);
+    });
+}

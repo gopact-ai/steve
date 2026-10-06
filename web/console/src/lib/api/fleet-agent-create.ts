@@ -83,16 +83,16 @@ export async function inspectFleetAgent(receipt: FleetAgentReceipt, ports: Fleet
     const settings = current.settings;
     if (!settings?.revision) throw new FleetAgentCreateError("invalidReceipt");
     const agent = snapshot.agents.find(agent => agent.id === receipt.id);
-    if (agent) {
-        if (agent.harness !== receipt.harness || (agent.node || snapshot.hub.node) !== receipt.node) throw new FleetAgentCreateError("bindingConflict");
-        return { ...receipt, phase: "bound", revision: settings.revision };
-    }
+    if (agent && (agent.harness !== receipt.harness || (agent.node || snapshot.hub.node) !== receipt.node)) throw new FleetAgentCreateError("bindingConflict");
     const launch = settings.harnesses?.[receipt.harness];
     if (!launch) {
+        if (agent) throw new FleetAgentCreateError("configurationChanged");
         if (receipt.phase === "save-rejected") return null;
         return receipt;
     }
     if (await launchFingerprint(launch) !== receipt.launch) throw new FleetAgentCreateError("configurationChanged");
+    // A matching name binding does not confirm the original launch save.
+    if (agent) return { ...receipt, phase: "bound", revision: settings.revision };
     if (receipt.phase === "save-unknown" || receipt.phase === "save-rejected") return { ...receipt, revision: settings.revision, phase: "saved" };
     return { ...receipt, revision: settings.revision };
 }
