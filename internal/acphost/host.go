@@ -567,7 +567,11 @@ type clientHandler struct {
 	generation uint64
 }
 
-func (ch *clientHandler) Update(_ context.Context, n *acp.SessionNotification) error {
+func (ch *clientHandler) Update(ctx context.Context, n *acp.SessionNotification) error {
+	sequence, ok := acp.NotificationSequence(ctx)
+	if !ok {
+		return fmt.Errorf("session/update: missing inbound notification sequence")
+	}
 	ch.h.mu.Lock()
 	if ch.h.generation != ch.generation {
 		ch.h.mu.Unlock()
@@ -575,11 +579,11 @@ func (ch *clientHandler) Update(_ context.Context, n *acp.SessionNotification) e
 	}
 	if op := ch.h.sessionOperations[n.SessionID]; op != nil {
 		if op.generation == ch.generation && op.state != nil {
-			applySessionSettings(op.state, n.Update)
+			applySessionSettingsAt(op.state, n.Update, sequence)
 			if op.method == "configure" && op.original != nil && ch.h.sessions[n.SessionID] == op.original {
 				// An independent configuration notification is already an Actual
 				// observation for the still-running original prompt/context.
-				applySessionSettings(op.original, n.Update)
+				applySessionSettingsAt(op.original, n.Update, sequence)
 			}
 		}
 		// Config can run mid-turn. Continue delivering the original prompt's
@@ -592,7 +596,7 @@ func (ch *clientHandler) Update(_ context.Context, n *acp.SessionNotification) e
 		}
 		return nil
 	}
-	applySessionSettings(ch.h.sessions[n.SessionID], n.Update)
+	applySessionSettingsAt(ch.h.sessions[n.SessionID], n.Update, sequence)
 	col := ch.h.collectors[n.SessionID]
 	ch.h.mu.Unlock()
 	if col != nil && col.generation == ch.generation {
@@ -993,24 +997,28 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 		}
 		var modes *acp.SessionModeState
 		var options *[]acp.SessionConfigOption
+		var receipt acp.ResponseReceipt
 		if method == "load" {
 			var resp *acp.LoadSessionResponse
-			resp, err = caller.LoadSession(ctx, &acp.LoadSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
+			resp, receipt, err = caller.LoadSessionWithReceipt(ctx, &acp.LoadSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
 			if err == nil {
 				modes, options = resp.Modes, resp.ConfigOptions
 			}
 		} else {
 			var resp *acp.ResumeSessionResponse
-			resp, err = caller.ResumeSession(ctx, &acp.ResumeSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
+			resp, receipt, err = caller.ResumeSessionWithReceipt(ctx, &acp.ResumeSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
 			if err == nil {
 				modes, options = resp.Modes, resp.ConfigOptions
 			}
 		}
+		if err == nil && receipt.Sequence == 0 {
+			err = fmt.Errorf("session/%s: successful result lacks inbound receipt", method)
+		}
 		if err == nil {
 			h.mu.Lock()
-			applyOpenResponse(op.state, modes, options)
+			applyOpenResponseAt(op.state, modes, options, receipt.Sequence)
 			h.mu.Unlock()
-			op.state.setMode(h.applyMode(ctx, caller, sessionID, modes))
+			h.applyMode(ctx, caller, sessionID, generation, op.state, modes)
 		}
 		h.mu.Lock()
 		err = h.finishSessionOperationLocked(ctx, sessionID, op, err)
@@ -1021,7 +1029,7 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 		return sessionID, generation, nil
 	}
 	h.mu.Unlock()
-	resp, err := caller.NewSession(ctx, &acp.NewSessionRequest{
+	resp, receipt, err := caller.NewSessionWithReceipt(ctx, &acp.NewSessionRequest{
 		Cwd:        cfg.Workdir,
 		MCPServers: cfg.MCPServers,
 	})
@@ -1034,29 +1042,45 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 	if blocked != nil {
 		return "", 0, blocked
 	}
-	state := newSessionState(resp.Modes, resp.ConfigOptions)
-	state.setMode(h.applyMode(ctx, caller, resp.SessionID, resp.Modes))
+	if receipt.Sequence == 0 {
+		return "", 0, fmt.Errorf("session/new: successful result lacks inbound receipt")
+	}
+	state := newSessionStateAt(resp.Modes, resp.ConfigOptions, receipt.Sequence)
 	h.mu.Lock()
 	if !h.alive || h.generation != generation {
 		h.mu.Unlock()
 		return "", 0, fmt.Errorf("agent process changed while opening session")
 	}
-	if err := h.SessionBlockedLocked(resp.SessionID); err != nil {
+	if h.sessions[resp.SessionID] != nil {
+		h.mu.Unlock()
+		return "", 0, fmt.Errorf("session/new reused an already open session id")
+	}
+	op, err := h.beginSessionOperationLocked(ctx, resp.SessionID, "new")
+	if err != nil {
 		h.mu.Unlock()
 		return "", 0, err
 	}
-	h.sessions[resp.SessionID] = state
+	op.state = state
 	h.mu.Unlock()
+	// The matched response now identifies this opening's SID. Notifications
+	// from this point can enter the existing per-SID shadow, not a new registry.
+	h.applyMode(ctx, caller, resp.SessionID, generation, state, resp.Modes)
+	h.mu.Lock()
+	err = h.finishSessionOperationLocked(ctx, resp.SessionID, op, nil)
+	h.mu.Unlock()
+	if err != nil {
+		return "", 0, err
+	}
 	return resp.SessionID, generation, nil
 }
 
 // applyMode moves the session into the mode its permission policy implies.
 // Agents default to approving their own writes, so without this the policy
-// is never consulted. It returns the mode actually in force afterwards, so
-// the caller can record what the session is really running under.
-func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.SessionID, modes *acp.SessionModeState) acp.SessionModeID {
+// is never consulted. The selector policy is unchanged; the empty protocol
+// response only acknowledges its proposal. Actual remains agent-reported.
+func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.SessionID, generation uint64, state *sessionState, modes *acp.SessionModeState) {
 	if modes == nil || caller == nil {
-		return ""
+		return
 	}
 	ids := make([]string, 0, len(modes.AvailableModes))
 	for _, mode := range modes.AvailableModes {
@@ -1065,16 +1089,35 @@ func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.S
 	slog.Info(fmt.Sprintf("acphost: session modes current=%s available=%s", modes.CurrentModeID, strings.Join(ids, ",")))
 	wanted := h.cfg.Permission.SessionMode(ids)
 	if wanted == "" || wanted == string(modes.CurrentModeID) {
-		return modes.CurrentModeID
+		return
 	}
-	if _, err := caller.SetSessionMode(ctx, &acp.SetSessionModeRequest{
-		SessionID: sid, ModeID: acp.SessionModeID(wanted),
-	}); err != nil {
+	_, receipt, err := caller.SetSessionModeWithReceipt(ctx, &acp.SetSessionModeRequest{SessionID: sid, ModeID: acp.SessionModeID(wanted)})
+	if err != nil {
 		slog.Error(fmt.Sprintf("acphost: set session mode %q: %v", wanted, err))
-		return modes.CurrentModeID
+		return
 	}
-	slog.Info(fmt.Sprintf("acphost: session mode set to %q", wanted))
-	return acp.SessionModeID(wanted)
+	if receipt.Sequence == 0 {
+		slog.Error("acphost: set session mode succeeded without inbound receipt")
+		return
+	}
+	// Consume only a successful matched set_mode response; receipt metadata
+	// orders frames but is not an Actual value or execution/cleanup proof.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.alive || h.generation != generation {
+		return
+	}
+	valid := h.sessions[sid] == state
+	if op := h.sessionOperations[sid]; op != nil {
+		valid = op.generation == generation && op.state == state
+	}
+	if !valid {
+		return
+	}
+	// set_mode's empty response acknowledges this proposal but contains no
+	// Actual mode ID. Only the original response/notification can publish that
+	// value; never overwrite one by echoing a requested ID from this ACK.
+	slog.Info(fmt.Sprintf("acphost: session mode proposal %q acknowledged at inbound sequence %d", wanted, receipt.Sequence))
 }
 
 // Prompt sends one user turn and blocks until the agent finishes it,
@@ -1488,16 +1531,23 @@ func (h *Host) applySettings(sid acp.SessionID, u acp.SessionUpdate) {
 	applySessionSettings(h.sessions[sid], u)
 }
 func applySessionSettings(state *sessionState, u acp.SessionUpdate) {
+	applySessionSettingsAt(state, u, 0)
+}
+func applySessionSettingsAt(state *sessionState, u acp.SessionUpdate, sequence uint64) {
 	if state == nil {
 		return
 	}
 	switch u.SessionUpdate {
 	case acp.SessionUpdateTypeConfigOptionUpdate:
-		applyOpenResponse(state, nil, &u.ConfigOptions)
+		values := u.ConfigOptions
+		if values == nil {
+			values = []acp.SessionConfigOption{}
+		}
+		state.setOptionsAt(values, sequence)
 	case acp.SessionUpdateTypeCurrentModeUpdate:
-		state.setMode(u.CurrentModeID)
+		state.setModeAt(u.CurrentModeID, sequence)
 	case acp.SessionUpdateTypeAvailableCommandsUpdate:
-		state.setCommands(u.AvailableCommands)
+		state.setCommandsAt(u.AvailableCommands, sequence)
 	}
 }
 

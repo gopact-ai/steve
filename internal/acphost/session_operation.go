@@ -82,7 +82,7 @@ func (h *Host) finishSessionOperationLocked(ctx context.Context, sid acp.Session
 	}
 	delete(h.sessionOperations, sid)
 	switch op.method {
-	case "load", "resume":
+	case "new", "load", "resume":
 		if h.generation != op.generation || h.sessions[sid] != op.original {
 			return fmt.Errorf("session/%s: original session changed", op.method)
 		}
@@ -113,26 +113,30 @@ func copySessionState(original *sessionState) *sessionState {
 	state.modes = append([]acp.SessionMode(nil), original.modes...)
 	state.modeID = original.modeID
 	state.commands = append([]acp.AvailableCommand(nil), original.commands...)
+	state.optionsSequence = original.optionsSequence
+	state.modeSequence = original.modeSequence
+	state.modesSequence = original.modesSequence
+	state.commandsSequence = original.commandsSequence
 	return state
 }
 
 // Only present fields supersede prior confirmed notifications. A present empty
 // list clears selectors; omission does not claim the Agent reported an empty list.
 func applyOpenResponse(state *sessionState, modes *acp.SessionModeState, options *[]acp.SessionConfigOption) {
+	applyOpenResponseAt(state, modes, options, 0)
+}
+func applyOpenResponseAt(state *sessionState, modes *acp.SessionModeState, options *[]acp.SessionConfigOption, sequence uint64) {
+	// Preserve the pre-existing warm-response same-frame precedence until its
+	// contract is resolved separately; clocks distinguish actual later frames.
 	if options != nil {
-		if len(*options) == 0 {
-			state.mu.Lock()
-			state.options = nil
-			state.mu.Unlock()
-		} else {
-			state.setOptions(*options)
+		values := *options
+		if values == nil {
+			values = []acp.SessionConfigOption{}
 		}
+		state.setOptionsAt(values, sequence)
 	}
 	if modes != nil {
-		state.mu.Lock()
-		state.modes = append([]acp.SessionMode(nil), modes.AvailableModes...)
-		state.modeID = modes.CurrentModeID
-		state.mu.Unlock()
+		state.setModesAt(modes, sequence)
 	}
 }
 func (h *Host) closeSession(ctx context.Context, sid acp.SessionID) error {
@@ -220,10 +224,24 @@ func copyConfirmedState(dst, src *sessionState) {
 	snapshot := copySessionState(src)
 	dst.mu.Lock()
 	defer dst.mu.Unlock()
-	dst.options = snapshot.options
-	dst.modes = snapshot.modes
-	dst.modeID = snapshot.modeID
-	dst.commands = snapshot.commands
+	// Shadow publication must not roll back a more recent observation already
+	// applied to the original object. Each semantic channel has its own clock.
+	if sequenceApplies(snapshot.optionsSequence, dst.optionsSequence) {
+		dst.options = snapshot.options
+		dst.optionsSequence = snapshot.optionsSequence
+	}
+	if sequenceApplies(snapshot.modesSequence, dst.modesSequence) {
+		dst.modes = snapshot.modes
+		dst.modesSequence = snapshot.modesSequence
+	}
+	if sequenceApplies(snapshot.modeSequence, dst.modeSequence) {
+		dst.modeID = snapshot.modeID
+		dst.modeSequence = snapshot.modeSequence
+	}
+	if sequenceApplies(snapshot.commandsSequence, dst.commandsSequence) {
+		dst.commands = snapshot.commands
+		dst.commandsSequence = snapshot.commandsSequence
+	}
 }
 
 // beginConfigOperationLocked reserves an already-open session across a config

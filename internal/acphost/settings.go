@@ -15,11 +15,15 @@ import (
 // with config_option_update / current_mode_update notifications, so this
 // outlives any single collector and is read back on every progress snapshot.
 type sessionState struct {
-	mu       sync.Mutex
-	options  []acp.SessionConfigOption
-	modes    []acp.SessionMode
-	modeID   acp.SessionModeID
-	commands []acp.AvailableCommand
+	mu               sync.Mutex
+	options          []acp.SessionConfigOption
+	modes            []acp.SessionMode
+	modeID           acp.SessionModeID
+	commands         []acp.AvailableCommand
+	optionsSequence  uint64
+	modeSequence     uint64
+	modesSequence    uint64
+	commandsSequence uint64
 }
 
 // newSessionState files away what the agent reported when the session opened:
@@ -36,48 +40,82 @@ func newSessionState(modes *acp.SessionModeState, options *[]acp.SessionConfigOp
 
 // setOptions replaces the reported selectors. config_option_update carries
 // the whole list rather than a delta, so replacing is the correct merge.
+// Unsequenced helpers seed local decoded fixtures only; once a field has
+// actual ingress metadata, a zero sequence cannot overwrite its observation.
 func (s *sessionState) setOptions(options []acp.SessionConfigOption) {
-	// Missing metadata is not a replacement. A present empty full list is.
+	s.setOptionsAt(options, 0)
+}
+func sequenceApplies(sequence, current uint64) bool {
+	if sequence == 0 {
+		return current == 0
+	}
+	return sequence >= current
+}
+func (s *sessionState) setOptionsAt(options []acp.SessionConfigOption, sequence uint64) {
 	if options == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.options = append(s.options[:0:0], options...)
-	// The mode arrives on two channels; keep modeID the single answer to
-	// "which mode" so current_mode_update and config_option_update agree.
-	if opt, ok := findOption(s.options, acp.SessionConfigOptionCategoryMode); ok {
-		if value, ok := selectValue(opt); ok {
+	if sequenceApplies(sequence, s.optionsSequence) {
+		s.options = append(s.options[:0:0], options...)
+		s.optionsSequence = sequence
+	}
+	// Full-list and current-mode are distinct fields: one may be newer than
+	// the other. A mode-only notice must not discard a valid full-list reply.
+	if opt, ok := findOption(options, acp.SessionConfigOptionCategoryMode); ok {
+		if value, ok := selectValue(opt); ok && sequenceApplies(sequence, s.modeSequence) {
 			s.modeID = acp.SessionModeID(value)
+			s.modeSequence = sequence
 		}
 	}
 }
-
-func (s *sessionState) setModes(modes *acp.SessionModeState) {
+func (s *sessionState) setModes(modes *acp.SessionModeState) { s.setModesAt(modes, 0) }
+func (s *sessionState) setModesAt(modes *acp.SessionModeState, sequence uint64) {
 	if modes == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.modes = append(s.modes[:0:0], modes.AvailableModes...)
-	if modes.CurrentModeID != "" {
+	if sequenceApplies(sequence, s.modesSequence) {
+		s.modes = append(s.modes[:0:0], modes.AvailableModes...)
+		s.modesSequence = sequence
+	}
+	if sequenceApplies(sequence, s.modeSequence) {
 		s.modeID = modes.CurrentModeID
+		s.modeSequence = sequence
 	}
 }
-
-func (s *sessionState) setMode(id acp.SessionModeID) {
+func (s *sessionState) setMode(id acp.SessionModeID) { s.setModeAt(id, 0) }
+func (s *sessionState) setModeAt(id acp.SessionModeID, sequence uint64) {
 	if id == "" {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.modeID = id
+	if sequenceApplies(sequence, s.modeSequence) {
+		s.modeID = id
+		s.modeSequence = sequence
+	}
 }
-
-func (s *sessionState) setCommands(commands []acp.AvailableCommand) {
+func (s *sessionState) setCommands(commands []acp.AvailableCommand) { s.setCommandsAt(commands, 0) }
+func (s *sessionState) setCommandsAt(commands []acp.AvailableCommand, sequence uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.commands = append(s.commands[:0:0], commands...)
+	if sequenceApplies(sequence, s.commandsSequence) {
+		s.commands = append(s.commands[:0:0], commands...)
+		s.commandsSequence = sequence
+	}
+}
+func newSessionStateAt(modes *acp.SessionModeState, options *[]acp.SessionConfigOption, sequence uint64) *sessionState {
+	state := &sessionState{}
+	// Keep the existing cold-constructor tie rule. Wire sequence comparison
+	// protects later notifications independently of same-frame precedence.
+	state.setModesAt(modes, sequence)
+	if options != nil {
+		state.setOptionsAt(*options, sequence)
+	}
+	return state
 }
 
 func (s *sessionState) settings() view.Settings {
@@ -375,17 +413,21 @@ func (h *Host) SetOption(ctx context.Context, sid acp.SessionID, generation uint
 
 	// Do not hold the Host lock across I/O: an existing prompt and reverse
 	// callbacks must continue while this SID is reserved against new sources.
-	resp, err := caller.SetSessionConfigOption(ctx, &req)
+	resp, receipt, err := caller.SetSessionConfigOptionWithReceipt(ctx, &req)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("session/set_config_option: %w", h.finishConfigOperationLocked(ctx, sid, op, err))
 	}
+	if receipt.Sequence == 0 {
+		err := fmt.Errorf("session/set_config_option: successful result lacks inbound receipt")
+		return h.finishConfigOperationLocked(ctx, sid, op, err)
+	}
 	var confirmationErr error
 	if resp == nil || resp.ConfigOptions == nil {
 		confirmationErr = fmt.Errorf("session/set_config_option: agent omitted the required configOptions confirmation")
 	} else {
-		op.state.setOptions(resp.ConfigOptions)
+		op.state.setOptionsAt(resp.ConfigOptions, receipt.Sequence)
 	}
 	// A matched response with missing confirmation is a local validation
 	// error, not an unanswered RPC. Settle the reservation without inventing
