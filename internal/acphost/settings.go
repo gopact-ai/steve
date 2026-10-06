@@ -403,22 +403,5 @@ func (h *Host) ListSessions(ctx context.Context) ([]acp.SessionInfo, error) {
 // not confirm data erasure or native resource cleanup. Unsupported deletion
 // is explicit and never removes Steve's session bookkeeping.
 func (h *Host) DeleteSession(ctx context.Context, sid acp.SessionID) error {
-	h.mu.Lock()
-	if h.active[sid] != 0 || h.opening[sid] != 0 {
-		h.mu.Unlock()
-		return ErrSessionBusy
-	}
-	caller, capabilities, alive := h.caller, h.capabilities, h.alive
-	h.mu.Unlock()
-	if !alive || caller == nil || capabilities == nil ||
-		capabilities.SessionCapabilities == nil || capabilities.SessionCapabilities.Delete == nil {
-		return ErrDeleteUnsupported
-	}
-	if _, err := caller.DeleteSession(ctx, &acp.DeleteSessionRequest{SessionID: sid}); err != nil {
-		return fmt.Errorf("session/delete: %w", err)
-	}
-	h.mu.Lock()
-	delete(h.sessions, sid)
-	h.mu.Unlock()
-	return nil
+	return h.deleteSession(ctx, sid)
 }

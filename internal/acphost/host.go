@@ -48,7 +48,7 @@ var ErrStopUnconfirmed = errors.New("agent stop was not confirmed")
 // PromptSettled recognizes an explicit ACP response (including an error
 // response), not transport EOF or a local cancellation of the pending RPC.
 func PromptSettled(err error) bool {
-	if errors.Is(err, ErrStopUnconfirmed) {
+	if errors.Is(err, ErrStopUnconfirmed) || errors.Is(err, ErrSessionOperationUnconfirmed) {
 		return false
 	}
 	if err == nil || errors.Is(err, ErrTurnCanceled) {
@@ -102,7 +102,8 @@ type Config struct {
 type SessionConfig struct {
 	Workdir    string
 	MCPServers []acp.MCPServer
-	// ReplayHistory requests session/load to rebuild a missing transcript.
+	// ReplayHistory requests session/load and its history notifications.
+	// Without a history consumer it does not rebuild a transcript.
 	// Otherwise an existing session prefers resume, which does not replay it.
 	ReplayHistory bool
 }
@@ -130,10 +131,10 @@ type Host struct {
 	sessions     map[acp.SessionID]*sessionState
 	opening      map[acp.SessionID]uint64
 	active       map[acp.SessionID]uint64
-	// Close outcomes survive process/session map resets until the original
+	// Lifecycle outcomes survive process/session map resets until the original
 	// request settles or its exact owned process has confirmed stop evidence.
-	sessionCloses map[acp.SessionID]*sessionClose
-	generation    uint64
+	sessionOperations map[acp.SessionID]*sessionOperation
+	generation        uint64
 	// adapter is the ACP agent's name and version as it introduced itself.
 	adapter string
 }
@@ -567,8 +568,19 @@ type clientHandler struct {
 }
 
 func (ch *clientHandler) Update(_ context.Context, n *acp.SessionNotification) error {
-	ch.h.applySettings(n.SessionID, n.Update)
 	ch.h.mu.Lock()
+	if ch.h.generation != ch.generation {
+		ch.h.mu.Unlock()
+		return nil
+	}
+	if op := ch.h.sessionOperations[n.SessionID]; op != nil {
+		if op.generation == ch.generation && op.state != nil {
+			applySessionSettings(op.state, n.Update)
+		}
+		ch.h.mu.Unlock()
+		return nil
+	}
+	applySessionSettings(ch.h.sessions[n.SessionID], n.Update)
 	col := ch.h.collectors[n.SessionID]
 	ch.h.mu.Unlock()
 	if col != nil && col.generation == ch.generation {
@@ -943,58 +955,59 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 		return sessionID, generation, nil
 	}
 	caller, capabilities := h.caller, h.capabilities
-	if sessionID != "" {
-		if h.active[sessionID] != 0 {
-			h.mu.Unlock()
-			return "", 0, ErrSessionBusy
-		}
-		h.opening[sessionID] = generation
-		defer func() {
-			h.mu.Lock()
-			if h.opening[sessionID] == generation {
-				delete(h.opening, sessionID)
-			}
-			h.mu.Unlock()
-		}()
-	}
-	h.mu.Unlock()
 	if err := validateMCPServers(capabilities, cfg.MCPServers); err != nil {
+		h.mu.Unlock()
 		return "", 0, err
 	}
 	if sessionID != "" {
-		request := acp.LoadSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers}
-		var state *sessionState
+		method := ""
 		switch {
 		case !cfg.ReplayHistory && capabilities != nil && capabilities.SessionCapabilities != nil && capabilities.SessionCapabilities.Resume != nil:
-			resp, err := caller.ResumeSession(ctx, &acp.ResumeSessionRequest{
-				SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers,
-			})
-			if err != nil {
-				return "", 0, fmt.Errorf("session/resume: %w", err)
-			}
-			state = newSessionState(resp.Modes, resp.ConfigOptions)
-			state.setMode(h.applyMode(ctx, caller, sessionID, resp.Modes))
+			method = "resume"
 		case capabilities != nil && capabilities.LoadSession:
-			resp, err := caller.LoadSession(ctx, &request)
-			if err != nil {
-				return "", 0, fmt.Errorf("session/load: %w", err)
-			}
-			state = newSessionState(resp.Modes, resp.ConfigOptions)
-			state.setMode(h.applyMode(ctx, caller, sessionID, resp.Modes))
+			method = "load"
 		case cfg.ReplayHistory:
+			h.mu.Unlock()
 			return "", 0, ErrLoadUnsupported
 		default:
+			h.mu.Unlock()
 			return "", 0, ErrResumeUnsupported
 		}
-		h.mu.Lock()
-		if !h.alive || h.generation != generation {
-			h.mu.Unlock()
-			return "", 0, fmt.Errorf("agent process changed while opening session")
-		}
-		h.sessions[sessionID] = state
+		op, err := h.beginSessionOperationLocked(ctx, sessionID, method)
 		h.mu.Unlock()
+		if err != nil {
+			return "", 0, err
+		}
+		var modes *acp.SessionModeState
+		var options *[]acp.SessionConfigOption
+		if method == "load" {
+			var resp *acp.LoadSessionResponse
+			resp, err = caller.LoadSession(ctx, &acp.LoadSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
+			if err == nil {
+				modes, options = resp.Modes, resp.ConfigOptions
+			}
+		} else {
+			var resp *acp.ResumeSessionResponse
+			resp, err = caller.ResumeSession(ctx, &acp.ResumeSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
+			if err == nil {
+				modes, options = resp.Modes, resp.ConfigOptions
+			}
+		}
+		if err == nil {
+			h.mu.Lock()
+			applyOpenResponse(op.state, modes, options)
+			h.mu.Unlock()
+			op.state.setMode(h.applyMode(ctx, caller, sessionID, modes))
+		}
+		h.mu.Lock()
+		err = h.finishSessionOperationLocked(ctx, sessionID, op, err)
+		h.mu.Unlock()
+		if err != nil {
+			return "", 0, err
+		}
 		return sessionID, generation, nil
 	}
+	h.mu.Unlock()
 	resp, err := caller.NewSession(ctx, &acp.NewSessionRequest{
 		Cwd:        cfg.Workdir,
 		MCPServers: cfg.MCPServers,
@@ -1458,14 +1471,16 @@ func awaitSettled(settling []chan struct{}) {
 // rather than on the collector.
 func (h *Host) applySettings(sid acp.SessionID, u acp.SessionUpdate) {
 	h.mu.Lock()
-	state := h.sessions[sid]
-	h.mu.Unlock()
+	defer h.mu.Unlock()
+	applySessionSettings(h.sessions[sid], u)
+}
+func applySessionSettings(state *sessionState, u acp.SessionUpdate) {
 	if state == nil {
 		return
 	}
 	switch u.SessionUpdate {
 	case acp.SessionUpdateTypeConfigOptionUpdate:
-		state.setOptions(u.ConfigOptions)
+		applyOpenResponse(state, nil, &u.ConfigOptions)
 	case acp.SessionUpdateTypeCurrentModeUpdate:
 		state.setMode(u.CurrentModeID)
 	case acp.SessionUpdateTypeAvailableCommandsUpdate:
