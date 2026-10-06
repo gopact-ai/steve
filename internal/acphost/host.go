@@ -130,7 +130,10 @@ type Host struct {
 	sessions     map[acp.SessionID]*sessionState
 	opening      map[acp.SessionID]uint64
 	active       map[acp.SessionID]uint64
-	generation   uint64
+	// Close outcomes survive process/session map resets until the original
+	// request settles or its exact owned process has confirmed stop evidence.
+	sessionCloses map[acp.SessionID]*sessionClose
+	generation    uint64
 	// adapter is the ACP agent's name and version as it introduced itself.
 	adapter string
 }
@@ -916,10 +919,20 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 	if cfg.ReplayHistory && sessionID == "" {
 		return "", 0, fmt.Errorf("history replay requires an existing session id")
 	}
+	h.mu.Lock()
+	blocked := h.SessionBlockedLocked(sessionID)
+	h.mu.Unlock()
+	if blocked != nil {
+		return "", 0, blocked
+	}
 	if err := h.ensureStarted(ctx); err != nil {
 		return "", 0, err
 	}
 	h.mu.Lock()
+	if err := h.SessionBlockedLocked(sessionID); err != nil {
+		h.mu.Unlock()
+		return "", 0, err
+	}
 	generation := h.generation
 	if sessionID != "" && h.opening[sessionID] != 0 {
 		h.mu.Unlock()
@@ -989,12 +1002,22 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 	if err != nil {
 		return "", 0, fmt.Errorf("session/new: %w", err)
 	}
+	h.mu.Lock()
+	blocked = h.SessionBlockedLocked(resp.SessionID)
+	h.mu.Unlock()
+	if blocked != nil {
+		return "", 0, blocked
+	}
 	state := newSessionState(resp.Modes, resp.ConfigOptions)
 	state.setMode(h.applyMode(ctx, caller, resp.SessionID, resp.Modes))
 	h.mu.Lock()
 	if !h.alive || h.generation != generation {
 		h.mu.Unlock()
 		return "", 0, fmt.Errorf("agent process changed while opening session")
+	}
+	if err := h.SessionBlockedLocked(resp.SessionID); err != nil {
+		h.mu.Unlock()
+		return "", 0, err
 	}
 	h.sessions[resp.SessionID] = state
 	h.mu.Unlock()
@@ -1044,10 +1067,20 @@ func (h *Host) PromptTurn(
 	askUser AskUserFunc,
 	progress func(view.Progress),
 ) (string, []string, error) {
+	h.mu.Lock()
+	blocked := h.SessionBlockedLocked(sid)
+	h.mu.Unlock()
+	if blocked != nil {
+		return "", nil, blocked
+	}
 	if err := h.ensureStarted(ctx); err != nil {
 		return "", nil, err
 	}
 	h.mu.Lock()
+	if err := h.SessionBlockedLocked(sid); err != nil {
+		h.mu.Unlock()
+		return "", nil, err
+	}
 	if h.generation != generation {
 		h.mu.Unlock()
 		return "", nil, fmt.Errorf("agent process changed before prompt")
@@ -1216,6 +1249,10 @@ func (h *Host) Abort(generation uint64) {
 func (h *Host) ProcessStopped(generation uint64) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.processStoppedLocked(generation)
+}
+
+func (h *Host) processStoppedLocked(generation uint64) bool {
 	if generation == 0 || generation > h.generation {
 		return false
 	}
@@ -1228,35 +1265,6 @@ func (h *Host) ProcessStopped(generation uint64) bool {
 		return true
 	}
 	return false
-}
-
-// CloseSession releases a protocol session when supported, otherwise only its
-// local bookkeeping. Neither outcome confirms that the owned process stopped;
-// native resource cleanup remains the execution owner's responsibility.
-func (h *Host) CloseSession(ctx context.Context, sid acp.SessionID) error {
-	h.mu.Lock()
-	if h.active[sid] != 0 || h.opening[sid] != 0 {
-		h.mu.Unlock()
-		return ErrSessionBusy
-	}
-	if h.sessions[sid] == nil {
-		h.mu.Unlock()
-		return nil
-	}
-	caller, capabilities, alive := h.caller, h.capabilities, h.alive
-	if !alive || caller == nil || capabilities == nil || capabilities.SessionCapabilities == nil || capabilities.SessionCapabilities.Close == nil {
-		delete(h.sessions, sid)
-		h.mu.Unlock()
-		return nil
-	}
-	h.mu.Unlock()
-	if _, err := caller.CloseSession(ctx, &acp.CloseSessionRequest{SessionID: sid}); err != nil {
-		return fmt.Errorf("session/close: %w", err)
-	}
-	h.mu.Lock()
-	delete(h.sessions, sid)
-	h.mu.Unlock()
-	return nil
 }
 
 func promptBlocks(text string, images []Image, caps *acp.AgentCapabilities) []acp.ContentBlock {
