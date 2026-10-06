@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { configuredHarnesses, createFleetAgent, bindFleetAgent, inspectFleetAgent, launchFingerprint, fleetWriteRejected } from "../src/lib/api/fleet-agent-create.ts";
+import { permissionConfirmationRejected } from "../src/lib/agent-permission.ts";
+import { configuredHarnesses, createFleetAgent as prepareFleetAgent, bindFleetAgent as submitFleetAgent, readFleetAgentPermission, inspectFleetAgent, launchFingerprint, fleetWriteRejected } from "../src/lib/api/fleet-agent-create.ts";
+const policy = (node, harness, permission = "read", source = "default_read", revision = "policy-fact-r1") => ({ node, harness, permission, source, revision });
+const assertion = { expected_permission: "read", expected_permission_revision: "policy-fact-r1" };
+async function bindFleetAgent(receipt, ports, remember) { return submitFleetAgent(receipt, ports, remember, await readFleetAgentPermission(receipt, ports)); }
+async function createFleetAgent(binding, settings, custom, ports, remember) { return bindFleetAgent(await prepareFleetAgent(binding, settings, custom, ports, remember), ports, remember); }
 const launch = { command: "/fixture/未知 agent", args: ["acp", "", " 含 空格 ", '"quote"', "$HOME", "a|b"], env: ["MODE=ordinary", "EMPTY=", "UNICODE=中文 空格"] };
 function fixture() {
     const f = { settings: { revision: "r1", harnesses: { catalog: { adapter: "pinned-acp", command: "/fixture/pinned" }, unbound: launch }, tools: ["git"], declares: [], capabilities: ["test"], mcp_servers: {} }, agents: [], saved: [], posts: [], receipts: [], saveError: null, bindError: null, missingOK: false };
@@ -8,6 +13,7 @@ function fixture() {
         readSettings: async () => ({ settings: f.settings }),
         readAgents: async () => ({ hub: { node: "local" }, agents: f.agents }),
         saveSettings: async (node, settings) => { f.saved.push({ node, settings }); if (f.saveError) throw f.saveError; f.settings = { ...settings, revision: "r2" }; return { settings: f.settings }; },
+        readPermission: async (node, harness) => policy(node, harness),
         bind: async binding => { f.posts.push(binding); if (f.bindError) throw f.bindError; if (f.missingOK) return {}; f.agents.push(binding); return { ok: true }; },
         rejected: error => error.rejected === true,
     };
@@ -23,13 +29,13 @@ test("custom launch is saved node-locally before binding without changing argv o
     const result = await createFleetAgent(binding, f.settings, launch, ports, remember);
     assert.equal(result.phase, "bound"); assert.equal(result.revision, "r2");
     assert.deepEqual(f.saved, [{ node: "remote", settings: { ...before, harnesses: { ...before.harnesses, "my-acp": launch } } }]);
-    assert.deepEqual(f.posts, [binding]);
+    assert.deepEqual(f.posts, [{ ...binding, ...assertion }]);
     assert.deepEqual(f.receipts.map(r => r.phase), ["save-unknown", "saved", "bind-unknown", "bound"]);
     assert.equal(JSON.stringify(f.receipts).includes("UNICODE="), false, "receipts contain no raw env");
 });
 test("configured catalog launch binds without rewriting or editing its pinned arguments", async () => {
     const { f, ports, remember } = fixture(); await createFleetAgent({ ...binding, harness: "catalog" }, f.settings, undefined, ports, remember);
-    assert.equal(f.saved.length, 0); assert.deepEqual(f.posts, [{ ...binding, harness: "catalog" }]);
+    assert.equal(f.saved.length, 0); assert.deepEqual(f.posts, [{ ...binding, harness: "catalog", ...assertion }]);
     await assert.rejects(createFleetAgent({ ...binding, harness: "catalog" }, f.settings, launch, ports, remember), { code: "harnessExists" });
     assert.equal(f.posts.length, 1);
 });
@@ -41,7 +47,7 @@ test("unknown settings transport never binds or repeats PUT; readback uses the e
     f.settings = { ...f.settings, revision: "r2", harnesses: { ...f.settings.harnesses, "my-acp": launch } };
     const observed = await inspectFleetAgent(f.receipt, ports); assert.equal(observed.phase, "saved");
     assert.equal(f.saved.length, 1); assert.equal(f.posts.length, 0, "inspection alone never binds");
-    await bindFleetAgent(observed, ports, remember); assert.deepEqual(f.posts, [binding]);
+    await bindFleetAgent(observed, ports, remember); assert.deepEqual(f.posts, [{ ...binding, ...assertion }]);
 });
 test("unknown binding retains original identity across readback and absence never permits a second POST", async () => {
     const { f, ports, remember } = fixture(); f.bindError = new Error("lost reply");
@@ -58,7 +64,7 @@ test("a rejected bind retains the saved harness and explicitly retries only the 
     assert.equal(f.receipt.phase, "bind-rejected"); assert.equal(f.receipt.revision, "r2");
     f.settings = { ...f.settings, revision: "r3", capabilities: ["other-user-setting"] }; f.bindError = null;
     const observed = await inspectFleetAgent(f.receipt, ports); await bindFleetAgent(observed, ports, remember);
-    assert.deepEqual(f.posts, [binding, binding]); assert.equal(f.saved.length, 1); assert.deepEqual(f.settings.capabilities, ["other-user-setting"]);
+    assert.deepEqual(f.posts, [{ ...binding, ...assertion }, { ...binding, ...assertion }]); assert.equal(f.saved.length, 1); assert.deepEqual(f.settings.capabilities, ["other-user-setting"]);
 });
 test("server rejection of duplicate env leaves revision and values intact until explicit readback", async () => {
     const { f, ports, remember } = fixture(); const duplicate = { ...launch, env: ["MODE=one", "MODE=two"] };
@@ -143,3 +149,54 @@ for (const scenario of ["matching launch", "changed launch", "missing harness", 
         assert.equal(f.saved.length, 0); assert.equal(f.posts.length, 0); assert.equal(f.receipts.length, 0);
     });
 }
+
+test("command registration must stop before POST until effective permission is explicitly confirmed", async () => {
+    const { f, ports, remember } = fixture();
+    const prepared = await prepareFleetAgent(binding, f.settings, launch, ports, remember);
+    assert.equal(prepared.phase, "saved", "launch save is not permission confirmation or binding");
+    assert.equal(f.saved.length, 1);
+    assert.equal(f.posts.length, 0, "saving a new node-local command must not silently inherit policy and bind");
+});
+
+test("permission facts are separate from launch / settings revisions and bind requires explicit consent", async () => {
+    const { f, ports, remember } = fixture();
+    const receipt = await prepareFleetAgent(binding, f.settings, launch, ports, remember);
+    await assert.rejects(submitFleetAgent(receipt, ports, remember), { code: "permissionRequired" });
+    assert.equal(f.posts.length, 0);
+    ports.readPermission = async (node, harness) => policy(node, harness, "auto", "hub_harness", "opaque-policy-revision");
+    const fact = await readFleetAgentPermission(receipt, ports);
+    assert.notEqual(fact.revision, receipt.revision); assert.notEqual(fact.revision, receipt.launch);
+    assert.equal(f.posts.length, 0, "GET is not consent or binding");
+    await submitFleetAgent(receipt, ports, remember, fact);
+    assert.deepEqual(f.posts, [{ ...binding, expected_permission: "auto", expected_permission_revision: "opaque-policy-revision" }]);
+    assert.deepEqual(f.receipts.at(-1).confirmation, fact);
+});
+test("unknown or wrong-scope permission facts cannot authorize a binding", async () => {
+    for (const invalid of [null, {}, policy("other-node", binding.harness), policy(binding.node, "other-harness"), policy(binding.node, binding.harness, "unsafe-default"), policy(binding.node, binding.harness, "read", "guessed_namespace_policy"), policy(binding.node, binding.harness, "read", "default_read", "")]) {
+        const { f, ports, remember } = fixture(); const receipt = await prepareFleetAgent(binding, f.settings, launch, ports, remember);
+        ports.readPermission = async () => invalid;
+        await assert.rejects(readFleetAgentPermission(receipt, ports), { code: "invalidPermission" });
+        assert.equal(f.posts.length, 0); assert.equal(f.receipt.phase, "saved");
+    }
+});
+test("typed permission rejection invalidates the assertion but never silently resubmits a changed policy", async () => {
+    const { f, ports, remember } = fixture(); const receipt = await prepareFleetAgent(binding, f.settings, launch, ports, remember);
+    const fact = await readFleetAgentPermission(receipt, ports);
+    f.bindError = Object.assign(new Error("permission changed"), { rejected: true });
+    await assert.rejects(submitFleetAgent(receipt, ports, remember, fact));
+    assert.equal(f.receipt.phase, "bind-rejected"); assert.equal(f.receipt.confirmation, undefined);
+    ports.readPermission = async (node, harness) => policy(node, harness, "always_allow", "shared_remote_permissions", "new-policy-revision");
+    const refreshed = await readFleetAgentPermission(f.receipt, ports);
+    assert.equal(refreshed.permission, "always_allow"); assert.equal(f.posts.length, 1);
+    await assert.rejects(submitFleetAgent(f.receipt, ports, remember), { code: "permissionRequired" });
+    assert.equal(f.posts.length, 1, "a new GET still needs a new explicit confirmation");
+});
+
+test("only exact typed permission errors authorize confirmation refresh; generic 400/409 stay unknown", () => {
+    assert.equal(permissionConfirmationRejected(409, "agent_permission_conflict"), true);
+    assert.equal(permissionConfirmationRejected(400, "agent_permission_confirmation_invalid"), true);
+    assert.equal(permissionConfirmationRejected(400), false);
+    assert.equal(permissionConfirmationRejected(409), false);
+    assert.equal(permissionConfirmationRejected(400, "agent_permission_conflict"), false);
+    assert.equal(permissionConfirmationRejected(409, "some_other_conflict"), false);
+});

@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, Trash01 } from "@untitledui/icons";
+import { Checkbox } from "@/components/base/checkbox/checkbox";
+import { isAgentPermissionFact, permissionConfirmationRejected, type AgentPermissionFact } from "@/lib/agent-permission";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
 import { IconButton } from "@/components/steve/icon-button";
 import { useI18n } from "@/providers/locale-provider";
-import { addAgent, fetchNodeSettings, fetchState, saveNodeSettings, type HarnessSetting, type NodeSettings } from "@/lib/api/fleet";
-import { bindFleetAgent, configuredHarnesses, createFleetAgent, FleetAgentCreateError, fleetWriteRejected, inspectFleetAgent, type FleetAgentPorts, type FleetAgentReceipt } from "@/lib/api/fleet-agent-create";
+import { addAgent, fetchAgentPermission, fetchNodeSettings, fetchState, saveNodeSettings, type HarnessSetting, type NodeSettings } from "@/lib/api/fleet";
+import { bindFleetAgent, configuredHarnesses, createFleetAgent, FleetAgentCreateError, fleetWriteRejected, inspectFleetAgent, readFleetAgentPermission, type FleetAgentPorts, type FleetAgentReceipt } from "@/lib/api/fleet-agent-create";
 import { HTTPError, message } from "@/lib/http";
 
 type Machine = { id: string; label: string; supportingText?: string };
@@ -17,7 +19,7 @@ function readReceipt(): FleetAgentReceipt | null {
     const raw = localStorage.getItem(receiptKey());
     if (!raw) return null;
     const value = JSON.parse(raw) as FleetAgentReceipt;
-    if (!value || ![value.id, value.node, value.harness, value.revision, value.launch].every(item => typeof item === "string" && item.length > 0) || !nameShape.test(value.id) || !/^[a-f0-9]{64}$/.test(value.launch) || !["save-unknown", "save-rejected", "saved", "bind-unknown", "bind-rejected", "bound"].includes(value.phase)) throw new FleetAgentCreateError("invalidReceipt");
+    if (!value || (value.confirmation && !isAgentPermissionFact(value.confirmation)) || ![value.id, value.node, value.harness, value.revision, value.launch].every(item => typeof item === "string" && item.length > 0) || !nameShape.test(value.id) || !/^[a-f0-9]{64}$/.test(value.launch) || !["save-unknown", "save-rejected", "saved", "bind-unknown", "bind-rejected", "bound"].includes(value.phase)) throw new FleetAgentCreateError("invalidReceipt");
     return value;
 }
 
@@ -26,11 +28,13 @@ function readReceipt(): FleetAgentReceipt | null {
 export function FleetAgentCreate({ hub, machines, initialNode, onChanged, onBusyChange }: { hub: string; machines: Machine[]; initialNode?: string; onChanged: () => void; onBusyChange: (busy: boolean) => void }) {
     const { t } = useI18n();
     const ports: FleetAgentPorts = {
-        readSettings: fetchNodeSettings, saveSettings: saveNodeSettings, readAgents: fetchState,
-        bind: ({ id, harness, node }) => addAgent({ id, harness, node: node === hub ? undefined : node }), rejected: (error, step) => error instanceof HTTPError && fleetWriteRejected(error.status, error.message, step),
+        readSettings: fetchNodeSettings, saveSettings: saveNodeSettings, readAgents: fetchState, readPermission: fetchAgentPermission,
+        bind: ({ id, harness, node, expected_permission, expected_permission_revision }) => addAgent({ id, harness, node: node === hub ? undefined : node, expected_permission, expected_permission_revision }), rejected: (error, step) => error instanceof HTTPError && (fleetWriteRejected(error.status, error.message, step) || (step === "bind" && permissionConfirmationRejected(error.status, error.code))),
     };
     const [recovery] = useState(() => { try { return { receipt: readReceipt(), error: "" }; } catch (error) { return { receipt: null, error: error instanceof FleetAgentCreateError ? t(`fleet.commandError.${error.code}`) : t("fleet.commandStorageError") }; } });
     const [receipt, setReceipt] = useState(recovery.receipt);
+    const [permission, setPermission] = useState<AgentPermissionFact | null>(null);
+    const [confirmed, setConfirmed] = useState(false);
     const [node, setNode] = useState(recovery.receipt?.node || initialNode || hub);
     const [id, setID] = useState(recovery.receipt?.id || "");
     const [choice, setChoice] = useState(recovery.receipt?.harness || "");
@@ -67,6 +71,11 @@ export function FleetAgentCreate({ hub, machines, initialNode, onChanged, onBusy
         if (error instanceof FleetAgentCreateError) return t(`fleet.commandError.${error.code}`);
         return message(error);
     }
+    async function showPermission(pending: FleetAgentReceipt) {
+        setConfirmed(false); setPermission(null);
+        const fact = await readFleetAgentPermission(pending, ports);
+        setPermission(fact);
+    }
     async function act(inspect = false) {
         if (acting.current || receipt?.phase === "bound" || recovery.error) return;
         acting.current = true; setBusy(true); onBusyChange(true); setError("");
@@ -81,15 +90,28 @@ export function FleetAgentCreate({ hub, machines, initialNode, onChanged, onBusy
                 }
                 remember(observed);
                 if (observed.phase === "bound") { onChanged(); return; }
-                if (inspect || (observed.phase !== "saved" && observed.phase !== "bind-rejected")) return;
-                await bindFleetAgent(observed, ports, remember);
+                if (observed.phase !== "saved" && observed.phase !== "bind-rejected") return;
+                if (inspect || !permission || !confirmed) { await showPermission(observed); return; }
+                await bindFleetAgent(observed, ports, remember, permission);
             } else {
                 if (!settings) return;
                 const custom: HarnessSetting | undefined = choice === customChoice ? { command, args, env } : undefined;
-                await createFleetAgent({ id: id.trim().toLowerCase(), harness: custom ? harnessID.trim() : choice, node }, settings, custom, ports, remember);
+                const prepared = await createFleetAgent({ id: id.trim().toLowerCase(), harness: custom ? harnessID.trim() : choice, node }, settings, custom, ports, remember);
+                await showPermission(prepared); return;
             }
             onChanged();
-        } catch (error) { setError(reason(error)); }
+        } catch (error) {
+            if (error instanceof HTTPError && permissionConfirmationRejected(error.status, error.code)) {
+                setConfirmed(false); setPermission(null);
+                setError(t("fleet.permissionChanged"));
+                const pending = latestReceipt.current;
+                if (pending) { try { await showPermission(pending); } catch (readFailure) { setError(reason(readFailure)); } }
+            } else {
+                setError(reason(error));
+                const pending = latestReceipt.current;
+                if (pending?.phase === "bind-rejected") { try { await showPermission(pending); } catch (readFailure) { setError(reason(readFailure)); } }
+            }
+        }
         finally { acting.current = false; setBusy(false); onBusyChange(false); }
     }
     const custom = choice === customChoice;
@@ -143,11 +165,20 @@ export function FleetAgentCreate({ hub, machines, initialNode, onChanged, onBusy
             <p className="text-xs leading-5 text-warning-primary">{t("fleet.commandUnverified")}</p>
             {!bound && <p className="text-xs leading-5 text-tertiary">{t(unknown ? "fleet.commandUnknownHint" : "fleet.commandRetryHint")}</p>}
         </section>}
+        {!bound && permission && <section aria-label={t("fleet.permissionTitle")} className="min-w-0 space-y-3 rounded-lg border border-secondary p-3">
+            <h3 className="text-sm font-medium text-primary">{t("fleet.permissionTitle")}</h3>
+            <p className="break-all text-sm text-secondary">{t("fleet.permissionPolicy", { policy: permission.permission })}</p>
+            <p className="break-words text-xs text-tertiary">{t("fleet.permissionSource", { source: t(`fleet.permissionSource.${permission.source}`) })}</p>
+            <p className="break-all font-mono text-xs text-tertiary">{t("fleet.permissionRevision", { revision: permission.revision })}</p>
+            <p className="text-xs leading-5 text-warning-primary">{t("fleet.permissionBoundary")}</p>
+            {(permission.permission === "auto" || permission.permission === "always_allow") && <p role="alert" className="text-xs leading-5 text-warning-primary">{t("fleet.permissionBroad")}</p>}
+            <Checkbox size="md" isSelected={confirmed} isDisabled={busy || unknown} onChange={setConfirmed} aria-label={t("fleet.permissionConfirm")} label={t("fleet.permissionConfirm")} />
+        </section>}
         {!secure && <div role="alert" className="text-sm text-error-primary">{t("fleet.commandError.secureContext")}</div>}
         {error && <div role="alert" className="break-words text-sm text-error-primary">{error}</div>}
         {!bound && <div className="flex flex-wrap justify-end gap-2">
             {receipt && <Button size="sm" color="secondary" isLoading={busy} onClick={() => void act(true)}>{t("fleet.commandInspect")}</Button>}
-            {(!receipt || receipt.phase === "saved" || receipt.phase === "bind-rejected") && <Button size="sm" color="primary" isLoading={busy} isDisabled={receipt ? busy : !valid || !!recovery.error} onClick={() => void act()}>{t(receipt ? "fleet.commandRetryBind" : custom ? "fleet.commandSaveAndBind" : "fleet.registerAgent")}</Button>}
+            {(!receipt || receipt.phase === "saved" || receipt.phase === "bind-rejected") && <Button size="sm" color="primary" isLoading={busy} isDisabled={receipt ? busy || (!!permission && !confirmed) : !valid || !!recovery.error} onClick={() => void act()}>{t(receipt ? permission ? "fleet.permissionBind" : "fleet.permissionRead" : custom ? "fleet.permissionSaveReview" : "fleet.permissionRead")}</Button>}
         </div>}
     </div>;
 }

@@ -1,7 +1,10 @@
+import { isAgentPermissionFact, type AgentPermissionFact, type AgentPermissionPolicy } from "../agent-permission.ts";
 import type { HarnessSetting, NodeSettings } from "./fleet";
 
 export interface FleetAgentBinding { id: string; harness: string; node: string }
+export interface FleetAgentBindRequest extends FleetAgentBinding { expected_permission: AgentPermissionPolicy; expected_permission_revision: string }
 export interface FleetAgentReceipt extends FleetAgentBinding {
+    confirmation?: AgentPermissionFact;
     phase: "save-unknown" | "save-rejected" | "saved" | "bind-unknown" | "bind-rejected" | "bound";
     revision: string;
     launch: string;
@@ -10,11 +13,12 @@ export interface FleetAgentPorts {
     readSettings(node: string): Promise<{ settings: NodeSettings }>;
     saveSettings(node: string, settings: NodeSettings): Promise<{ settings: NodeSettings }>;
     readAgents(): Promise<{ hub: { node: string }; agents: { id: string; harness: string; node?: string }[] }>;
-    bind(binding: FleetAgentBinding): Promise<{ ok: boolean }>;
+    readPermission(node: string, harness: string): Promise<AgentPermissionFact>;
+    bind(binding: FleetAgentBindRequest): Promise<{ ok: boolean }>;
     rejected(error: unknown, step: "save" | "bind"): boolean;
 }
 export class FleetAgentCreateError extends Error {
-    readonly code: "harnessExists" | "configurationChanged" | "invalidReceipt" | "bindingConflict" | "secureContext";
+    readonly code: "harnessExists" | "configurationChanged" | "invalidReceipt" | "bindingConflict" | "secureContext" | "permissionRequired" | "invalidPermission";
     constructor(code: FleetAgentCreateError["code"]) { super(code); this.code = code; }
 }
 
@@ -56,22 +60,37 @@ export async function createFleetAgent(binding: FleetAgentBinding, settings: Nod
             throw error;
         }
     }
-    return bindFleetAgent(receipt, ports, remember);
+    return receipt; // Saving a launch never confirms permission or sends POST.
 }
 
-export async function bindFleetAgent(receipt: FleetAgentReceipt, ports: FleetAgentPorts, remember: (receipt: FleetAgentReceipt) => void): Promise<FleetAgentReceipt> {
+// Reads policy only after proving that this is still the saved launch. A fact
+// is not consent; the caller must display it and require a separate user action.
+export async function readFleetAgentPermission(receipt: FleetAgentReceipt, ports: FleetAgentPorts): Promise<AgentPermissionFact> {
     if (receipt.phase !== "saved" && receipt.phase !== "bind-rejected") throw new FleetAgentCreateError("invalidReceipt");
     const current = (await ports.readSettings(receipt.node)).settings;
     if (!current?.revision) throw new FleetAgentCreateError("invalidReceipt");
     const launch = current.harnesses?.[receipt.harness];
     if (!launch || await launchFingerprint(launch) !== receipt.launch) throw new FleetAgentCreateError("configurationChanged");
-    const pending: FleetAgentReceipt = { ...receipt, revision: current.revision, phase: "bind-unknown" }; remember(pending);
+    const fact = await ports.readPermission(receipt.node, receipt.harness);
+    if (!isAgentPermissionFact(fact) || fact.node !== receipt.node || fact.harness !== receipt.harness) throw new FleetAgentCreateError("invalidPermission");
+    return fact;
+}
+
+export async function bindFleetAgent(receipt: FleetAgentReceipt, ports: FleetAgentPorts, remember: (receipt: FleetAgentReceipt) => void, confirmation?: AgentPermissionFact): Promise<FleetAgentReceipt> {
+    if (receipt.phase !== "saved" && receipt.phase !== "bind-rejected") throw new FleetAgentCreateError("invalidReceipt");
+    if (!confirmation) throw new FleetAgentCreateError("permissionRequired");
+    if (!isAgentPermissionFact(confirmation) || confirmation.node !== receipt.node || confirmation.harness !== receipt.harness) throw new FleetAgentCreateError("invalidPermission");
+    const current = (await ports.readSettings(receipt.node)).settings;
+    if (!current?.revision) throw new FleetAgentCreateError("invalidReceipt");
+    const launch = current.harnesses?.[receipt.harness];
+    if (!launch || await launchFingerprint(launch) !== receipt.launch) throw new FleetAgentCreateError("configurationChanged");
+    const pending: FleetAgentReceipt = { ...receipt, revision: current.revision, confirmation, phase: "bind-unknown" }; remember(pending);
     try {
-        const result = await ports.bind({ id: receipt.id, harness: receipt.harness, node: receipt.node });
+        const result = await ports.bind({ id: receipt.id, harness: receipt.harness, node: receipt.node, expected_permission: confirmation.permission, expected_permission_revision: confirmation.revision });
         if (result?.ok !== true) throw new FleetAgentCreateError("invalidReceipt");
         const bound: FleetAgentReceipt = { ...pending, phase: "bound" }; remember(bound); return bound;
     } catch (error) {
-        if (ports.rejected(error, "bind")) remember({ ...pending, phase: "bind-rejected" });
+        if (ports.rejected(error, "bind")) remember({ ...pending, confirmation: undefined, phase: "bind-rejected" });
         throw error;
     }
 }

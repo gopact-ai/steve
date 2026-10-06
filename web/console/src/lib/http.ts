@@ -11,7 +11,7 @@ let requestLocale: Locale = "en";
 export function setRequestLocale(locale: Locale) { requestLocale = locale; }
 
 export class HTTPError extends Error {
-    constructor(message: string, readonly status: number) { super(message); }
+    constructor(message: string, readonly status: number, readonly code?: string) { super(message); }
 }
 
 export async function request<T>(path: string, { body, ...init }: Omit<RequestInit, "body"> & { body?: unknown } = {}): Promise<T> {
@@ -23,8 +23,9 @@ export async function request<T>(path: string, { body, ...init }: Omit<RequestIn
     if (!response.ok) {
         const text = await response.text();
         let message = text.trim();
-        try { const value = JSON.parse(text); if (typeof value.error === "string") message = value.error; } catch { /* Plain text errors are also supported. */ }
-        throw new HTTPError(message || `${response.status} ${response.statusText}`, response.status);
+        let code: string | undefined;
+        try { const value = JSON.parse(text); if (typeof value.error === "string") message = value.error; if (typeof value.code === "string") code = value.code; } catch { /* Plain text errors are also supported. */ }
+        throw new HTTPError(message || `${response.status} ${response.statusText}`, response.status, code);
     }
     return response.json() as Promise<T>;
 }

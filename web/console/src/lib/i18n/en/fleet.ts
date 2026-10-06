@@ -1,6 +1,23 @@
 import type { fleetZh } from "../zh/fleet.ts";
 
 export const fleetEn = {
+    "fleet.permissionTitle": "Execution permission",
+    "fleet.permissionPolicy": "Policy: {policy}",
+    "fleet.permissionSource": "Source: {source}",
+    "fleet.permissionSource.shared_remote_permissions": "Coordinator shared remote policy",
+    "fleet.permissionSource.hub_harness": "Coordinator harness policy",
+    "fleet.permissionSource.default_read": "Coordinator default read policy",
+    "fleet.permissionRevision": "Permission fact revision: {revision}",
+    "fleet.permissionConfirm": "I confirm this execution permission and its source",
+    "fleet.permissionBoundary": "This is coordinator-managed policy, not a node-local permission or OS sandbox. It applies to Steve-managed requests; it does not make your program safe or prevent native filesystem access.",
+    "fleet.permissionBroad": "auto / always_allow may approve Steve-managed requests without asking. Confirm this broad policy before binding an unknown program.",
+    "fleet.permissionChanged": "Permission confirmation was rejected. The current policy must be read and explicitly confirmed again; no retry was sent.",
+    "fleet.permissionBind": "Bind Agent with confirmed permission",
+    "fleet.permissionRead": "Review execution permission",
+    "fleet.permissionSaveReview": "Save command and review permission",
+    "fleet.commandError.permissionRequired": "Explicit execution permission confirmation is required before binding.",
+    "fleet.commandError.invalidPermission": "The permission fact is incomplete or belongs to a different node / harness. Reload it before confirming.",
+
     "fleet.commandChoice": "Harness / command",
     "fleet.commandNameHint": "Up to 64 lowercase letters, digits, dots, underscores or hyphens; start with a letter or digit. Use @name to assign this Agent.",
     "fleet.commandAddHint": "Bind any harness configured on the selected machine, or save your own executable and argv as a new node-local harness.",
