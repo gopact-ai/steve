@@ -9,6 +9,11 @@ export interface FleetAgentReceipt extends FleetAgentBinding {
     revision: string;
     launch: string;
 }
+// Abandoning a known, undispatched/rejected binding is only a browser-flow
+// operation. Unknown writes and completed bindings keep their original receipt.
+export function canCancelFleetAgentBinding(receipt: FleetAgentReceipt | null): boolean {
+    return receipt?.phase === "saved" || receipt?.phase === "bind-rejected";
+}
 export interface FleetAgentPorts {
     readSettings(node: string): Promise<{ settings: NodeSettings }>;
     saveSettings(node: string, settings: NodeSettings): Promise<{ settings: NodeSettings }>;

@@ -54,6 +54,8 @@ export const fleetEn = {
     "fleet.commandUnverified": "ACP not verified. Saving or binding is not an ACP handshake.",
     "fleet.commandUnknownHint": "The outcome is unknown. Keep the same Agent name, machine and harness. Check configuration read-only; absence does not authorize another submission.",
     "fleet.commandRetryHint": "Keep this saved harness on the same machine. Check the outcome before explicitly retrying only the binding; no settings rollback or new Agent ID.",
+    "fleet.commandCancelBinding": "Cancel binding",
+    "fleet.commandCanceled": "Binding flow canceled. Any saved harness remains on the machine; no Agent or settings were deleted.",
     "fleet.commandInspect": "Check saved outcome (read-only)",
     "fleet.commandRetryBind": "Bind the same Agent",
     "fleet.commandSaveAndBind": "Save command and bind Agent",

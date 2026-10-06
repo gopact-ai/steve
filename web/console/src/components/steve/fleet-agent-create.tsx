@@ -8,7 +8,7 @@ import { Select } from "@/components/base/select/select";
 import { IconButton } from "@/components/steve/icon-button";
 import { useI18n } from "@/providers/locale-provider";
 import { addAgent, fetchAgentPermission, fetchNodeSettings, fetchState, saveNodeSettings, type HarnessSetting, type NodeSettings } from "@/lib/api/fleet";
-import { bindFleetAgent, configuredHarnesses, createFleetAgent, FleetAgentCreateError, fleetWriteRejected, inspectFleetAgent, readFleetAgentPermission, type FleetAgentPorts, type FleetAgentReceipt } from "@/lib/api/fleet-agent-create";
+import { bindFleetAgent, canCancelFleetAgentBinding, configuredHarnesses, createFleetAgent, FleetAgentCreateError, fleetWriteRejected, inspectFleetAgent, readFleetAgentPermission, type FleetAgentPorts, type FleetAgentReceipt } from "@/lib/api/fleet-agent-create";
 import { HTTPError, message } from "@/lib/http";
 
 type Machine = { id: string; label: string; supportingText?: string };
@@ -50,6 +50,9 @@ export function FleetAgentCreate({ hub, machines, initialNode, onChanged, onBusy
     const acting = useRef(false);
     const latestReceipt = useRef(receipt);
     const permissionPanel = useRef<HTMLElement>(null);
+    const nameInput = useRef<HTMLInputElement>(null);
+    const [canceled, setCanceled] = useState(false);
+    useEffect(() => { if (canceled && !receipt) nameInput.current?.focus(); }, [canceled, receipt]);
     useEffect(() => {
         if (permission && (receipt?.phase === "saved" || receipt?.phase === "bind-rejected")) { permissionPanel.current?.focus({ preventScroll: true }); permissionPanel.current?.scrollIntoView({ block: "nearest" }); }
     }, [permission, receipt?.phase]);
@@ -82,7 +85,7 @@ export function FleetAgentCreate({ hub, machines, initialNode, onChanged, onBusy
     }
     async function act(inspect = false) {
         if (acting.current || receipt?.phase === "bound" || recovery.error) return;
-        acting.current = true; setBusy(true); onBusyChange(true); setError("");
+        acting.current = true; setBusy(true); onBusyChange(true); setError(""); setCanceled(false);
         try {
             if (JSON.stringify(readReceipt()) !== JSON.stringify(latestReceipt.current)) throw new Error(t("fleet.commandReceiptChanged"));
             const pending = latestReceipt.current;
@@ -118,6 +121,19 @@ export function FleetAgentCreate({ hub, machines, initialNode, onChanged, onBusy
         }
         finally { acting.current = false; setBusy(false); onBusyChange(false); }
     }
+    function cancelBinding() {
+        if (acting.current || busy || recovery.error || !canCancelFleetAgentBinding(latestReceipt.current)) return;
+        try {
+            if (JSON.stringify(readReceipt()) !== JSON.stringify(latestReceipt.current)) throw new Error(t("fleet.commandReceiptChanged"));
+            // Only abandon this known browser flow. The node's saved harness,
+            // Agent records and unknown writes are never deleted or rolled back.
+            localStorage.removeItem(receiptKey());
+            latestReceipt.current = null; setReceipt(null);
+            setPermission(null); setConfirmed(false); setError("");
+            setID(""); setChoice(""); setHarnessID(""); setCommand(""); setArgs([]); setEnv([]);
+            setNode(initialNode || hub); setReadVersion(version => version + 1); setCanceled(true);
+        } catch (error) { setError(reason(error)); }
+    }
     const custom = choice === customChoice;
     const harness = custom ? { command, args } : settings?.harnesses[choice];
     const choices = settings ? configuredHarnesses(settings) : [];
@@ -133,7 +149,7 @@ export function FleetAgentCreate({ hub, machines, initialNode, onChanged, onBusy
     return <div className="flex min-w-0 flex-col gap-4">
         {!bound && <fieldset disabled={locked} className="flex min-w-0 flex-col gap-4">
             <legend className="mb-3 text-sm font-semibold text-primary">{t("fleet.commandBinding")}</legend>
-            <Input size="sm" label={t("fleet.name")} name="fleet-agent-name" maxLength={64} autoComplete="off" spellCheck="false" placeholder="reviewer" value={id} onChange={setID} isInvalid={!!id && !nameShape.test(id.trim().toLowerCase())} hint={t("fleet.commandNameHint")} isDisabled={locked} />
+            <Input ref={nameInput} size="sm" label={t("fleet.name")} name="fleet-agent-name" maxLength={64} autoComplete="off" spellCheck="false" placeholder="reviewer" value={id} onChange={setID} isInvalid={!!id && !nameShape.test(id.trim().toLowerCase())} hint={t("fleet.commandNameHint")} isDisabled={locked} />
             <Select size="sm" label={t("fleet.machine")} hint={t("fleet.chooseMachineHint")} selectedKey={node === hub ? "__hub" : node} isDisabled={locked} onSelectionChange={key => { if (key) { setNode(String(key) === "__hub" ? hub : String(key)); setChoice(""); setError(""); } }} items={machines}>
                 {item => <Select.Item id={item.id} supportingText={item.supportingText}>{item.label}</Select.Item>}
             </Select>
@@ -180,8 +196,10 @@ export function FleetAgentCreate({ hub, machines, initialNode, onChanged, onBusy
             {unknown ? <p className="text-xs leading-5 text-tertiary">{t("fleet.permissionSubmitted")}</p> : <Checkbox size="md" isSelected={confirmed} isDisabled={busy} onChange={setConfirmed} aria-label={t("fleet.permissionConfirm")} label={t("fleet.permissionConfirm")} />}
         </section>}
         {!secure && <div role="alert" className="text-sm text-error-primary">{t("fleet.commandError.secureContext")}</div>}
+        {canceled && <p role="status" className="text-xs leading-5 text-tertiary">{t("fleet.commandCanceled")}</p>}
         {error && <div role="alert" className="break-words text-sm text-error-primary">{error}</div>}
         {!bound && <div className="flex flex-wrap justify-end gap-2">
+            {canCancelFleetAgentBinding(receipt) && <Button size="sm" color="secondary" isDisabled={busy} onClick={cancelBinding}>{t("fleet.commandCancelBinding")}</Button>}
             {receipt && <Button size="sm" color="secondary" isLoading={busy} onClick={() => void act(true)}>{t("fleet.commandInspect")}</Button>}
             {(!receipt || receipt.phase === "saved" || receipt.phase === "bind-rejected") && <Button size="sm" color="primary" isLoading={busy} isDisabled={receipt ? busy || (!!permission && !confirmed) : !valid || !!recovery.error} onClick={() => void act()}>{t(receipt ? permission ? "fleet.permissionBind" : "fleet.permissionRead" : custom ? "fleet.permissionSaveReview" : "fleet.permissionRead")}</Button>}
         </div>}
