@@ -92,6 +92,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
     const materials = useMaterial();
     const side = useSideChat();
     const [uploading, setUploading] = useState(false);
+    const uploadInFlight = useRef(false);
     const [uploadError, setUploadError] = useState<{ conversation: string; project: string; file: string; phase: MaterialUploadPhase | "draft"; status?: number; remaining: number } | null>(null);
     const [openedMaterial, setOpenedMaterial] = useState<MaterialRef | null>(null);
     const { intent, consume } = useIntent();
@@ -379,7 +380,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
 
     async function submit(line?: string) {
         const input = (line ?? text).trim();
-        if ((!input && !draftMaterials.length) || uploading || !canSubmit || submission || isStopPending(conversation) || creatingRequest.current || !context) return;
+        if ((!input && !draftMaterials.length) || uploadInFlight.current || !canSubmit || submission || isStopPending(conversation) || creatingRequest.current || !context) return;
         if (busy && !queueing) { setStatus(t("console.queueDisabled")); return; }
         let pending: Submission | null;
         // A verb chip or a picker sends its own line; only what the person
@@ -481,8 +482,10 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
     useEffect(() => { materials.setTarget(context?.project ? { conversation, project: context.project.id, title } : null); return () => materials.setTarget(null); }, [conversation, context?.project?.id, title, materials.setTarget]);
     async function upload(files: FileList | File[] | null) {
         const chosen = Array.from(files ?? []);
-        if (!chosen.length || uploading || !context?.project || !submissionSupport.material_refs) return;
+        if (!chosen.length || !context?.project || !submissionSupport.material_refs) return;
+        if (uploadInFlight.current) { setStatus(t("materials.uploadBusy")); return; }
         const target = { conversation, project: context.project.id, title };
+        uploadInFlight.current = true;
         setUploading(true); setStatus(""); setUploadError(null);
         try {
             for (const [index, file] of chosen.entries()) {
@@ -501,7 +504,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
                     break;
                 }
             }
-        } finally { setUploading(false); }
+        } finally { uploadInFlight.current = false; setUploading(false); }
     }
     const uploadErrorReason = uploadError?.phase === "draft" ? "materials.uploadDraftFailed"
         : uploadError?.phase === "receipt" ? "materials.uploadReceiptInvalid"
@@ -564,6 +567,12 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
         if (!submissionSupport.material_refs) { setStatus(t("materials.pasteUnsupported")); return; }
         if (!context?.project) { setStatus(t("materials.noTarget")); return; }
         void upload(files.map(stamped));
+    });
+    const dropFiles = useEventCallback((files: File[]) => {
+        if (!files.length) { setStatus(t("materials.dropUnavailable")); return; }
+        if (!submissionSupport.material_refs) { setStatus(t("materials.dropUnsupported")); return; }
+        if (!context?.project) { setStatus(t("materials.noTarget")); return; }
+        void upload(files);
     });
     const submitLine = useEventCallback(() => void submit());
     const stopLine = useEventCallback(() => void stop());
@@ -696,7 +705,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
                             </div>}
                             {openedMaterial && context?.project && <MaterialPreview project={context.project.id} anchor={openedMaterial} onClose={() => setOpenedMaterial(null)} />}
                             <Composer
-                                value={text} hasMaterials={draftMaterials.length > 0} onChange={changeText} onPasteFiles={pasteFiles} onSubmit={submitLine} onStop={stopLine}
+                                value={text} hasMaterials={draftMaterials.length > 0} onChange={changeText} onPasteFiles={pasteFiles} onDropFiles={dropFiles} onSubmit={submitLine} onStop={stopLine}
                                 busy={busy} pending={!!submission} stopping={stopping} disabled={creating || !context || !canSubmit} boxRef={box} onKey={pressKey}
                                 quotes={quotes} onDropQuote={dropQuote}
                                 rewind={rewindView} onCancelRewind={dropRewind}

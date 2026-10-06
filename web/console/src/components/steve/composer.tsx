@@ -44,6 +44,7 @@ export interface ComposerProps {
     // uploads it the way the attach button does. Text pasted alongside it
     // is still typed into the box.
     onPasteFiles?: (files: File[]) => void;
+    onDropFiles?: (files: File[]) => void;
     onChange: (s: string) => void;
     onSubmit: () => void;
     onStop: () => void;
@@ -71,8 +72,18 @@ const chip = "composer-chip";
 export const Composer = memo(function Composer(p: ComposerProps) {
     const { t } = useI18n();
     const nodeLabelOf = useNodeLabel();
+    const inputDisabled = !!p.disabled || (p.busy && p.queueing === false);
     return (
-        <div className="composer">
+        <div className="composer" onDragOver={(event) => {
+            if (!p.onDropFiles || !Array.from(event.dataTransfer.types).includes("Files")) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = inputDisabled ? "none" : "copy";
+        }} onDrop={(event) => {
+            const files = Array.from(event.dataTransfer.files);
+            if (event.defaultPrevented || !p.onDropFiles || (!files.length && !Array.from(event.dataTransfer.types).includes("Files"))) return;
+            event.preventDefault();
+            if (!inputDisabled) p.onDropFiles(files);
+        }}>
             {p.suggestions.length > 0 && (
                 <div className="absolute bottom-full left-0 z-10 mb-2 w-full max-w-2xl overflow-hidden rounded-xl bg-primary shadow-lg ring-1 ring-secondary">
                     <ul className="max-h-72 overflow-y-auto py-1">
@@ -120,11 +131,12 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                     handle={p.boxRef}
                     value={p.value}
                     label={t("consoleChrome.message")}
-                    disabled={p.disabled || (p.busy && p.queueing === false)}
+                    disabled={inputDisabled}
                     placeholder={p.disabled ? t("consoleChrome.preparing") : p.busy ? (p.queueing === false ? t("consoleChrome.processing") : t("consoleChrome.queuePlaceholder")) : t("consoleChrome.placeholder")}
                     onChange={p.onChange}
                     onKey={p.onKey}
                     onPasteFiles={p.onPasteFiles}
+                    onDropFiles={p.onDropFiles}
                 />
                 <div className="composer-controls"><div className="composer-options">
                     <Dropdown.Root>
