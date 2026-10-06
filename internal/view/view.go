@@ -204,13 +204,15 @@ type Choice struct {
 	Detail string
 }
 
-// Option is one selector an agent exposes: its id and name, the category
-// it declares ("model", "mode", or its own), what it is set to now, and
-// what it could be set to.
+// Option is one setting an agent exposes. Type distinguishes opaque select
+// IDs from boolean values. Current is the confirmed ID or canonical
+// "true"/"false"; empty means no current value was reported for a boolean.
+// Boolean options have no choices.
 type Option struct {
 	ID       string
 	Name     string
 	Category string
+	Type     string
 	Current  string
 	Choices  []Choice
 }

@@ -3,6 +3,7 @@ package acphost
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/gopact-ai/acp"
@@ -36,7 +37,8 @@ func newSessionState(modes *acp.SessionModeState, options *[]acp.SessionConfigOp
 // setOptions replaces the reported selectors. config_option_update carries
 // the whole list rather than a delta, so replacing is the correct merge.
 func (s *sessionState) setOptions(options []acp.SessionConfigOption) {
-	if len(options) == 0 {
+	// Missing metadata is not a replacement. A present empty full list is.
+	if options == nil {
 		return
 	}
 	s.mu.Lock()
@@ -161,12 +163,12 @@ func (s *sessionState) modeLabel() string {
 // the reserved category names double as the conventional IDs.
 func findOption(options []acp.SessionConfigOption, category acp.SessionConfigOptionCategory) (acp.SessionConfigOption, bool) {
 	for _, opt := range options {
-		if opt.Category != nil && *opt.Category == category {
+		if opt.Type == acp.SessionConfigOptionTypeSelect && opt.Category != nil && *opt.Category == category {
 			return opt, true
 		}
 	}
 	for _, opt := range options {
-		if string(opt.ID) == string(category) {
+		if opt.Type == acp.SessionConfigOptionTypeSelect && string(opt.ID) == string(category) {
 			return opt, true
 		}
 	}
@@ -177,6 +179,9 @@ func findOption(options []acp.SessionConfigOption, category acp.SessionConfigOpt
 // bool instead; neither model nor mode is ever boolean, so anything but a
 // string simply means "not a selector we can label".
 func selectValue(opt acp.SessionConfigOption) (string, bool) {
+	if opt.Type != acp.SessionConfigOptionTypeSelect {
+		return "", false
+	}
 	switch value := opt.CurrentValue.(type) {
 	case acp.SessionConfigValueID:
 		return string(value), value != ""
@@ -265,7 +270,7 @@ func (s *sessionState) currentOptionsLocked() []acp.SessionConfigOption {
 	}
 	for i := range out {
 		isMode := (out[i].Category != nil && *out[i].Category == acp.SessionConfigOptionCategoryMode) || string(out[i].ID) == string(acp.SessionConfigOptionCategoryMode)
-		if isMode {
+		if isMode && out[i].Type == acp.SessionConfigOptionTypeSelect {
 			out[i].CurrentValue = acp.SessionConfigValueID(s.modeID)
 			break
 		}
@@ -297,16 +302,25 @@ func (h *Host) ModelChoices(sid acp.SessionID) (acp.SessionConfigID, []view.Choi
 	return opt.ID, out
 }
 
-// optionsView renders every select-type option the agent exposes.
+// optionsView renders every supported option, including opaque categories.
+// Its string current values preserve the preference contract; Type carries
+// the distinction between a select ID "false" and the boolean false.
 func optionsView(options []acp.SessionConfigOption) []view.Option {
 	var out []view.Option
 	for _, opt := range options {
-		if opt.Type != "" && opt.Type != acp.SessionConfigOptionTypeSelect {
+		if opt.Type != acp.SessionConfigOptionTypeSelect && opt.Type != acp.SessionConfigOptionTypeBoolean {
 			continue
 		}
-		o := view.Option{ID: string(opt.ID), Name: opt.Name}
+		o := view.Option{ID: string(opt.ID), Name: opt.Name, Type: string(opt.Type)}
 		if opt.Category != nil {
 			o.Category = string(*opt.Category)
+		}
+		if opt.Type == acp.SessionConfigOptionTypeBoolean {
+			if value, ok := opt.CurrentValue.(bool); ok {
+				o.Current = strconv.FormatBool(value)
+			}
+			out = append(out, o)
+			continue
 		}
 		if value, ok := selectValue(opt); ok {
 			o.Current = value
@@ -328,10 +342,8 @@ func optionsView(options []acp.SessionConfigOption) []view.Option {
 	return out
 }
 
-// SetOption changes one of the agent's selectors. The agent confirms with a
-// config_option_update, which is what actually moves Steve's own record, so
-// this does not write the new value locally: an agent that refuses or
-// substitutes a value stays the authority on what it is running.
+// SetOption proposes a value using the reported descriptor's wire type.
+// Only the agent's full response or config_option_update changes Actual.
 func (h *Host) SetOption(ctx context.Context, sid acp.SessionID, generation uint64, id acp.SessionConfigID, value string) error {
 	h.mu.Lock()
 	if err := h.SessionBlockedLocked(sid); err != nil {
@@ -343,27 +355,51 @@ func (h *Host) SetOption(ctx context.Context, sid acp.SessionID, generation uint
 		return fmt.Errorf("agent process changed before set option")
 	}
 	caller := h.caller
-	known := h.sessions[sid] != nil
+	state := h.sessions[sid]
 	h.mu.Unlock()
-	if caller == nil || !known {
+	if caller == nil || state == nil {
 		return fmt.Errorf("session %q is not open", sid)
 	}
-	req := acp.ValueIDSetSessionConfigOptionRequest(sid, id, acp.SessionConfigValueID(value))
+	var descriptor *acp.SessionConfigOption
+	options := state.currentOptions()
+	for i := range options {
+		if options[i].ID == id {
+			descriptor = &options[i]
+			break
+		}
+	}
+	if descriptor == nil {
+		return fmt.Errorf("session %q exposes no config option %q", sid, id)
+	}
+	var req acp.SetSessionConfigOptionRequest
+	switch descriptor.Type {
+	case acp.SessionConfigOptionTypeSelect:
+		req = acp.ValueIDSetSessionConfigOptionRequest(sid, id, acp.SessionConfigValueID(value))
+	case acp.SessionConfigOptionTypeBoolean:
+		if string(id) == "model" || string(id) == "mode" ||
+			descriptor.Category != nil && (*descriptor.Category == acp.SessionConfigOptionCategoryModel || *descriptor.Category == acp.SessionConfigOptionCategoryMode) {
+			return fmt.Errorf("config option %q: model and mode require a select descriptor", id)
+		}
+		if value != "true" && value != "false" {
+			return fmt.Errorf("config option %q: boolean value must be \"true\" or \"false\"", id)
+		}
+		req = acp.BooleanSetSessionConfigOptionRequest(sid, id, value == "true")
+	default:
+		return fmt.Errorf("config option %q has unsupported type %q", id, descriptor.Type)
+	}
 	resp, err := caller.SetSessionConfigOption(ctx, &req)
 	if err != nil {
 		return fmt.Errorf("session/set_config_option: %w", err)
 	}
-	// Some agents answer with the full revised list instead of notifying.
-	if resp != nil && len(resp.ConfigOptions) > 0 {
-		h.mu.Lock()
-		state := h.sessions[sid]
-		sameGeneration := h.generation == generation && h.alive
-		h.mu.Unlock()
-		if state == nil || !sameGeneration {
-			return fmt.Errorf("agent session ended before confirming settings")
-		}
-		state.setOptions(resp.ConfigOptions)
+	if resp == nil || resp.ConfigOptions == nil {
+		return fmt.Errorf("session/set_config_option: agent omitted the required configOptions confirmation")
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.sessions[sid] != state || h.generation != generation || !h.alive {
+		return fmt.Errorf("agent session ended before confirming settings")
+	}
+	state.setOptions(resp.ConfigOptions)
 	return nil
 }
 

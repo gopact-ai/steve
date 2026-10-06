@@ -475,18 +475,27 @@ func ApplyPreferences(ctx context.Context, r Runner, agentID, model string, opti
 		if found.Category == "model" {
 			continue // the model is handled above, by name
 		}
-		picked, ok := MatchChoice(found.Choices, want)
-		if !ok {
-			slog.Warn(fmt.Sprintf("harness: agent %q pins %s=%q, not among %d choices", agentID, id, want, len(found.Choices)), "agent", agentID)
+		value := want
+		if found.Type == "boolean" {
+			if found.ID == "model" || found.ID == "mode" || found.Category == "mode" || want != "true" && want != "false" {
+				slog.Warn("harness: invalid boolean preference", "agent", agentID, "option", id)
+				continue
+			}
+		} else {
+			picked, ok := MatchChoice(found.Choices, want)
+			if !ok {
+				slog.Warn(fmt.Sprintf("harness: agent %q pins %s=%q, not among %d choices", agentID, id, want, len(found.Choices)), "agent", agentID)
+				continue
+			}
+			value = picked.Value
+		}
+		if value == found.Current {
 			continue
 		}
-		if picked.Value == found.Current {
-			continue
-		}
-		if err := configurable.SetOption(ctx, id, picked.Value); err != nil {
+		if err := configurable.SetOption(ctx, id, value); err != nil {
 			slog.Error(fmt.Sprintf("harness: agent %q set %s=%q: %v", agentID, id, want, err), "agent", agentID)
 		} else {
-			slog.Info(fmt.Sprintf("harness: agent %q set %s=%q (was %q)", agentID, id, picked.Value, found.Current), "agent", agentID)
+			slog.Info(fmt.Sprintf("harness: agent %q requested %s=%q (was %q)", agentID, id, value, found.Current), "agent", agentID)
 			changed = true
 		}
 	}
