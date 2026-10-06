@@ -59,8 +59,10 @@ func (a *operationParticipant) restoreSession(ctx context.Context, req *acp.Load
 		close(a.loadEntered)
 		<-a.loadRelease
 	}
-	if err := a.client.Update(context.WithoutCancel(ctx), &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("late replay history"))}); err != nil {
-		return nil, err
+	if method == "load" {
+		if err := a.client.Update(context.WithoutCancel(ctx), &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("late replay history"))}); err != nil {
+			return nil, err
+		}
 	}
 	if a.replyOptions {
 		category := acp.SessionConfigOptionCategoryModel
@@ -171,6 +173,16 @@ func TestLoadTimeoutRetainsGateAgainstLateHistory(t *testing.T) {
 		t.Error("prompt reached the peer during unknown load")
 	case <-time.After(time.Second):
 		t.Fatal("prompt guard did not answer")
+	}
+	awaitOperation(t, a.responded)
+	if _, err := h.ListSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.OpenSession(t.Context(), sid, SessionConfig{Workdir: cfg.Workdir}); !errors.Is(err, ErrSessionOperationUnconfirmed) {
+		t.Fatalf("late load ACK unblocked cached open: %v", err)
+	}
+	if _, _, err := h.Prompt(t.Context(), sid, generation, "still must not dispatch", nil); !errors.Is(err, ErrSessionOperationUnconfirmed) {
+		t.Fatalf("late load ACK unblocked prompt: %v", err)
 	}
 	if a.calls.Load() != 0 || a.process.kills.Load() != 0 {
 		t.Error("unknown load submitted close or killed shared host")
