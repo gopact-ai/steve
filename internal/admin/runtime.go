@@ -47,19 +47,20 @@ func (o *LocalObservation) RunLaunchProbe(ctx context.Context, store *ConfigStor
 	if o == nil || o.Launch == nil {
 		return
 	}
+	var planned uint64
 	o.Launch.Run(ctx, func() []string {
-		var tools, agents []string
-		store.Read(func(cfg *config.Config) {
-			if cfg == nil {
-				return
-			}
-			tools = cfg.Gateway.Tools
-			agents = make([]string, 0, len(cfg.Harnesses))
-			for _, h := range cfg.Harnesses {
-				agents = append(agents, h.Command)
-			}
-		})
-		return node.BackgroundToolCommands(tools, agents)
+		snapshot, epoch := store.launchSnapshot()
+		planned = epoch
+		if snapshot == nil {
+			return nil
+		}
+		agents := make([]string, 0, len(snapshot.Harnesses))
+		for _, h := range snapshot.Harnesses {
+			agents = append(agents, h.Command)
+		}
+		return node.BackgroundToolCommands(snapshot.Gateway.Tools, agents)
+	}, func(_ string, start func() error) (bool, error) {
+		return store.admitLaunch(planned, start)
 	})
 }
 

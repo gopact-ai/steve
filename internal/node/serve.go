@@ -306,7 +306,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			slog.Warn(fmt.Sprintf("steve-node: skills %s from last run could not be materialized: %v", hash[:12], err), "skills", hash)
 		}
 	}
-	s.backgroundWG.Go(func() { s.launch.Run(ctx, s.commands) })
+	s.backgroundWG.Go(func() { s.runLaunchProbe(ctx) })
 	if err := s.startBroker(); err != nil {
 		return err
 	}
@@ -390,13 +390,35 @@ func (s *Server) nextSequence() int64 {
 
 // commands only checks explicitly configured host tools. Agent executables
 // require their actual argv/env and must not be started by discovery.
-func (s *Server) commands() []string {
-	cfg := s.conf()
+func (s *Server) commands() []string { return backgroundCommands(s.conf()) }
+
+func backgroundCommands(cfg ServerConfig) []string {
 	agents := make([]string, 0, len(cfg.Harnesses))
 	for _, h := range cfg.Harnesses {
 		agents = append(agents, h.Command)
 	}
 	return BackgroundToolCommands(cfg.Tools, agents)
+}
+
+func (s *Server) runLaunchProbe(ctx context.Context) {
+	var planned *ServerConfig
+	s.launch.Run(ctx, func() []string {
+		planned = s.cfg.Load()
+		return backgroundCommands(*planned)
+	}, func(_ string, start func() error) (bool, error) {
+		return s.admitToolLaunch(planned, start)
+	})
+}
+
+// Admission and every live cfg.Store share settingsMu. Only version checking
+// and cmd.Start run here; path resolution and the child's Wait run outside.
+func (s *Server) admitToolLaunch(planned *ServerConfig, start func() error) (bool, error) {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	if planned == nil || s.cfg.Load() != planned {
+		return false, nil
+	}
+	return true, start()
 }
 
 // BackgroundToolCommands excludes configured agent executables, including PATH,
