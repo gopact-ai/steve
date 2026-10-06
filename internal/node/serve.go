@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -387,11 +388,84 @@ func (s *Server) nextSequence() int64 {
 	return s.seq
 }
 
-// commands is every binary this machine offers and should see start.
+// commands only checks explicitly configured host tools. Agent executables
+// require their actual argv/env and must not be started by discovery.
 func (s *Server) commands() []string {
-	out := make([]string, 0, len(s.conf().Harnesses)+len(s.conf().Tools))
-	for _, h := range s.conf().Harnesses {
-		out = append(out, h.Command)
+	cfg := s.conf()
+	agents := make([]string, 0, len(cfg.Harnesses))
+	for _, h := range cfg.Harnesses {
+		agents = append(agents, h.Command)
 	}
-	return append(out, s.conf().Tools...)
+	return BackgroundToolCommands(cfg.Tools, agents)
+}
+
+// BackgroundToolCommands excludes configured agent executables, including PATH,
+// symlink and hard-link aliases, from host-tool launch checks. A shared program
+// remains observable by PATH; running --version is not an ACP handshake.
+func BackgroundToolCommands(tools, agentCommands []string) []string {
+	type executable struct {
+		path string
+		info os.FileInfo
+	}
+	resolve := func(command string) (executable, bool) {
+		path, err := exec.LookPath(command)
+		if err != nil {
+			return executable{}, false
+		}
+		path, err = filepath.Abs(path)
+		if err != nil {
+			return executable{}, false
+		}
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return executable{}, false
+		}
+		info, err := os.Stat(resolved)
+		if err != nil {
+			return executable{}, false
+		}
+		return executable{resolved, info}, true
+	}
+	same := func(a, b executable) bool { return a.path == b.path || os.SameFile(a.info, b.info) }
+	blocked := make([]executable, 0, len(agentCommands))
+	seen := make(map[string]bool, len(agentCommands))
+	for _, command := range agentCommands {
+		if seen[command] {
+			continue
+		}
+		seen[command] = true
+		if file, ok := resolve(command); ok {
+			blocked = append(blocked, file)
+		}
+	}
+	var out []string
+	var selected []executable
+	for _, tool := range tools {
+		file, ok := resolve(tool)
+		if !ok {
+			continue
+		}
+		excluded := false
+		for _, agent := range blocked {
+			if same(file, agent) {
+				excluded = true
+				break
+			}
+		}
+		if excluded {
+			continue
+		}
+		for _, prior := range selected {
+			if same(file, prior) {
+				excluded = true
+				break
+			}
+		}
+		if excluded {
+			continue
+		}
+		out = append(out, tool)
+		selected = append(selected, file)
+	}
+	return out
 }

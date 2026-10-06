@@ -41,6 +41,28 @@ func NewLocalObservation(launch *node.LaunchProbe) *LocalObservation {
 	return o
 }
 
+// RunLaunchProbe observes explicitly configured host tools, never a configured
+// agent command. The caller owns this worker's context and shutdown join.
+func (o *LocalObservation) RunLaunchProbe(ctx context.Context, store *ConfigStore) {
+	if o == nil || o.Launch == nil {
+		return
+	}
+	o.Launch.Run(ctx, func() []string {
+		var tools, agents []string
+		store.Read(func(cfg *config.Config) {
+			if cfg == nil {
+				return
+			}
+			tools = cfg.Gateway.Tools
+			agents = make([]string, 0, len(cfg.Harnesses))
+			for _, h := range cfg.Harnesses {
+				agents = append(agents, h.Command)
+			}
+		})
+		return node.BackgroundToolCommands(tools, agents)
+	})
+}
+
 // number is the generation and next sequence of a snapshot.
 func (o *LocalObservation) number() (generation, sequence int64) {
 	o.generation.CompareAndSwap(0, time.Now().Unix())

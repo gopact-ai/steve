@@ -30,6 +30,28 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 		Source: "node",
 	}
 
+	// Bare-executable launch cache entries belong only to current host tools.
+	// Ignore old agent/MCP launch evidence, including programs now shared with
+	// an agent; PATH presence remains a separate, side-effect-free fact.
+	if o.Launch != nil {
+		agents := make([]string, 0, len(o.Harnesses))
+		for _, h := range o.Harnesses {
+			agents = append(agents, h.Command)
+		}
+		allowed := make(map[string]bool)
+		for _, command := range BackgroundToolCommands(o.Tools, agents) {
+			if path, err := exec.LookPath(command); err == nil {
+				allowed[path] = true
+			}
+		}
+		lookup := o.Launch
+		o.Launch = func(path string) (LaunchResult, bool) {
+			if !allowed[path] {
+				return LaunchResult{}, false
+			}
+			return lookup(path)
+		}
+	}
 	ids := make([]string, 0, len(o.Harnesses))
 	for id := range o.Harnesses {
 		ids = append(ids, id)
@@ -132,7 +154,7 @@ func (o Observe) commandCapability(now time.Time, kind ability.Kind, id, cmd str
 	// Being on PATH is existence; having started is launchable. The
 	// launch check ran on its own clock, so it carries its own time,
 	// and a binary that would not start makes the entry unavailable.
-	if o.Launch != nil {
+	if kind == ability.Tool && o.Launch != nil {
 		if r, ok := o.Launch(path); ok {
 			c.Evidence = append(c.Evidence, ability.Evidence{Kind: ability.Observed, Method: "launch", OK: r.OK, Result: r.Result, At: r.At})
 			if r.OK {
