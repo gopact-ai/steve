@@ -1,8 +1,6 @@
 package app
 
-import (
-	"context"
-)
+import "context"
 
 func assembleFleetWorkers(boot runtimeAssembly, storage ledgerAssembly, machines fleetAssembly, modelInfo modelsAssembly, work executionAssembly, projection readModelAssembly) error {
 	background := boot.Background()
