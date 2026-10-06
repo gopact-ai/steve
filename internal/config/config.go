@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/adapter"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/fsx"
+	"github.com/gopact-ai/steve/internal/launchconfig"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plugins"
 )
@@ -699,18 +699,8 @@ func (c *Config) validateNodeEndpoints() error {
 // adapter or a command of its own, never both or neither.
 func (c *Config) validateHarnessDeclarations() error {
 	for id, item := range c.Harnesses {
-		switch {
-		case item.Adapter != "" && item.Command != "":
-			return fmt.Errorf("harness %q sets both adapter and command; pick one", id)
-		case item.Adapter == "" && item.Command == "":
-			return fmt.Errorf("harness %q needs an adapter or a command", id)
-		case item.Adapter != "":
-			if _, known := adapter.Catalog[item.Adapter]; !known {
-				return fmt.Errorf("harness %q: adapter %q is not one of %s", id, item.Adapter, strings.Join(adapter.Names(), ", "))
-			}
-			if len(item.Args) > 0 {
-				return fmt.Errorf("harness %q: an adapter takes no args", id)
-			}
+		if err := launchconfig.Validate(item.Adapter, item.Command, item.Args, item.Env); err != nil {
+			return fmt.Errorf("harness %q: %w", id, err)
 		}
 	}
 	return nil
