@@ -90,7 +90,7 @@ func (a *Service) describeOffers(ctx context.Context, name string, candidates []
 		candidates[i].Model = harness.Model
 		candidates[i].Models = harness.Models
 		for _, selector := range harness.Selectors {
-			candidates[i].Selectors = append(candidates[i].Selectors, agenttools.CandidateSelector{ID: selector.ID, Name: selector.Name, Category: selector.Category, Current: selector.Current, Choices: selector.Choices, Values: selector.Values})
+			candidates[i].Selectors = append(candidates[i].Selectors, agenttools.CandidateSelector{ID: selector.ID, Name: selector.Name, Type: selector.Type, Category: selector.Category, Current: selector.Current, Choices: selector.Choices, Values: selector.Values})
 		}
 	}
 }
