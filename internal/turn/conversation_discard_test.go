@@ -99,9 +99,9 @@ func TestDiscardConversationRefusesWhileATurnRuns(t *testing.T) {
 	}
 }
 
-// A machine that cannot be reached must not make a conversation
-// permanent: the attempt is made, and the delete finishes without it.
-func TestDiscardConversationSurvivesAnUnreachableMachine(t *testing.T) {
+// A failed close without a durable obligation must preserve the original
+// records; a later retry can close the session and delete the conversation.
+func TestDiscardConversationKeepsAnUnreachableSession(t *testing.T) {
 	c, manager, tasks, _ := discardFixture(t)
 	manager.refuse = errors.New("node is offline")
 	if err := c.store.SaveSession(state.Session{ConversationID: "console:one", AgentID: "worker", HarnessID: "mock", UpstreamID: "ns_1", Workspace: t.TempDir()}); err != nil {
@@ -112,18 +112,22 @@ func TestDiscardConversationSurvivesAnUnreachableMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := c.DiscardConversation(context.Background(), "console:one"); err != nil {
-		t.Fatalf("discard: %v", err)
+	if err := c.DiscardConversation(context.Background(), "console:one"); !errors.Is(err, manager.refuse) {
+		t.Fatalf("discard swallowed close failure: %v", err)
 	}
 
 	if len(manager.closed) != 1 {
 		t.Fatalf("closed sessions = %v; want one attempt", manager.closed)
 	}
-	if _, ok := tasks.Get(created.ID); ok {
-		t.Fatalf("task %s survived its conversation", created.ID)
+	if _, ok := tasks.Get(created.ID); !ok {
+		t.Fatalf("task %s lost its pending close authority", created.ID)
 	}
-	if sessions := c.store.Conversation("console:one").Sessions; len(sessions) != 0 {
-		t.Fatalf("session records survived: %+v", sessions)
+	if sessions := c.store.Conversation("console:one").Sessions; len(sessions) != 1 {
+		t.Fatalf("unconfirmed close lost its session: %+v", sessions)
+	}
+	manager.refuse = nil
+	if err := c.DiscardConversation(context.Background(), "console:one"); err != nil {
+		t.Fatal(err)
 	}
 }
 

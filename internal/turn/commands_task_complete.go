@@ -17,7 +17,7 @@ func (c commands) taskComplete(ctx context.Context, req Request, title string, t
 		if !ok || current.Channel != tracked.Channel {
 			return task.ErrCompleteRoot
 		}
-		if !current.CompletedByUser && c.cancels[sessionKey(current.Channel, current.Member)] != nil {
+		if !current.CompletedByUser && (c.cancels[sessionKey(current.Channel, current.Member)] != nil || c.retiring[current.Channel]) {
 			return task.ErrCompleteBusy
 		}
 		if _, ok := c.plans.ForTask(current.ID); ok {

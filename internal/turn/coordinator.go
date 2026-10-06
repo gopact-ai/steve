@@ -259,6 +259,7 @@ type coordinatorState struct {
 	lastSeen        map[string]time.Time
 	active          map[string]harness.Runner
 	cancels         map[string]*turnEntry
+	retiring        map[string]bool
 	cancelPending   map[string]time.Time
 	skillsLock      int
 }
@@ -495,6 +496,12 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 }
 
 func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
+	c.mu.Lock()
+	retiring := c.retiring[req.ConversationID]
+	c.mu.Unlock()
+	if retiring {
+		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel), Cause: ErrConversationBusy}
+	}
 	// Every arriving message is evidence that someone is present. The
 	// offline reminder reads exactly this: nothing arrived while the turn
 	// ran, so the person who asked is no longer watching.
