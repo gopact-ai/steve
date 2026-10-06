@@ -67,3 +67,28 @@ func TestObservedNodeAgentSelectorWireTypePreservesFalseAndUnset(t *testing.T) {
 		})
 	}
 }
+
+func TestObservedDesktopAgentSelectorWireTypePreservesFalseAndUnset(t *testing.T) {
+	a, _ := desktopAdminFixture(t)
+	book := models.New()
+	book.Observe(models.Observation{Harness: "grok", Source: "session", Selectors: models.SelectorsOf([]view.Option{
+		{ID: "toggle", Name: "Toggle", Type: "boolean", Category: "vendor/private", Current: "false"},
+		{ID: "unset", Name: "Unspecified", Type: "boolean"},
+		{ID: "opaque", Name: "Opaque", Type: "select", Current: "false", Choices: []view.Choice{{Value: "false", Label: "Literal false"}}},
+	})})
+	a.View = readmodel.New(readmodel.Sources{Hub: readmodel.Hub{Node: "hub"}, Models: book,
+		HubAdvert: func() nodewire.Advert {
+			return nodewire.Advert{Node: "hub", Harnesses: []nodewire.Harness{{ID: "grok", Command: "not-executed"}}}
+		}})
+	found, err := a.DesktopDiscover(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range found.Agents {
+		if candidate.Harness == "grok" {
+			checkSelectorProjectionJSON(t, candidate.Selectors)
+			return
+		}
+	}
+	t.Fatal("installed fixture was not discovered")
+}
