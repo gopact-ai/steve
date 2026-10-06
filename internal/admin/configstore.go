@@ -21,9 +21,10 @@ import (
 type ConfigStore struct {
 	// write is held by one writer at a time, across its save; mu only
 	// while a writer changes the configuration readers see.
-	write sync.Mutex
-	mu    sync.RWMutex
-	cfg   *config.Config
+	write       sync.Mutex
+	mu          sync.RWMutex
+	cfg         *config.Config
+	publication uint64
 }
 
 // NewConfigStore guards cfg. Everything that reads or changes cfg must go
@@ -53,6 +54,35 @@ func (s *ConfigStore) Read(read func(*config.Config)) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	read(s.cfg)
+}
+
+// launchSnapshot copies the immutable published collections and their epoch
+// in one read. ConfigStore reuses cfg's address, so that pointer is not a token.
+func (s *ConfigStore) launchSnapshot() (*config.Config, uint64) {
+	if s == nil {
+		return nil, 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg == nil {
+		return nil, s.publication
+	}
+	snapshot := *s.cfg
+	return &snapshot, s.publication
+}
+
+// admitLaunch orders cmd.Start with publication. It never holds write, calls
+// business callbacks, checks filesystem paths or waits for a child to exit.
+func (s *ConfigStore) admitLaunch(epoch uint64, start func() error) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg == nil || epoch != s.publication {
+		return false, nil
+	}
+	return true, start()
 }
 
 // errUnchanged, returned by an Update's change, ends the Update without
@@ -97,6 +127,7 @@ func (s *ConfigStore) update(change, save func(*config.Config) error, published 
 	}
 	s.mu.Lock()
 	*s.cfg = *candidate
+	s.publication++
 	if published != nil {
 		published(s.cfg)
 	}

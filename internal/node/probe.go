@@ -57,12 +57,21 @@ func (p *LaunchProbe) Lookup(path string) (LaunchResult, bool) {
 	return r, ok
 }
 
+// LaunchAdmission must check current configuration and invoke start under the
+// same publication boundary. It returns false when nothing was dispatched.
+// The callback never includes waiting for the child process to exit.
+type LaunchAdmission func(path string, start func() error) (dispatched bool, err error)
+
 // Run checks every command now, then every ProbeEvery, until ctx ends.
 // commands is asked each round, so a configuration reloaded in between is
 // probed on the next pass. Wake forces a pass early.
-func (p *LaunchProbe) Run(ctx context.Context, commands func() []string) {
+func (p *LaunchProbe) Run(ctx context.Context, commands func() []string, admission LaunchAdmission) {
+	// A background worker requires its configuration owner.
+	if admission == nil {
+		return
+	}
 	for {
-		p.pass(ctx, commands())
+		p.pass(ctx, commands(), admission)
 		select {
 		case <-ctx.Done():
 			return
@@ -80,7 +89,11 @@ func (p *LaunchProbe) Wake() {
 	}
 }
 
-func (p *LaunchProbe) pass(ctx context.Context, commands []string) {
+func (p *LaunchProbe) pass(ctx context.Context, commands []string, admission ...LaunchAdmission) {
+	var admit LaunchAdmission
+	if len(admission) > 0 {
+		admit = admission[0]
+	}
 	seen := map[string]bool{}
 	checked, started := 0, 0
 	defer func() {
@@ -98,7 +111,10 @@ func (p *LaunchProbe) pass(ctx context.Context, commands []string) {
 		if ctx.Err() != nil {
 			return
 		}
-		r := Launch(ctx, path)
+		r, dispatched := launch(ctx, path, admit)
+		if !dispatched {
+			continue
+		}
 		if ctx.Err() != nil {
 			// The process is going away, not the binary: record nothing.
 			return
@@ -122,6 +138,11 @@ func (p *LaunchProbe) pass(ctx context.Context, commands []string) {
 // that could not begin — a wrong architecture, a missing library, no
 // permission — or the shell's 126/127 that means the same.
 func Launch(ctx context.Context, path string) LaunchResult {
+	result, _ := launch(ctx, path, nil)
+	return result
+}
+
+func launch(ctx context.Context, path string, admit LaunchAdmission) (LaunchResult, bool) {
 	ctx, cancel := context.WithTimeout(ctx, LaunchTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "--version")
@@ -131,7 +152,23 @@ func Launch(ctx context.Context, path string) LaunchResult {
 	cmd.Env = append(os.Environ(), "NO_COLOR=1", "TERM=dumb")
 	var out limitedBuffer
 	cmd.Stdout, cmd.Stderr = &out, &out
-	err := cmd.Run()
+	var err error
+	if admit != nil {
+		dispatched, startErr := admit(path, cmd.Start)
+		if !dispatched {
+			return LaunchResult{}, false
+		}
+		err = startErr
+	} else {
+		err = cmd.Start()
+	}
+	if err != nil && ctx.Err() != nil {
+		return LaunchResult{}, false
+	}
+	// Admission has released the configuration boundary before CLI Wait.
+	if err == nil {
+		err = cmd.Wait()
+	}
 	r := LaunchResult{At: time.Now().UTC(), Result: firstLine(out.String())}
 	var exit *exec.ExitError
 	switch {
@@ -165,7 +202,7 @@ func Launch(ctx context.Context, path string) LaunchResult {
 		r.Version = nil
 		r.Result = base + " starts; what it runs is not checked"
 	}
-	return r
+	return r, true
 }
 
 var launchers = map[string]bool{
