@@ -84,18 +84,26 @@ func applyRecoveryPreferences(ctx context.Context, text i18n.Catalog, runner har
 		if option == nil {
 			return errors.New(text.T(i18n.PrefsOptionMissing, id))
 		}
-		picked, ok := harness.MatchChoice(option.Choices, want)
-		if !ok {
-			return errors.New(text.T(i18n.PrefsOptionUnsupported, id, want))
+		desired := want
+		if option.Type == "boolean" {
+			if want != "true" && want != "false" {
+				return errors.New(text.T(i18n.PrefsOptionUnsupported, id, want))
+			}
+		} else {
+			picked, ok := harness.MatchChoice(option.Choices, want)
+			if !ok {
+				return errors.New(text.T(i18n.PrefsOptionUnsupported, id, want))
+			}
+			desired = picked.Value
 		}
-		if option.Current != picked.Value {
-			if err := configurable.SetOption(ctx, id, picked.Value); err != nil {
+		if option.Current != desired {
+			if err := configurable.SetOption(ctx, id, desired); err != nil {
 				return fmt.Errorf("%s: %w", text.T(i18n.PrefsOptionSet, id), err)
 			}
 		}
 		confirmed := false
 		for _, actual := range configurable.Settings().Options {
-			if actual.ID == id && actual.Current == picked.Value {
+			if actual.ID == id && actual.Type == option.Type && actual.Current == desired {
 				confirmed = true
 			}
 		}

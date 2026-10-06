@@ -828,6 +828,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		// that is not told the client can ask the user anything will never
 		// try, so leaving this empty silently disabled every agent question.
 		ClientCapabilities: &acp.ClientCapabilities{
+			Session:     &acp.ClientSessionCapabilities{ConfigOptions: &acp.SessionConfigOptionsCapabilities{Boolean: &acp.BooleanConfigOptionCapabilities{}}},
 			Elicitation: &acp.ElicitationCapabilities{Form: &acp.ElicitationFormCapabilities{}},
 		},
 	})

@@ -188,22 +188,7 @@ func (c *RepoCache) pass(ctx context.Context) {
 
 // selectorsOf keeps every selector a session exposed, choices by label
 // and by value, so the page can offer them and a pin can be matched.
-func SelectorsOf(options []steveview.Option) []models.Selector {
-	var out []models.Selector
-	for _, o := range options {
-		sel := models.Selector{ID: o.ID, Name: o.Name, Category: o.Category, Current: o.Current}
-		for _, c := range o.Choices {
-			label := c.Label
-			if label == "" {
-				label = c.Value
-			}
-			sel.Choices = append(sel.Choices, label)
-			sel.Values = append(sel.Values, c.Value)
-		}
-		out = append(out, sel)
-	}
-	return out
-}
+func SelectorsOf(options []steveview.Option) []models.Selector { return models.SelectorsOf(options) }
 
 // skillShipper keeps every node's harness homes holding the same skills
 // the hub enabled. The bundle is packed from the live map each time it is
