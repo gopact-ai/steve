@@ -20,17 +20,21 @@ func (c *Coordinator) RotateTask(conversationID, agentID, origin string) {
 	if origin == "" {
 		return
 	}
-	c.mu.Lock()
-	busy := c.cancels[sessionKey(conversationID, agentID)] != nil
-	c.mu.Unlock()
-	if busy {
+	c.requestMu.RLock()
+	defer c.requestMu.RUnlock()
+	if c.maintaining {
 		return
 	}
+	release, err := c.beginSessionRetirement(context.Background(), conversationID, agentID)
+	if err != nil {
+		return
+	}
+	defer release()
 	tracked, ok := c.tasks.Active(conversationID, agentID, origin)
 	if !ok {
 		return
 	}
-	_, err := c.closeSettled(context.Background(), []string{tracked.ID}, "")
+	_, err = c.closeSettled(context.Background(), []string{tracked.ID}, "")
 	switch {
 	case task.CompletionRefused(err):
 		slog.Info(fmt.Sprintf("turn: scheduled task %s stays open: %v", tracked.ID, err), "task", tracked.ID, "conversation", conversationID, "origin", origin)

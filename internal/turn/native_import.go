@@ -34,11 +34,16 @@ func (c *Coordinator) PreflightNativeImport(ctx context.Context, conversation, p
 // ImportNativeSession binds history without creating a task, process or prompt.
 // The first subsequent user message follows normal admission and native open.
 func (c *Coordinator) ImportNativeSession(ctx context.Context, conversation, projectID string, selected agent.Agent, ref nativehistory.Reference) error {
+	c.requestMu.RLock()
+	defer c.requestMu.RUnlock()
+	if c.maintaining {
+		return errors.New("native import is unavailable during maintenance")
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	c.mu.Lock()
 	key := sessionKey(conversation, selected.ID)
-	if c.skillsLock > 0 || c.cancels[key] != nil {
+	if c.skillsLock > 0 || c.cancels[key] != nil || c.retiring[conversation] {
 		c.mu.Unlock()
 		return errors.New("conversation is busy; retry its original import")
 	}

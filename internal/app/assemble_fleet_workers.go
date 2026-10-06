@@ -2,11 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
-	"time"
-
-	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 func assembleFleetWorkers(boot runtimeAssembly, storage ledgerAssembly, machines fleetAssembly, modelInfo modelsAssembly, work executionAssembly, projection readModelAssembly) error {
@@ -15,8 +10,6 @@ func assembleFleetWorkers(boot runtimeAssembly, storage ledgerAssembly, machines
 	attempts := storage.Attempts()
 	nodes := machines.Nodes()
 	projects := machines.Projects()
-	endpoints := modelInfo.Endpoints()
-	prober := modelInfo.Prober()
 	artifacts := work.Artifacts()
 	coordinator := work.Coordinator()
 	tasks := work.Tasks()
@@ -38,23 +31,11 @@ func assembleFleetWorkers(boot runtimeAssembly, storage ledgerAssembly, machines
 	// hand it to an agent, in the half-merged tree git kept.
 	background.Go(func(ctx context.Context) { sweepLandings(ctx, projects, artifacts, view, coordinator) })
 	background.Go(repos.Run)
-	background.Go(func(ctx context.Context) { sweepIdleTasks(ctx, boot.Book(), tasks, attempts, view) })
-	// Discover models for whatever nobody has run yet. It is discovery,
-	// not work: a session opened and closed, no prompt sent. Done off the
-	// startup path so a slow adapter never delays the first message.
 	background.Go(func(ctx context.Context) {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(5 * time.Second):
-		}
-		for _, r := range prober.ProbeAll(ctx, endpoints(ctx), false) {
-			if r.Err != nil {
-				slog.Warn(fmt.Sprintf("steve: probe %s/%s: %v", nodewire.Place(r.Endpoint.Node), r.Endpoint.Harness, r.Err), "node", nodewire.Place(r.Endpoint.Node), "harness", r.Endpoint.Harness)
-				continue
-			}
-			slog.Info(fmt.Sprintf("steve: %s/%s runs %q, offers %v", nodewire.Place(r.Endpoint.Node), r.Endpoint.Harness, r.Current, r.Available), "node", nodewire.Place(r.Endpoint.Node), "harness", r.Endpoint.Harness)
-		}
+		sweepIdleTasks(ctx, boot.Book(), tasks, attempts, view, coordinator.ReserveIdleClose)
 	})
+	// Registered launch configurations are not permission to execute them.
+	// Sessions report their actual settings; explicit model probes remain
+	// available without starting every configured agent during boot.
 	return nil
 }

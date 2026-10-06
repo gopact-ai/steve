@@ -91,3 +91,31 @@ func TestSessionRetirementRejectsAnotherCloseIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestSessionRetirementKeepsChangedMetadataWithTheSameNativeID(t *testing.T) {
+	for _, field := range []string{"project", "token"} {
+		t.Run(field, func(t *testing.T) {
+			store, _, _ := replicatedState(t)
+			debt := owedSession(t, store, "conversation", "agent", "ns_original")
+			original := store.Conversation("conversation").Sessions["agent"]
+			changed := original
+			switch field {
+			case "workspace":
+				changed.Workspace = "/changed"
+			case "project":
+				changed.ProjectVersion++
+			case "token":
+				changed.AgentToken = "synthetic-new-token"
+			}
+			if err := store.SaveSession(changed); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.RetireSession(original, debt.OwedAt, &debt); !errors.Is(err, ErrSessionChanged) {
+				t.Fatalf("stale retirement = %v", err)
+			}
+			if !reflect.DeepEqual(changed, store.Conversation("conversation").Sessions["agent"]) || len(store.OwedCloses()) != 0 {
+				t.Fatal("changed same-ID context was retired")
+			}
+		})
+	}
+}

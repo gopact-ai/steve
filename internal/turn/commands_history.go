@@ -1,6 +1,7 @@
 package turn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -33,12 +34,11 @@ func (c commands) historyCmd(req Request, selected agent.Agent, rest string) (Re
 	}
 	// A restore rewrites which session the next turn uses, so refuse while
 	// one is running rather than swapping it mid-flight.
-	c.mu.Lock()
-	busy := c.cancels[sessionKey(conversationID, selected.ID)] != nil
-	c.mu.Unlock()
-	if busy {
-		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
+	release, admissionErr := c.beginSessionRetirement(context.Background(), conversationID, selected.ID)
+	if admissionErr != nil {
+		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel), Cause: admissionErr}
 	}
+	defer release()
 	restored, err := c.store.RestoreSession(conversationID, selected.ID, index)
 	if err != nil {
 		if errors.Is(err, state.ErrAbandonedContext) {
