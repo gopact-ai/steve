@@ -157,6 +157,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/nodes/{name}/agents", s.guard(s.consoleNodeAgents))
 	mux.HandleFunc("POST /console/nodes/{name}/agents", s.guard(s.consoleNodeAgents))
 	mux.HandleFunc("POST /console/agents", s.guard(s.consoleAddAgent))
+	s.agentPermissionRoutes(mux)
 	mux.HandleFunc("POST /console/agents/approval", s.guard(s.consoleSyncApproval))
 	mux.HandleFunc("PUT /console/agents/{id}", s.guard(s.consoleUpdateAgent))
 	mux.HandleFunc("DELETE /console/agents/{id}", s.guard(s.consoleRemoveAgent))
@@ -1115,6 +1116,16 @@ func (s *Server) consoleAddAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.admin.AddAgent(r.Context(), req); err != nil {
+		if errors.Is(err, consoleapi.ErrAgentPermissionConflict) {
+			w.WriteHeader(http.StatusConflict)
+			writeJSON(w, map[string]string{"error": err.Error(), "code": "agent_permission_conflict"})
+			return
+		}
+		if errors.Is(err, consoleapi.ErrAgentPermissionConfirmationInvalid) {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]string{"error": err.Error(), "code": "agent_permission_confirmation_invalid"})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

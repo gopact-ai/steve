@@ -239,7 +239,33 @@ type AddAgentRequest struct {
 	// Default makes this the agent a conversation starts with. The first
 	// agent registered holds that place even when this is not asked for.
 	Default bool `json:"default,omitempty"`
+	// These assert what the owner confirmed; they never set execution policy.
+	// Omission preserves legacy registration. New command registration should
+	// read AgentPermission and submit both fields after explicit confirmation.
+	ExpectedPermission         *string `json:"expected_permission,omitempty"`
+	ExpectedPermissionRevision string  `json:"expected_permission_revision,omitempty"`
 }
+
+type AgentPermissionSource string
+
+const (
+	AgentPermissionSharedRemote AgentPermissionSource = "shared_remote_permissions"
+	AgentPermissionHubHarness   AgentPermissionSource = "hub_harness"
+	AgentPermissionDefaultRead  AgentPermissionSource = "default_read"
+)
+
+// AgentPermission is a coordinator-owned policy observation for one placement.
+// Revision identifies this policy/source/scope, not launch readiness or a grant.
+type AgentPermission struct {
+	Node       string                `json:"node"`
+	Harness    string                `json:"harness"`
+	Permission string                `json:"permission"`
+	Source     AgentPermissionSource `json:"source"`
+	Revision   string                `json:"revision"`
+}
+
+var ErrAgentPermissionConflict = errors.New("agent permission changed; read and confirm permission again")
+var ErrAgentPermissionConfirmationInvalid = errors.New("expected permission and its revision must be supplied together")
 
 // Admin changes the fleet at runtime and persists the change: the page
 // adds machines and agents without a restart.
@@ -253,6 +279,9 @@ type Admin interface {
 	// RemoveNode forgets a machine: nothing may still live on it.
 	RemoveNode(ctx context.Context, name string) error
 	AddAgent(ctx context.Context, req AddAgentRequest) error
+	// AgentPermission reads policy after validating the target's configured
+	// harness. It must not execute a program, refresh probes or change policy.
+	AgentPermission(ctx context.Context, node, harness string) (AgentPermission, error)
 	// Bootstrap is the script a machine runs, given its own token.
 	Bootstrap(name, token string) (string, bool)
 	// NodeBinary is the steve-node executable to hand a machine presenting
