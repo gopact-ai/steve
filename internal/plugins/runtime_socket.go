@@ -3,6 +3,7 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -32,6 +33,9 @@ func (s *Store) RuntimeSocket(ctx context.Context, ref RuntimeRef) (string, erro
 			return "", ErrIntegrity
 		}
 		if !validRuntimeSocketPath(location) {
+			if len(location) >= runtimeSocketPathLimit() {
+				return "", fmt.Errorf("%w: cached runtime socket address is too long (%d bytes; maximum %d); saved address unchanged; coordinate existing consumers before repairing the cached address", ErrIntegrity, len(location), runtimeSocketPathLimit()-1)
+			}
 			return "", ErrIntegrity
 		}
 		if err := ensureSocketDirectory(filepath.Dir(location)); err != nil {
@@ -63,14 +67,17 @@ func (s *Store) RuntimeSocket(ctx context.Context, ref RuntimeRef) (string, erro
 }
 
 func validRuntimeSocketPath(location string) bool {
-	// Filesystem Unix addresses need a trailing NUL; Darwin has 104 bytes.
-	limit := 104
-	if runtime.GOOS == "linux" {
-		limit = 108
-	}
-	return len(location) < limit && filepath.IsAbs(location) &&
+	return len(location) < runtimeSocketPathLimit() && filepath.IsAbs(location) &&
 		filepath.Base(location) == "mcp.sock" &&
 		strings.HasPrefix(filepath.Base(filepath.Dir(location)), "steve-plugin-socket-")
+}
+
+func runtimeSocketPathLimit() int {
+	// Filesystem Unix addresses need a trailing NUL; Darwin has 104 bytes.
+	if runtime.GOOS == "linux" {
+		return 108
+	}
+	return 104
 }
 
 func ensureSocketDirectory(dir string) error {

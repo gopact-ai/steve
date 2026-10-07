@@ -63,8 +63,17 @@ func TestRuntimeSocketRejectsOversizedCacheWithoutRewriting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RuntimeSocket(t.Context(), record.Ref); !errors.Is(err, ErrIntegrity) {
+	location, err := store.RuntimeSocket(t.Context(), record.Ref)
+	if location != "" || !errors.Is(err, ErrIntegrity) {
 		t.Fatalf("oversized cached address accepted: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cached runtime socket address is too long") ||
+		!strings.Contains(err.Error(), "saved address unchanged") ||
+		!strings.Contains(err.Error(), "coordinate existing consumers") {
+		t.Fatalf("cached address refusal is not actionable: %v", err)
+	}
+	if strings.Contains(err.Error(), socket) {
+		t.Fatal("cached address refusal exposed the private pathname")
 	}
 	after, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(before, after) {
