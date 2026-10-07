@@ -1,8 +1,9 @@
 import type { Conversation, ConversationContext, Exchange, MaterialRef, QuoteRef, Reply, Selectors, SessionSetup, Suggestion, Verb } from "../types";
 import { HTTPError, request, UnsentRequestError } from "../http";
 
-async function write<T>(path: string, options: { method: string; body?: unknown }): Promise<T> {
+async function write<T>(path: string, options: { method: string; body?: unknown }, beforeDispatch?: () => void): Promise<T> {
     await requireSubmissionSupport();
+    beforeDispatch?.();
     return request<T>(path, options);
 }
 
@@ -81,7 +82,7 @@ export async function initializeConversation(id: string, project: string, locale
 export const fetchSelectors = (conversation: string, agent: string, signal?: AbortSignal) => request<Selectors>(`/console/selectors?${channelQuery(conversation)}&agent=${encodeURIComponent(agent)}`, { signal });
 // live is true when the session answering right now took the change, so
 // it applies to what the agent does next rather than to the next turn.
-export const setPreferences = (conversation: string, agent: string, patch: Record<string, string>) => write<{ ok: boolean; live?: boolean; note?: string }>("/console/preferences", { method: "PUT", body: { conversation, agent, patch } });
+export const setPreferences = (conversation: string, agent: string, patch: Record<string, string>, beforeDispatch?: () => void) => write<{ ok: boolean; live?: boolean; note?: string }>("/console/preferences", { method: "PUT", body: { conversation, agent, patch } }, beforeDispatch);
 
 function commandID(): string {
     try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(16).slice(2)}`; }

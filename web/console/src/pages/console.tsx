@@ -24,6 +24,7 @@ import { SplitPane, SplitPaneProvider, useSplitPane, type SplitTab } from "@/com
 import { RAIL_WIDTH } from "@/components/steve/rail";
 import { Working } from "@/components/steve/trace";
 import { conversationContextRevision } from "@/lib/conversation-context-revision";
+import { sessionPreferenceScope } from "@/lib/session-options";
 import { Nothing } from "@/components/steve/ui";
 import { enqueue, deleteConversation, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchSuggest, fetchVerbs, send, updateConversation, initializeConversation, fetchSelectors, setPreferences, checkSubmissionSupport, requireSubmissionSupport, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { Sheet } from "@/components/steve/drawer";
@@ -587,8 +588,29 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
     const chooseProject = useEventCallback((id: string) => void submit(`/project use ${id}`));
     const chooseAgent = useEventCallback((id: string) => void submit(`/use ${id}`));
     const pressKey = useEventCallback((e: KeyboardEvent) => onKey(e));
-    const loadSelectors = useEventCallback(() => fetchSelectors(conversation, context!.agent!.id));
-    const prefer = useEventCallback(async (patch: Record<string, string>) => { if (!context?.agent) return; const running = !!live; const result = await setPreferences(conversation, context.agent.id, patch); if (activeConversation.current === conversation) { setStatus(t(result.live ? "console.preferenceLive" : running ? "console.preferenceNextTurn" : "console.preferenceSaved")); loadContext(); } });
+    const preferenceWorkspace = snap.projects.find(project => project.id === context?.project?.id)?.workspaces
+        .find(workspace => workspace.id === context?.agent?.place?.workspace && workspace.node === context?.agent?.place?.node);
+    const preferenceScope = sessionPreferenceScope(conversation, context, preferenceWorkspace);
+    const currentPreferenceScope = useRef(preferenceScope);
+    currentPreferenceScope.current = preferenceScope;
+    const requirePreferenceScope = (expected: string) => {
+        if (!context?.agent || currentPreferenceScope.current !== expected) throw new Error(t("consoleChrome.optionScopeChanged"));
+    };
+    const loadSelectors = useEventCallback(async (expected: string = preferenceScope) => {
+        requirePreferenceScope(expected);
+        const result = await fetchSelectors(conversation, context!.agent!.id);
+        requirePreferenceScope(expected);
+        return result;
+    });
+    const prefer = useEventCallback(async (patch: Record<string, string>, expected: string = preferenceScope) => {
+        requirePreferenceScope(expected);
+        const running = !!live;
+        const result = await setPreferences(conversation, context!.agent!.id, patch, () => requirePreferenceScope(expected));
+        requirePreferenceScope(expected);
+        if (result?.ok !== true) throw new Error(t("consoleChrome.optionPreferenceUnconfirmed"));
+        setStatus(t(result.live ? "console.preferenceLive" : running ? "console.preferenceNextTurn" : "console.preferenceSaved"));
+        loadContext();
+    });
 
     // Draft edits and streamed fragments do not change retained history.
     // Keep its element tree stable; the live turn below owns its own updates.
@@ -717,7 +739,7 @@ function ConsoleWorkbench({ initialConversation }: { initialConversation: string
                                 verbs={verbs} onVerb={runVerb}
                                 projects={snap.projects} project={context?.project} onProject={chooseProject}
                                 agents={agents} agent={context?.agent} onAgent={chooseAgent}
-                                preferenceKey={`${conversation}:${context?.agent?.id || ""}`}
+                                preferenceKey={preferenceScope}
                                 onSelectors={context?.agent ? loadSelectors : undefined}
                                 onPrefer={prefer}
                             />

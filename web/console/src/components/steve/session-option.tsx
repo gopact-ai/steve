@@ -3,9 +3,10 @@ import { useI18n } from "@/providers/locale-provider";
 import { booleanPreference, optionChoiceKey, optionChoiceValue, optionDefaultKey, reportedOption, type SessionOption } from "@/lib/session-options";
 
 // Three preference states, separate from the Agent's reported Actual.
-export function SessionOptionControl({ option, requested, disabled, editable = true, onChange }: {
+export function SessionOptionControl({ option, requested, acceptedRequest, disabled, editable = true, onChange }: {
     option: SessionOption;
     requested?: string;
+    acceptedRequest?: string;
     disabled?: boolean;
     editable?: boolean;
     onChange?: (value: string | undefined) => void;
@@ -17,6 +18,8 @@ export function SessionOptionControl({ option, requested, disabled, editable = t
     const pinned = requested !== undefined && requested !== "";
     const choices = option.type === "boolean" ? [{ value: "true", label: "true" }, { value: "false", label: "false" }] : option.choices;
     const items = [{ id: optionDefaultKey, label: t("consoleChrome.optionUnfixed") }, ...choices.filter(choice => choice.value !== "").map(choice => ({ id: optionChoiceKey(choice.value), label: choice.label }))];
+    const resetPending = acceptedRequest === "";
+    if (resetPending) items.push({ id: "accepted-reset", label: t("consoleChrome.optionResetPending") });
     if (pinned && !choices.some(choice => choice.value === requested)) items.push({ id: optionChoiceKey(requested), label: requested });
     const requestedLabel = pinned ? choices.find(choice => choice.value === requested)?.label || requested : t("consoleChrome.optionUnfixed");
     const validBoolean = option.type !== "boolean" || !pinned || booleanPreference(requested);
@@ -24,16 +27,18 @@ export function SessionOptionControl({ option, requested, disabled, editable = t
         <legend className="mb-1 text-sm font-medium text-primary [overflow-wrap:anywhere]">{option.name}</legend>
         <p translate="no" className="break-all font-mono text-xs text-quaternary">{option.id}{option.category ? ` · ${option.category}` : ""}</p>
         {editable && supported && onChange ? <Select size="sm" label={t("consoleChrome.optionRequested")}
-            isDisabled={disabled} selectedKey={pinned ? optionChoiceKey(requested) : optionDefaultKey} items={items}
+            isDisabled={disabled} selectedKey={resetPending ? "accepted-reset" : pinned ? optionChoiceKey(requested) : optionDefaultKey} items={items}
             onSelectionChange={key => {
                 if (key == null) return;
+                if (key === "accepted-reset") return;
                 const value = optionChoiceValue(String(key));
                 if (option.type === "boolean" && value !== undefined && !booleanPreference(value)) return;
                 onChange(value);
             }}>
-            {item => <Select.Item id={item.id}>{item.label}</Select.Item>}
+            {item => <Select.Item id={item.id} isDisabled={item.id === "accepted-reset"}>{item.label}</Select.Item>}
         </Select> : <p className="break-words text-xs text-secondary">{t("consoleChrome.optionRequestedValue", { value: requestedLabel })}</p>}
         <p className="break-words text-xs text-tertiary">{t("consoleChrome.optionReported", { value: reported === undefined || reported === "" ? t("consoleChrome.optionNotReported") : reported })}</p>
+        {acceptedRequest !== undefined && <p role="status" className="text-xs text-tertiary">{t("consoleChrome.optionReadbackPending")}</p>}
         {!supported && <p className="text-xs text-tertiary">{t("consoleChrome.optionUnsupported")}</p>}
         {!validBoolean && <p className="text-xs text-warning-primary">{t("consoleChrome.optionInvalidSaved")}</p>}
     </fieldset>;
