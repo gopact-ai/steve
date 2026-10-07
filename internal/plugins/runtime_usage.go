@@ -316,6 +316,11 @@ func (s *Store) CheckRuntimeRemovable(ref RuntimeRef) error {
 	if err != nil {
 		return err
 	}
+	want, _ := ref.Selection.Hash()
+	actual, err := info.Ref.Selection.Hash()
+	if err != nil || want != actual {
+		return ErrIntegrity
+	}
 	if !info.Retired {
 		return ErrRuntimeBusy
 	}
