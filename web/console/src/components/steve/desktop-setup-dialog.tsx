@@ -212,13 +212,17 @@ interface EnrollmentDraft { selected: string[]; names?: Record<string, string>; 
 function readEnrollment(key: string): EnrollmentDraft {
     try {
         const saved = JSON.parse(localStorage.getItem(key) || "null");
+        const models = saved?.models, options = saved?.options;
         const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
         const texts = (value: unknown): value is Record<string, string> => !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((item) => typeof item === "string");
+        const optionTexts = (value: unknown): value is Record<string, Record<string, string>> => !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every(texts);
         const chosen = (value: unknown): value is EnrollAgent[] => Array.isArray(value) && value.every((item) => item && typeof item.candidate_id === "string" && typeof item.agent_id === "string");
         return {
             selected: strings(saved?.selected) ? saved.selected : [],
             ...(texts(saved?.names) ? { names: saved.names } : {}),
             ...(texts(saved?.about) ? { about: saved.about } : {}),
+            ...(texts(models) ? { models: Object.fromEntries(Object.entries(models)) } : {}),
+            ...(optionTexts(options) ? { options: Object.fromEntries(Object.entries(options).map(([id, values]) => [id, Object.fromEntries(Object.entries(values))])) } : {}),
             ...(typeof saved?.primary === "string" ? { primary: saved.primary } : {}),
             ...(chosen(saved?.pending) ? { pending: saved.pending } : {}),
         };
