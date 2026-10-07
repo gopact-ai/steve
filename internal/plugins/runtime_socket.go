@@ -32,9 +32,9 @@ func (s *Store) RuntimeSocket(ctx context.Context, ref RuntimeRef) (string, erro
 		if err := json.Unmarshal(raw, &location); err != nil {
 			return "", ErrIntegrity
 		}
-		if !validRuntimeSocketPath(location) {
-			if len(location) >= runtimeSocketPathLimit() {
-				return "", fmt.Errorf("%w: cached runtime socket address is too long (%d bytes; maximum %d); saved address unchanged; coordinate existing consumers before repairing the cached address", ErrIntegrity, len(location), runtimeSocketPathLimit()-1)
+		if !validRuntimeSocketPath(location, runtime.GOOS) {
+			if limit := runtimeSocketPathLimit(runtime.GOOS); limit > 0 && len(location) >= limit {
+				return "", fmt.Errorf("%w: cached runtime socket address is too long (%d bytes; maximum %d); saved address unchanged; coordinate existing consumers before repairing the cached address", ErrIntegrity, len(location), runtimeSocketPathLimit(runtime.GOOS)-1)
 			}
 			return "", ErrIntegrity
 		}
@@ -47,37 +47,36 @@ func (s *Store) RuntimeSocket(ctx context.Context, ref RuntimeRef) (string, erro
 		return "", err
 	}
 	// TMPDIR can be as long as the state directory; keep only sockets here.
-	dir, err := os.MkdirTemp("/tmp", "steve-plugin-socket-")
+	dir, err := os.MkdirTemp(runtimeSocketTempBase(runtime.GOOS), "steve-plugin-socket-")
 	if err != nil {
 		return "", err
 	}
-	socket := filepath.Join(dir, "mcp.sock")
-	if !validRuntimeSocketPath(socket) {
-		_ = os.Remove(dir)
-		return "", ErrIntegrity
-	}
-	raw, err = json.Marshal(socket)
-	if err != nil {
-		return "", err
-	}
-	if err := s.writeRecord(filepath.Join(s.RuntimeDir(ref.ID), "socket.json"), raw); err != nil {
-		return "", err
-	}
-	return socket, nil
+	return s.publishRuntimeSocket(root, ref.ID, dir)
 }
 
-func validRuntimeSocketPath(location string) bool {
-	return len(location) < runtimeSocketPathLimit() && filepath.IsAbs(location) &&
+func validRuntimeSocketPath(location, goos string) bool {
+	limit := runtimeSocketPathLimit(goos)
+	return (limit == 0 || len(location) < limit) && filepath.IsAbs(location) &&
 		filepath.Base(location) == "mcp.sock" &&
 		strings.HasPrefix(filepath.Base(filepath.Dir(location)), "steve-plugin-socket-")
 }
 
-func runtimeSocketPathLimit() int {
+func runtimeSocketPathLimit(goos string) int {
+	if goos == "windows" {
+		return 0
+	}
 	// Filesystem Unix addresses need a trailing NUL; Darwin has 104 bytes.
-	if runtime.GOOS == "linux" {
+	if goos == "linux" {
 		return 108
 	}
 	return 104
+}
+
+func runtimeSocketTempBase(goos string) string {
+	if goos == "windows" {
+		return ""
+	}
+	return "/tmp"
 }
 
 func ensureSocketDirectory(dir string) error {

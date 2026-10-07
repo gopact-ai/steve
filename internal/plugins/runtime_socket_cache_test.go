@@ -94,11 +94,11 @@ func TestRuntimeSocketPathLimitCountsBytesAndTerminator(t *testing.T) {
 	}
 	prefix, suffix := "/tmp/steve-plugin-socket-", "/mcp.sock"
 	longest := prefix + strings.Repeat("x", limit-1-len(prefix)-len(suffix)) + suffix
-	if !validRuntimeSocketPath(longest) || validRuntimeSocketPath(strings.Replace(longest, "x", "xx", 1)) {
+	if !validRuntimeSocketPath(longest, runtime.GOOS) || validRuntimeSocketPath(strings.Replace(longest, "x", "xx", 1), runtime.GOOS) {
 		t.Fatal("Unix pathname limit failed to reserve its terminator")
 	}
 	unicode := prefix + strings.Repeat("界", 30) + suffix
-	if validRuntimeSocketPath(unicode) {
+	if validRuntimeSocketPath(unicode, runtime.GOOS) {
 		t.Fatal("Unix pathname limit counted runes instead of bytes")
 	}
 }
