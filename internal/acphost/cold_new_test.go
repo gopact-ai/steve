@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gopact-ai/acp"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -585,5 +586,179 @@ func TestColdNewLimitsGroupsChoicesAndInitialModes(t *testing.T) {
 				t.Fatal("overlong returned identifier escaped retained owner byte bounds")
 			}
 		})
+	}
+}
+
+func TestColdNewMatchedPublicationExitRetainsOriginalCleanupOwner(t *testing.T) {
+	modes := &acp.SessionModeState{CurrentModeID: "agent", AvailableModes: []acp.SessionMode{{ID: "agent", Name: "Agent"}, {ID: "read-only", Name: "Read-only"}}}
+	a := &orderedPeer{initial: wireBoolean(false), initialModes: modes, newIDs: []acp.SessionID{"matched"}, modeReplyWritten: make(chan struct{})}
+	a.lifecycleParticipant = &lifecycleParticipant{version: 1, caps: lifecycleCaps(31)}
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	gate := &orderedRequestGate{method: acp.MethodSessionSetMode, wait: func() error { <-release; return nil }}
+	h := New(Config{Transport: orderedTransport{agent: a, gate: gate}, NoRestart: true})
+	t.Cleanup(h.Stop)
+	done := make(chan error, 1)
+	go func() { _, _, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()}); done <- err }()
+	awaitOperation(t, a.modeReplyWritten) // Real New matched, and the peer has sent the subsequent Mode ACK.
+	h.mu.Lock()
+	opening, op, original := h.newOpening, h.sessionOperations["matched"], h.proc
+	generation := h.generation
+	published := h.sessions["matched"] != nil
+	h.mu.Unlock()
+	if opening == nil || op == nil || opening.sid != "matched" || published {
+		t.Fatal("test did not reach the matched-SID pre-publication window")
+	}
+	peerProcess := original.(*orderedProcess).Process.(*lifecycleProcess)
+	_ = peerProcess.output.Close() // Actual EOF on the Host reader, not a native stop.
+	_ = peerProcess.stdin.Close()  // Let this isolated SDK peer also finish its real stream.
+	waitCloseWatch(t, h)
+	if err := h.conn.Err(); !errors.Is(err, io.EOF) {
+		t.Fatalf("test did not reach an actual Host stream EOF: %v", err)
+	}
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("New was published after original logical exit")
+	}
+	h.mu.Lock()
+	retainedOpening, retainedOp := h.newOpening, h.sessionOperations["matched"]
+	published = h.sessions["matched"] != nil
+	h.mu.Unlock()
+	if retainedOpening != opening || retainedOp != op || published {
+		t.Fatal("post-match publication failure discarded the original created-SID cleanup owner")
+	}
+	if opening.pending || opening.accepting || op.pending || opening.cause == nil || op.cause == nil || opening.process != original || op.process != original || opening.generation != generation || op.generation != generation {
+		t.Fatal("failed publication lost its original process/generation or remained pending")
+	}
+	if original.Stopped() || h.ProcessStopped(generation) {
+		t.Fatal("logical exit invented native stop proof")
+	}
+	if _, _, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()}); !errors.Is(err, ErrSessionOperationUnconfirmed) {
+		t.Fatalf("unknown created session allowed another New: %v", err)
+	}
+	if a.newCalls != 1 {
+		t.Fatalf("extra New reached wire: %d", a.newCalls)
+	}
+	if err := h.CloseIdle(); !errors.Is(err, ErrSessionBusy) {
+		t.Fatalf("unknown created session was idle: %v", err)
+	}
+	if err := h.CloseSession(t.Context(), "matched"); !errors.Is(err, ErrSessionOperationUnconfirmed) {
+		t.Fatalf("Close consumed unproven cleanup: %v", err)
+	}
+	if err := h.DeleteSession(t.Context(), "matched"); !errors.Is(err, ErrSessionOperationUnconfirmed) {
+		t.Fatalf("Delete reused unknown created SID: %v", err)
+	}
+	if _, _, err := h.OpenSession(t.Context(), "matched", SessionConfig{Workdir: t.TempDir()}); !errors.Is(err, ErrSessionOperationUnconfirmed) {
+		t.Fatalf("Open reused unknown created SID: %v", err)
+	}
+	if _, _, err := h.Prompt(t.Context(), "matched", generation, "must not reach peer", nil); !errors.Is(err, ErrSessionOperationUnconfirmed) {
+		t.Fatalf("Prompt reused unknown created SID: %v", err)
+	}
+}
+
+type coldMatchedOwnedAgent struct {
+	*lifecycleParticipant
+	marker string
+}
+
+func (a *coldMatchedOwnedAgent) NewSession(context.Context, *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
+	options := wireBoolean(false)
+	modes := &acp.SessionModeState{CurrentModeID: "agent", AvailableModes: []acp.SessionMode{{ID: "agent", Name: "Agent"}, {ID: "read-only", Name: "Read-only"}}}
+	return &acp.NewSessionResponse{SessionID: "matched-owned", ConfigOptions: &options, Modes: modes}, nil
+}
+func (a *coldMatchedOwnedAgent) SetSessionMode(_ context.Context, req *acp.SetSessionModeRequest) (*acp.SetSessionModeResponse, error) {
+	if req.ModeID != "read-only" {
+		return nil, &acp.Error{Code: acp.ErrorCodeInvalidParams, Message: "unavailable mode"}
+	}
+	if err := os.WriteFile(a.marker, []byte(string(req.SessionID)), 0600); err != nil {
+		return nil, err
+	}
+	return &acp.SetSessionModeResponse{}, nil
+}
+func TestColdNewMatchedOwnedProcessHelper(t *testing.T) {
+	marker := os.Getenv("STEVE_TEST_MATCHED_NEW_MARKER")
+	if marker == "" {
+		return
+	}
+	peer := &coldMatchedOwnedAgent{lifecycleParticipant: &lifecycleParticipant{version: 1, caps: lifecycleCaps(31)}, marker: marker}
+	conn, err := acp.NewAgent(os.Stdin, os.Stdout, func(client *acp.ClientCaller) acp.AgentHandler { peer.client = client; return peer })
+	if err != nil {
+		os.Exit(2)
+	}
+	<-conn.Done()
+	os.Exit(0)
+}
+
+type coldMatchedOwnedTransport struct {
+	LocalTransport
+	gate *orderedRequestGate
+}
+
+func (tr coldMatchedOwnedTransport) Start(ctx context.Context) (Process, error) {
+	proc, err := tr.LocalTransport.Start(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tr.gate.WriteCloser = proc.Stdin()
+	return &orderedProcess{Process: proc, stdin: tr.gate}, nil
+}
+func TestColdNewMatchedPublicationOnlyOriginalOwnedStopRetires(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "matched-sid")
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	gate := &orderedRequestGate{method: acp.MethodSessionSetMode, wait: func() error { <-release; return nil }}
+	tr := coldMatchedOwnedTransport{LocalTransport: LocalTransport{Command: executable, Args: []string{"-test.run=^TestColdNewMatchedOwnedProcessHelper$"}, Env: []string{"STEVE_TEST_MATCHED_NEW_MARKER=" + marker}, ProcessDir: t.TempDir()}, gate: gate}
+	h := New(Config{Transport: tr})
+	t.Cleanup(h.Stop)
+	done := make(chan error, 1)
+	go func() { _, _, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()}); done <- err }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if raw, err := os.ReadFile(marker); err == nil && string(raw) == "matched-owned" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("New never bound SID before real owned mode request")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	h.mu.Lock()
+	opening, op, original, generation := h.newOpening, h.sessionOperations["matched-owned"], h.proc, h.generation
+	h.mu.Unlock()
+	if opening == nil || op == nil || original.Stopped() {
+		t.Fatal("test did not reach an unstopped matched owned opening")
+	}
+	h.Stop() // Explicit original owner stop, not automatic New failure cleanup.
+	if !original.Stopped() || !h.ProcessStopped(generation) {
+		t.Fatal("original kernel-backed process group stop was not confirmed")
+	}
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("stopped opening returned success")
+	}
+	h.mu.Lock()
+	retained := h.newOpening == opening && h.sessionOperations["matched-owned"] == op && !opening.pending && !op.pending
+	h.mu.Unlock()
+	if !retained {
+		t.Fatal("matched publication failure lost owner before stop-proof retirement")
+	}
+	if _, next, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()}); err != nil || next == generation {
+		t.Fatalf("positive original stop did not retire exact opening: generation=%d err=%v", next, err)
 	}
 }

@@ -66,10 +66,19 @@ func (h *Host) finishSessionOperationLocked(ctx context.Context, sid acp.Session
 	if h.sessionOperations[sid] != op {
 		return fmt.Errorf("session/%s: original operation changed", op.method)
 	}
+	// New already has a matched creation response. A local publication failure
+	// cannot retire its created-SID owner without original process-stop proof.
+	if err == nil && op.method == "new" {
+		if h.generation != op.generation || h.proc != op.process || h.sessions[sid] != op.original {
+			err = errors.New("session/new: original session changed before publication")
+		} else if !h.alive {
+			err = errors.New("session/new: original process ended before publication")
+		}
+	}
 	if err != nil {
 		var response *acp.Error
 		localCancel := ctx.Err() != nil && errors.Is(err, context.Cause(ctx))
-		if !localCancel && errors.As(err, &response) {
+		if op.method != "new" && !localCancel && errors.As(err, &response) {
 			// Restore failure does not retract independent confirmations that
 			// arrived before the response. Publish them into the same original
 			// object only; never create a cold session or touch a replacement.

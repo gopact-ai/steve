@@ -1072,15 +1072,11 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 			opening.cause = errNewScratchLimit
 		}
 	}
-	if opening.cause != nil {
-		err = h.finishSessionOperationLocked(ctx, resp.SessionID, op, opening.cause)
-		opening.pending = false
-		opening.cause = err
-	} else {
-		err = h.finishSessionOperationLocked(ctx, resp.SessionID, op, nil)
-		if h.newOpening == opening {
-			h.newOpening = nil
-		}
+	err = h.finishSessionOperationLocked(ctx, resp.SessionID, op, opening.cause)
+	if err != nil {
+		err = h.failNewOpeningLocked(ctx, opening, err, resp.SessionID, true)
+	} else if h.newOpening == opening {
+		h.newOpening = nil
 	}
 	h.mu.Unlock()
 	if err != nil {
