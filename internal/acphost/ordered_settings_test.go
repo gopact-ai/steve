@@ -67,6 +67,8 @@ type orderedPeer struct {
 	modeError          error
 	modeEntered        chan struct{}
 	modeRelease        chan struct{}
+	modeReplyWritten   chan struct{}
+	modeReplyArmed     bool
 }
 
 func (a *orderedPeer) NewSession(context.Context, *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
@@ -135,6 +137,10 @@ func (w orderedPeerWriter) Write(frame []byte) (int, error) {
 	}
 	if envelope.Result != nil || len(envelope.Error) > 0 {
 		w.agent.mu.Lock()
+		if w.agent.modeReplyArmed && w.agent.modeReplyWritten != nil {
+			w.agent.modeReplyArmed = false
+			close(w.agent.modeReplyWritten)
+		}
 		if w.agent.configReplyArmed && w.agent.configReplyWritten != nil {
 			w.agent.configReplyArmed = false
 			close(w.agent.configReplyWritten)
@@ -356,6 +362,7 @@ func (a *orderedPeer) SetSessionMode(ctx context.Context, req *acp.SetSessionMod
 	}
 	a.mu.Lock()
 	a.actualMode = req.ModeID
+	a.modeReplyArmed = true
 	a.mu.Unlock()
 	if a.modeBefore != nil {
 		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: *a.modeBefore}); err != nil {
@@ -636,5 +643,48 @@ func TestOrderedModeLocalCancelDoesNotConfirmLateStandardACK(t *testing.T) {
 	}
 	if got := h.Settings("ordered").Mode; got != "Agent" {
 		t.Fatalf("late unmatched mode ACK confirmed requested mode: %q", got)
+	}
+}
+
+func TestOrderedModeReceiptCannotConfirmAfterRealGenerationExit(t *testing.T) {
+	modes := &acp.SessionModeState{CurrentModeID: "agent", AvailableModes: []acp.SessionMode{{ID: "agent", Name: "Agent"}, {ID: "read-only", Name: "Read-only"}}}
+	options := wireBoolean(false)
+	a := &orderedPeer{initial: options, restoreReply: &acp.LoadSessionResponse{Modes: modes, ConfigOptions: &options}, newIDs: []acp.SessionID{"ordered", "replacement"}, modeReplyWritten: make(chan struct{})}
+	a.lifecycleParticipant = &lifecycleParticipant{version: 1, caps: lifecycleCaps(31)}
+	release := make(chan struct{})
+	defer close(release)
+	gate := &orderedRequestGate{method: acp.MethodSessionSetMode, wait: func() error { <-release; return nil }}
+	h := New(Config{Transport: orderedTransport{agent: a, gate: gate}})
+	t.Cleanup(h.Stop)
+	sid, oldGeneration, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := h.OpenSession(t.Context(), sid, SessionConfig{Workdir: t.TempDir(), ReplayHistory: true})
+		done <- err
+	}()
+	awaitOperation(t, a.modeReplyWritten)
+	a.mu.Lock()
+	actual := a.actualMode
+	a.mu.Unlock()
+	if actual != "read-only" {
+		t.Fatal("real original peer did not execute its available mode")
+	}
+	h.Stop()
+	replacement, newGeneration, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newGeneration == oldGeneration || replacement == sid {
+		t.Fatal("real runtime/SID was not replaced")
+	}
+	release <- struct{}{}
+	if err := <-done; err == nil {
+		t.Fatal("old mode receipt completed against replacement identity")
+	}
+	if got := h.Settings(replacement).Mode; got != "" {
+		t.Fatalf("old queued mode ACK wrote replacement Actual: %q", got)
 	}
 }
