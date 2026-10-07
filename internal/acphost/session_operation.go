@@ -332,6 +332,18 @@ func (h *Host) beginNewOpeningLocked(ctx context.Context) (*newOpening, error) {
 	if err := h.newOpeningBlockedLocked(); err != nil {
 		return nil, err
 	}
+	// An already-observed exited leader cannot receive a new request. Refuse
+	// before dispatch rather than creating a false unknown obligation for a
+	// caller racing the watcher's logical-exit publication. This is not group
+	// stop proof and never retires an earlier uncertain opening.
+	if h.proc == nil {
+		return nil, ErrClosed
+	}
+	select {
+	case <-h.proc.Exited():
+		return nil, ErrClosed
+	default:
+	}
 	if ctx == nil {
 		return nil, errors.New("session/new: context is required")
 	}
@@ -354,6 +366,11 @@ func (h *Host) failNewOpeningLocked(ctx context.Context, opening *newOpening, er
 	closeNewScratch(opening)
 	opening.pending = false
 	opening.cause = err
+	// An overlong returned identifier cannot itself become unbounded retained
+	// scratch/debt data. Keep the original unnamed runtime obligation instead.
+	if len(sid) > maxNewScratchSIDBytes {
+		sid = ""
+	}
 	opening.sid = sid
 	var response *acp.Error
 	localCancel := ctx.Err() != nil && errors.Is(err, context.Cause(ctx))
@@ -547,7 +564,7 @@ func checkScratchFields(options []acp.SessionConfigOption, modes *acp.SessionMod
 	return nil
 }
 func checkScratchMeta(value any, depth int, nodes *int) bool {
-	*nodes++
+	*nodes = *nodes + 1
 	if *nodes > maxNewScratchMetaNodes || depth > maxNewScratchMetaDepth {
 		return false
 	}

@@ -151,8 +151,19 @@ func TestHostRestartsWhileAnExitedAgentsGroupCannotBeEnded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.mu.Lock()
+	originalProcess := h.proc
+	h.mu.Unlock()
 	if err := syscall.Kill(int(leader.Load()), syscall.SIGKILL); err != nil {
 		t.Fatal(err)
+	}
+	// This case is logical restart after a previously matched context exits,
+	// not an unanswered New racing SIGKILL. Wait on the actual leader exit
+	// before requesting another creation; its remaining group is still unproven.
+	select {
+	case <-originalProcess.Exited():
+	case <-ctx.Done():
+		t.Fatal("original leader exit was not observed")
 	}
 	var second uint64
 	for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(50 * time.Millisecond) {

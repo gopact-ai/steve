@@ -108,6 +108,9 @@ func TestColdNewSinglePendingAdmissionLeavesExistingSIDUsable(t *testing.T) {
 		created <- err
 	}()
 	awaitOperation(t, a.newEntered)
+	if err := h.CloseIdle(); !errors.Is(err, ErrSessionBusy) {
+		t.Fatalf("idle shutdown ignored anonymous opening reservation: %v", err)
+	}
 	h.mu.Lock()
 	_, published := h.sessions["second"]
 	h.mu.Unlock()
@@ -577,6 +580,9 @@ func TestColdNewLimitsGroupsChoicesAndInitialModes(t *testing.T) {
 			h.mu.Unlock()
 			if published != 0 || debt == nil || debt.pending {
 				t.Fatal("oversized matched reply lost exact owner or entered authorization state")
+			}
+			if shape == "SID bytes" && debt.sid != "" {
+				t.Fatal("overlong returned identifier escaped retained owner byte bounds")
 			}
 		})
 	}

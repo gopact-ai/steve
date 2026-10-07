@@ -1067,6 +1067,11 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 	}
 	h.applyMode(ctx, caller, resp.SessionID, generation, op.state, resp.Modes)
 	h.mu.Lock()
+	if opening.cause == nil {
+		if size, sizeErr := scratchStateBytes(op.state); sizeErr != nil || size > maxNewScratchPerSID {
+			opening.cause = errNewScratchLimit
+		}
+	}
 	if opening.cause != nil {
 		err = h.finishSessionOperationLocked(ctx, resp.SessionID, op, opening.cause)
 		opening.pending = false
@@ -1606,7 +1611,7 @@ func (h *Host) SettingsForGeneration(sid acp.SessionID, generation uint64) (view
 func (h *Host) CloseIdle() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.active) > 0 {
+	if len(h.active) > 0 || len(h.sessionOperations) > 0 || h.newOpening != nil {
 		return ErrSessionBusy
 	}
 	h.isClosed = true
