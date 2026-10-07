@@ -2,6 +2,7 @@ package acphost
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -266,4 +267,419 @@ func (h *Host) finishConfigOperationLocked(ctx context.Context, sid acp.SessionI
 		return errors.New("session/configure: invalid reservation")
 	}
 	return h.finishSessionOperationLocked(ctx, sid, op, err)
+}
+
+// One unbound New admission belongs to the managed-context owned-process
+// model, not a promise of concurrent New admission for a future shared pool.
+const (
+	maxNewScratchSIDs      = 8
+	maxNewScratchSIDBytes  = 256
+	maxNewScratchPerSID    = 64 << 10
+	maxNewScratchBytes     = 256 << 10
+	maxNewScratchUpdates   = 256
+	maxNewScratchOptions   = 64
+	maxNewScratchGroups    = 32
+	maxNewScratchChoices   = 512
+	maxNewScratchCommands  = 64
+	maxNewScratchModes     = 64
+	maxNewScratchString    = 8 << 10
+	maxNewScratchMetaNodes = 256
+	maxNewScratchMetaDepth = 8
+)
+
+var errNewScratchLimit = errors.New("session/new: opening settings exceed bounded scratch limits")
+
+type newScratchState struct {
+	state *sessionState
+	bytes int
+}
+type newOpening struct {
+	caller     *acp.AgentCaller
+	process    Process
+	generation uint64
+	pending    bool
+	accepting  bool
+	cause      error
+	sid        acp.SessionID
+	candidates map[acp.SessionID]newScratchState
+	bytes      int
+	updates    int
+}
+
+func (h *Host) newOpeningBlockedLocked() error {
+	opening := h.newOpening
+	if opening == nil {
+		return nil
+	}
+	if opening.process != nil && opening.process.Stopped() && h.processStoppedLocked(opening.generation) {
+		opening.accepting = false
+		opening.candidates = nil
+		if op := h.sessionOperations[opening.sid]; op != nil && op.method == "new" && !op.pending && op.process == opening.process && op.generation == opening.generation {
+			delete(h.sessionOperations, opening.sid)
+			if h.generation == op.generation && h.sessions[opening.sid] == op.original {
+				delete(h.sessions, opening.sid)
+			}
+		}
+		h.newOpening = nil
+		return nil
+	}
+	if opening.pending {
+		return ErrSessionBusy
+	}
+	return fmt.Errorf("session/new: %w: %w", ErrSessionOperationUnconfirmed, opening.cause)
+}
+func (h *Host) beginNewOpeningLocked(ctx context.Context) (*newOpening, error) {
+	if err := h.newOpeningBlockedLocked(); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		return nil, errors.New("session/new: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	opening := &newOpening{caller: h.caller, process: h.proc, generation: h.generation, pending: true, accepting: true, candidates: map[acp.SessionID]newScratchState{}}
+	h.newOpening = opening
+	return opening, nil
+}
+func closeNewScratch(opening *newOpening) {
+	opening.accepting = false
+	opening.candidates = nil
+	opening.bytes = 0
+}
+func (h *Host) failNewOpeningLocked(ctx context.Context, opening *newOpening, err error, sid acp.SessionID, knownCreated bool) error {
+	if h.newOpening != opening {
+		return fmt.Errorf("session/new: original opening changed: %w", err)
+	}
+	closeNewScratch(opening)
+	opening.pending = false
+	opening.cause = err
+	opening.sid = sid
+	var response *acp.Error
+	localCancel := ctx.Err() != nil && errors.Is(err, context.Cause(ctx))
+	if !knownCreated && !localCancel && errors.As(err, &response) {
+		h.newOpening = nil
+		return fmt.Errorf("session/new: %w", err)
+	}
+	if knownCreated && sid != "" && h.sessions[sid] == nil && h.sessionOperations[sid] == nil {
+		if h.sessionOperations == nil {
+			h.sessionOperations = map[acp.SessionID]*sessionOperation{}
+		}
+		h.sessionOperations[sid] = &sessionOperation{method: "new", generation: opening.generation, process: opening.process, cause: err}
+	}
+	return fmt.Errorf("session/new: %w: %w", ErrSessionOperationUnconfirmed, err)
+}
+func (h *Host) stageNewSettingsLocked(sid acp.SessionID, update acp.SessionUpdate, sequence uint64) error {
+	opening := h.newOpening
+	if opening == nil || !opening.pending || !opening.accepting || !h.alive || opening.generation != h.generation || opening.process != h.proc || opening.caller != h.caller {
+		return nil
+	}
+	switch update.SessionUpdate {
+	case acp.SessionUpdateTypeConfigOptionUpdate, acp.SessionUpdateTypeCurrentModeUpdate, acp.SessionUpdateTypeAvailableCommandsUpdate:
+	default:
+		return nil
+	}
+	fail := func() error { closeNewScratch(opening); opening.cause = errNewScratchLimit; return errNewScratchLimit }
+	if sid == "" || len(sid) > maxNewScratchSIDBytes || opening.updates >= maxNewScratchUpdates {
+		return fail()
+	}
+	if _, exists := opening.candidates[sid]; !exists && len(opening.candidates) >= maxNewScratchSIDs {
+		return fail()
+	}
+	if err := checkScratchFields(update.ConfigOptions, nil, update.AvailableCommands, update.CurrentModeID); err != nil {
+		return fail()
+	}
+	candidate := opening.candidates[sid]
+	next := copySessionState(candidate.state)
+	// Clone only public typed values after validating bounded shape. No wire
+	// parsing, SDK-private state or fabricated sequence/owner is involved.
+	applySessionSettingsAt(next, cloneScratchUpdate(update), sequence)
+	size, err := scratchStateBytes(next)
+	if err != nil || size > maxNewScratchPerSID || opening.bytes-candidate.bytes+size > maxNewScratchBytes {
+		return fail()
+	}
+	opening.updates++
+	opening.bytes = opening.bytes - candidate.bytes + size
+	opening.candidates[sid] = newScratchState{state: next, bytes: size}
+	return nil
+}
+func (h *Host) bindNewOpeningLocked(ctx context.Context, opening *newOpening, response *acp.NewSessionResponse, receipt acp.ResponseReceipt) (*sessionOperation, error) {
+	if h.newOpening != opening || !h.alive || h.generation != opening.generation || h.proc != opening.process || h.caller != opening.caller {
+		if h.newOpening == opening {
+			return nil, h.failNewOpeningLocked(ctx, opening, ErrClosed, "", false)
+		}
+		return nil, errors.New("session/new: original opening changed")
+	}
+	sid := response.SessionID
+	if receipt.Sequence == 0 {
+		return nil, h.failNewOpeningLocked(ctx, opening, errors.New("missing matched inbound receipt"), "", false)
+	}
+	if h.sessions[sid] != nil || h.sessionOperations[sid] != nil || h.active[sid] != 0 || h.opening[sid] != 0 {
+		return nil, h.failNewOpeningLocked(ctx, opening, errors.New("matched response reused an already owned SID"), sid, true)
+	}
+	if opening.cause != nil {
+		return nil, h.failNewOpeningLocked(ctx, opening, opening.cause, sid, true)
+	}
+	var options []acp.SessionConfigOption
+	if response.ConfigOptions != nil {
+		options = *response.ConfigOptions
+	}
+	if sid == "" || len(sid) > maxNewScratchSIDBytes || checkScratchFields(options, response.Modes, nil, "") != nil {
+		return nil, h.failNewOpeningLocked(ctx, opening, errNewScratchLimit, sid, true)
+	}
+	state := copySessionState(opening.candidates[sid].state)
+	// Keep the existing cold same-frame tie: legacy modes first, then options.
+	state.setModesAt(response.Modes, receipt.Sequence)
+	if response.ConfigOptions != nil {
+		values := *response.ConfigOptions
+		if values == nil {
+			values = []acp.SessionConfigOption{}
+		}
+		state.setOptionsAt(cloneScratchOptions(values), receipt.Sequence)
+	}
+	if size, err := scratchStateBytes(state); err != nil || size > maxNewScratchPerSID {
+		return nil, h.failNewOpeningLocked(ctx, opening, errNewScratchLimit, sid, true)
+	}
+	op, err := h.beginSessionOperationLocked(ctx, sid, "new")
+	if err != nil {
+		return nil, h.failNewOpeningLocked(ctx, opening, err, sid, true)
+	}
+	op.state = state
+	opening.sid = sid
+	closeNewScratch(opening)
+	return op, nil
+}
+func scratchStateBytes(state *sessionState) (int, error) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	raw, err := json.Marshal(struct {
+		Options  []acp.SessionConfigOption `json:"options"`
+		Modes    []acp.SessionMode         `json:"modes"`
+		Mode     acp.SessionModeID         `json:"mode"`
+		Commands []acp.AvailableCommand    `json:"commands"`
+	}{state.options, state.modes, state.modeID, state.commands})
+	return len(raw), err
+}
+func checkScratchFields(options []acp.SessionConfigOption, modes *acp.SessionModeState, commands []acp.AvailableCommand, mode acp.SessionModeID) error {
+	if len(options) > maxNewScratchOptions || len(commands) > maxNewScratchCommands || len(mode) > maxNewScratchString {
+		return errNewScratchLimit
+	}
+	nodes := 0
+	groups, choices := 0, 0
+	text := func(values ...string) bool {
+		for _, value := range values {
+			if len(value) > maxNewScratchString {
+				return false
+			}
+		}
+		return true
+	}
+	meta := func(value acp.Meta) bool { return checkScratchMeta(value, 0, &nodes) }
+	choice := func(value acp.SessionConfigSelectOption) bool {
+		choices++
+		if choices > maxNewScratchChoices || !text(string(value.Value), value.Name) || !meta(value.Meta) {
+			return false
+		}
+		return value.Description == nil || text(*value.Description)
+	}
+	for _, option := range options {
+		if !text(string(option.ID), option.Name) || !meta(option.Meta) {
+			return errNewScratchLimit
+		}
+		if option.Category != nil && !text(string(*option.Category)) {
+			return errNewScratchLimit
+		}
+		if option.Description != nil && !text(*option.Description) {
+			return errNewScratchLimit
+		}
+		switch value := option.CurrentValue.(type) {
+		case string:
+			if !text(value) {
+				return errNewScratchLimit
+			}
+		case acp.SessionConfigValueID:
+			if !text(string(value)) {
+				return errNewScratchLimit
+			}
+		case bool, nil:
+		default:
+			return errNewScratchLimit
+		}
+		if option.Options.Ungrouped != nil {
+			for _, value := range *option.Options.Ungrouped {
+				if !choice(value) {
+					return errNewScratchLimit
+				}
+			}
+		}
+		if option.Options.Groups != nil {
+			for _, group := range *option.Options.Groups {
+				groups++
+				if groups > maxNewScratchGroups || !text(string(group.Group), group.Name) || !meta(group.Meta) {
+					return errNewScratchLimit
+				}
+				for _, value := range group.Options {
+					if !choice(value) {
+						return errNewScratchLimit
+					}
+				}
+			}
+		}
+	}
+	for _, command := range commands {
+		if !text(command.Name, command.Description) || !meta(command.Meta) {
+			return errNewScratchLimit
+		}
+		if command.Input != nil && (!text(command.Input.Hint) || !meta(command.Input.Meta)) {
+			return errNewScratchLimit
+		}
+	}
+	if modes != nil {
+		if len(modes.AvailableModes) > maxNewScratchModes || !text(string(modes.CurrentModeID)) || !meta(modes.Meta) {
+			return errNewScratchLimit
+		}
+		for _, value := range modes.AvailableModes {
+			if !text(string(value.ID), value.Name) || !meta(value.Meta) || value.Description != nil && !text(*value.Description) {
+				return errNewScratchLimit
+			}
+		}
+	}
+	return nil
+}
+func checkScratchMeta(value any, depth int, nodes *int) bool {
+	*nodes++
+	if *nodes > maxNewScratchMetaNodes || depth > maxNewScratchMetaDepth {
+		return false
+	}
+	switch typed := value.(type) {
+	case nil, bool, float64, float32, int, int64, uint64, json.Number:
+		return true
+	case string:
+		return len(typed) <= maxNewScratchString
+	case acp.Meta:
+		for key, item := range typed {
+			if len(key) > maxNewScratchString || !checkScratchMeta(item, depth+1, nodes) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		for key, item := range typed {
+			if len(key) > maxNewScratchString || !checkScratchMeta(item, depth+1, nodes) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		for _, item := range typed {
+			if !checkScratchMeta(item, depth+1, nodes) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+func cloneScratchMeta(value acp.Meta) acp.Meta {
+	if value == nil {
+		return nil
+	}
+	cloned := make(acp.Meta, len(value))
+	for key, item := range value {
+		cloned[key] = cloneScratchValue(item)
+	}
+	return cloned
+}
+func cloneScratchValue(value any) any {
+	switch typed := value.(type) {
+	case acp.Meta:
+		return cloneScratchMeta(typed)
+	case map[string]any:
+		copy := make(map[string]any, len(typed))
+		for key, item := range typed {
+			copy[key] = cloneScratchValue(item)
+		}
+		return copy
+	case []any:
+		copy := make([]any, len(typed))
+		for i, item := range typed {
+			copy[i] = cloneScratchValue(item)
+		}
+		return copy
+	default:
+		return value
+	}
+}
+func cloneScratchOptions(options []acp.SessionConfigOption) []acp.SessionConfigOption {
+	copy := append([]acp.SessionConfigOption{}, options...)
+	cloneChoice := func(value acp.SessionConfigSelectOption) acp.SessionConfigSelectOption {
+		value.Meta = cloneScratchMeta(value.Meta)
+		return value
+	}
+	for i := range copy {
+		copy[i].Meta = cloneScratchMeta(copy[i].Meta)
+		if copy[i].Options.Ungrouped != nil {
+			values := append(acp.UngroupedSessionConfigSelectOptions{}, (*copy[i].Options.Ungrouped)...)
+			for j := range values {
+				values[j] = cloneChoice(values[j])
+			}
+			copy[i].Options.Ungrouped = &values
+		}
+		if copy[i].Options.Groups != nil {
+			groups := append(acp.GroupedSessionConfigSelectOptions{}, (*copy[i].Options.Groups)...)
+			for j := range groups {
+				groups[j].Meta = cloneScratchMeta(groups[j].Meta)
+				groups[j].Options = append([]acp.SessionConfigSelectOption{}, groups[j].Options...)
+				for k := range groups[j].Options {
+					groups[j].Options[k] = cloneChoice(groups[j].Options[k])
+				}
+			}
+			copy[i].Options.Groups = &groups
+		}
+	}
+	return copy
+}
+func cloneScratchUpdate(update acp.SessionUpdate) acp.SessionUpdate {
+	update.ConfigOptions = cloneScratchOptions(update.ConfigOptions)
+	update.AvailableCommands = append([]acp.AvailableCommand{}, update.AvailableCommands...)
+	for i := range update.AvailableCommands {
+		update.AvailableCommands[i].Meta = cloneScratchMeta(update.AvailableCommands[i].Meta)
+		if input := update.AvailableCommands[i].Input; input != nil {
+			copy := *input
+			copy.Meta = cloneScratchMeta(copy.Meta)
+			update.AvailableCommands[i].Input = &copy
+		}
+	}
+	return update
+}
+
+// Matched-SID staging continues to obey the same opening budget until formal
+// publication. Receiving a SID does not turn oversized metadata into a grant.
+func (h *Host) stageBoundNewSettingsLocked(sid acp.SessionID, op *sessionOperation, update acp.SessionUpdate, sequence uint64) error {
+	opening := h.newOpening
+	if opening == nil || !opening.pending || opening.sid != sid || opening.process != op.process || opening.generation != op.generation || opening.caller != h.caller {
+		return nil
+	}
+	switch update.SessionUpdate {
+	case acp.SessionUpdateTypeConfigOptionUpdate, acp.SessionUpdateTypeCurrentModeUpdate, acp.SessionUpdateTypeAvailableCommandsUpdate:
+	default:
+		return nil
+	}
+	if opening.cause != nil {
+		return opening.cause
+	}
+	if opening.updates >= maxNewScratchUpdates || checkScratchFields(update.ConfigOptions, nil, update.AvailableCommands, update.CurrentModeID) != nil {
+		opening.cause = errNewScratchLimit
+		return errNewScratchLimit
+	}
+	next := copySessionState(op.state)
+	applySessionSettingsAt(next, cloneScratchUpdate(update), sequence)
+	if size, err := scratchStateBytes(next); err != nil || size > maxNewScratchPerSID {
+		opening.cause = errNewScratchLimit
+		return errNewScratchLimit
+	}
+	opening.updates++
+	copyConfirmedState(op.state, next)
+	return nil
 }

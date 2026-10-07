@@ -59,6 +59,14 @@ type orderedPeer struct {
 	afterSentinel      *acp.SessionNotification
 	configReplyWritten chan struct{}
 	configReplyArmed   bool
+	newEntered         chan struct{}
+	newRelease         chan struct{}
+	newBefore          []acp.SessionNotification
+	newReplyError      error
+	actualMode         acp.SessionModeID
+	modeError          error
+	modeEntered        chan struct{}
+	modeRelease        chan struct{}
 }
 
 func (a *orderedPeer) NewSession(context.Context, *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
@@ -67,6 +75,18 @@ func (a *orderedPeer) NewSession(context.Context, *acp.NewSessionRequest) (*acp.
 	if len(a.newIDs) > 0 {
 		sid = a.newIDs[a.newCalls]
 		a.newCalls++
+	}
+	for _, notice := range a.newBefore {
+		if err := a.client.Update(context.Background(), &notice); err != nil {
+			return nil, err
+		}
+	}
+	if a.newEntered != nil {
+		close(a.newEntered)
+		<-a.newRelease
+	}
+	if a.newReplyError != nil {
+		return nil, a.newReplyError
 	}
 	if a.newAfter != nil {
 		a.mu.Lock()
@@ -312,6 +332,31 @@ func (a *orderedPeer) orderedRestore(ctx context.Context, sid acp.SessionID, met
 }
 func (a *orderedPeer) SetSessionMode(ctx context.Context, req *acp.SetSessionModeRequest) (*acp.SetSessionModeResponse, error) {
 	a.record("set-mode")
+	if a.modeEntered != nil {
+		close(a.modeEntered)
+		<-a.modeRelease
+	}
+	if a.modeError != nil {
+		return nil, a.modeError
+	}
+	available := a.initialModes
+	if available == nil && a.restoreReply != nil {
+		available = a.restoreReply.Modes
+	}
+	valid := false
+	if available != nil {
+		for _, mode := range available.AvailableModes {
+			if mode.ID == req.ModeID {
+				valid = true
+			}
+		}
+	}
+	if !valid {
+		return nil, &acp.Error{Code: acp.ErrorCodeInvalidParams, Message: "unavailable mode"}
+	}
+	a.mu.Lock()
+	a.actualMode = req.ModeID
+	a.mu.Unlock()
 	if a.modeBefore != nil {
 		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: *a.modeBefore}); err != nil {
 			return nil, err
@@ -526,5 +571,70 @@ func TestOrderedConfigurationStillAllowsBidirectionalPermission(t *testing.T) {
 	}
 	if h.Settings(sid).Model != "Configured model" {
 		t.Fatal("typed receipt did not publish the confirmed reply")
+	}
+}
+
+func TestOrderedModeStandardSuccessACKConfirmsPeerActual(t *testing.T) {
+	modes := &acp.SessionModeState{CurrentModeID: "agent", AvailableModes: []acp.SessionMode{{ID: "agent", Name: "Agent"}, {ID: "read-only", Name: "Read-only"}}}
+	a := &orderedPeer{initial: orderedModeOptions(false, "agent"), initialModes: modes}
+	h := orderedHost(t, a, nil)
+	a.mu.Lock()
+	actual := a.actualMode
+	a.mu.Unlock()
+	if actual != "read-only" {
+		t.Fatalf("real peer did not execute the available requested mode: %q", actual)
+	}
+	if got := h.Settings("ordered").Mode; got != "Read-only" {
+		t.Fatalf("successful standard {} ACK left Host Actual stale while peer=%q: %q", actual, got)
+	}
+	h.mu.Lock()
+	state := h.sessions["ordered"]
+	state.mu.Lock()
+	optionsClock, modeClock := state.optionsSequence, state.modeSequence
+	state.mu.Unlock()
+	h.mu.Unlock()
+	if modeClock <= optionsClock {
+		t.Fatalf("successful set_mode ACK did not publish its actual inbound clock: mode=%d options=%d", modeClock, optionsClock)
+	}
+}
+
+func TestOrderedModeErrorCannotConfirmRequestedTarget(t *testing.T) {
+	modes := &acp.SessionModeState{CurrentModeID: "agent", AvailableModes: []acp.SessionMode{{ID: "agent", Name: "Agent"}, {ID: "read-only", Name: "Read-only"}}}
+	a := &orderedPeer{initial: orderedModeOptions(false, "agent"), initialModes: modes, modeError: &acp.Error{Code: acp.ErrorCodeInvalidParams, Message: "mode rejected"}}
+	h := orderedHost(t, a, nil)
+	if got := h.Settings("ordered").Mode; got != "Agent" {
+		t.Fatalf("mode rejection confirmed requested target: %q", got)
+	}
+}
+func TestOrderedModeLocalCancelDoesNotConfirmLateStandardACK(t *testing.T) {
+	modes := &acp.SessionModeState{CurrentModeID: "agent", AvailableModes: []acp.SessionMode{{ID: "agent", Name: "Agent"}, {ID: "read-only", Name: "Read-only"}}}
+	a := &orderedPeer{initial: orderedModeOptions(false, "agent"), restoreReply: &acp.LoadSessionResponse{Modes: modes, ConfigOptions: func() *[]acp.SessionConfigOption { value := orderedModeOptions(false, "agent"); return &value }()}, modeEntered: make(chan struct{}), modeRelease: make(chan struct{})}
+	h := orderedHost(t, a, nil)
+	t.Cleanup(func() {
+		select {
+		case <-a.modeRelease:
+		default:
+			close(a.modeRelease)
+		}
+	})
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := h.OpenSession(ctx, "ordered", SessionConfig{Workdir: t.TempDir(), ReplayHistory: true})
+		done <- err
+	}()
+	awaitOperation(t, a.modeEntered)
+	cancel(&acp.Error{Code: acp.ErrorCodeRequestCanceled, Message: "local mode cancel"})
+	<-done // Existing best-effort mode-error policy is unchanged.
+	if got := h.Settings("ordered").Mode; got != "Agent" {
+		t.Fatalf("local cancel confirmed requested mode before ACK: %q", got)
+	}
+	close(a.modeRelease)
+	if _, err := h.ListSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.Settings("ordered").Mode; got != "Agent" {
+		t.Fatalf("late unmatched mode ACK confirmed requested mode: %q", got)
 	}
 }
