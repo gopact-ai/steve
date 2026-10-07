@@ -7,6 +7,8 @@ import { Button } from "@/components/base/buttons/button";
 import { Checkbox } from "@/components/base/checkbox/checkbox";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
+import { SessionOptionControl } from "@/components/steve/session-option";
+import { sessionOption, withOptionPreference } from "@/lib/session-options";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { SSHConnect } from "@/components/steve/ssh-connect";
 import { useResourceRead } from "@/hooks/use-resource-read";
@@ -355,8 +357,10 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
                     {models.length > 0 ? <Select size="sm" label={t("desktop.agentModel")} hint={t("desktop.agentModelHint")} selectedKey={draft.models?.[id] || "__default"} isDisabled={locked} onSelectionChange={(selection) => { if (selection) edit({ models: { ...draft.models, [id]: String(selection) === "__default" ? "" : String(selection) } }); }}
                         items={[{ id: "__default", label: t("desktop.agentModelDefault", { model: candidate?.model || "—" }) }, ...models.map((model) => ({ id: model, label: model }))]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select>
                         : <p className="text-xs leading-5 text-tertiary">{t("desktop.agentModelUnknown")}</p>}
-                    {(candidate?.selectors || []).map((selector) => <Select key={selector.id} size="sm" label={selector.name || selector.id} selectedKey={draft.options?.[id]?.[selector.id] || "__default"} isDisabled={locked} onSelectionChange={(selection) => { if (selection) edit({ options: { ...draft.options, [id]: { ...draft.options?.[id], [selector.id]: String(selection) === "__default" ? "" : String(selection) } } }); }}
-                        items={[{ id: "__default", label: t("desktop.agentOptionDefault", { value: selector.current || "—" }) }, ...(selector.values || []).map((value, index) => ({ id: value, label: selector.choices?.[index] || value }))]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select>)}
+                    {(candidate?.selectors || []).map(selector => <SessionOptionControl key={selector.id} option={sessionOption(selector)}
+                        requested={Object.hasOwn(draft.options?.[id] || {}, selector.id) ? draft.options?.[id]?.[selector.id] : undefined}
+                        disabled={locked}
+                        onChange={value => edit({ options: { ...draft.options, [id]: withOptionPreference(draft.options?.[id], selector.id, value) } })} />)}
                 </fieldset>;
             })}
             {chosen.length > 1 ? <RadioGroup aria-label={t("desktop.defaultAgentLabel")} value={primary} isDisabled={locked} onChange={(value) => edit({ primary: value })} className="space-y-2">

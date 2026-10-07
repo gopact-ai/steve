@@ -23,7 +23,7 @@
     "test:ssh": "node ../../e2e/console/ssh-connect-ui.mjs",
     "test:coordination": "node ../../e2e/console/coordination-ui.mjs && node scripts/coordination-poll-browser.test.mjs",
     "test:schedules": "node scripts/schedules-browser.test.mjs",
-    "test:node-agents": "node ../../e2e/console/node-agents-ui.mjs && node ../../e2e/console/command-first-ui.mjs",
+    "test:node-agents": "node ../../e2e/console/node-agents-ui.mjs && node ../../e2e/console/command-first-ui.mjs && node ../../e2e/console/typed-options-enrollment.mjs",
     "test:machine-restart": "node ../../e2e/console/machine-restart-ui.mjs",
     "test:selection": "node ../../e2e/console/selection.mjs && node ../../e2e/console/selection-ui.mjs && node ../../e2e/console/side-chat-ui.mjs && node ../../e2e/console/changes-card.mjs",
     "test:plugins": "node ../../e2e/console/plugins-ui.mjs",
