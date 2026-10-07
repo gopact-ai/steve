@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -30,7 +31,7 @@ func (s *Store) RuntimeSocket(ctx context.Context, ref RuntimeRef) (string, erro
 		if err := json.Unmarshal(raw, &location); err != nil {
 			return "", ErrIntegrity
 		}
-		if !filepath.IsAbs(location) || filepath.Base(location) != "mcp.sock" || !strings.HasPrefix(filepath.Base(filepath.Dir(location)), "steve-plugin-socket-") {
+		if !validRuntimeSocketPath(location) {
 			return "", ErrIntegrity
 		}
 		if err := ensureSocketDirectory(filepath.Dir(location)); err != nil {
@@ -41,11 +42,16 @@ func (s *Store) RuntimeSocket(ctx context.Context, ref RuntimeRef) (string, erro
 	if !os.IsNotExist(err) {
 		return "", err
 	}
-	dir, err := os.MkdirTemp("", "steve-plugin-socket-")
+	// TMPDIR can be as long as the state directory; keep only sockets here.
+	dir, err := os.MkdirTemp("/tmp", "steve-plugin-socket-")
 	if err != nil {
 		return "", err
 	}
 	socket := filepath.Join(dir, "mcp.sock")
+	if !validRuntimeSocketPath(socket) {
+		_ = os.Remove(dir)
+		return "", ErrIntegrity
+	}
 	raw, err = json.Marshal(socket)
 	if err != nil {
 		return "", err
@@ -54,6 +60,17 @@ func (s *Store) RuntimeSocket(ctx context.Context, ref RuntimeRef) (string, erro
 		return "", err
 	}
 	return socket, nil
+}
+
+func validRuntimeSocketPath(location string) bool {
+	// Filesystem Unix addresses need a trailing NUL; Darwin has 104 bytes.
+	limit := 104
+	if runtime.GOOS == "linux" {
+		limit = 108
+	}
+	return len(location) < limit && filepath.IsAbs(location) &&
+		filepath.Base(location) == "mcp.sock" &&
+		strings.HasPrefix(filepath.Base(filepath.Dir(location)), "steve-plugin-socket-")
 }
 
 func ensureSocketDirectory(dir string) error {
