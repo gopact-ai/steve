@@ -13,6 +13,8 @@ import (
 // request has no matched response. A new request is not a receipt for it.
 var ErrSessionOperationUnconfirmed = errors.New("session operation outcome is unconfirmed")
 
+const sessionOperationClose = "close"
+
 type sessionOperation struct {
 	method     string
 	generation uint64
@@ -34,7 +36,7 @@ func (h *Host) SessionBlockedLocked(sid acp.SessionID) error {
 		return ErrSessionBusy
 	}
 	marker := error(ErrSessionOperationUnconfirmed)
-	if op.method == "close" {
+	if op.method == sessionOperationClose {
 		marker = errors.Join(marker, ErrCloseUnconfirmed)
 	}
 	return fmt.Errorf("session/%s: %w: %w", op.method, marker, op.cause)

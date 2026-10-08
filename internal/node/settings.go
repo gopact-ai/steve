@@ -49,88 +49,9 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 		return nodewire.ErrSettingsRevisionConflict
 	}
 	set = nodewire.CloneSettings(set)
-	cfg := s.conf()
-	next := cfg
-	next.Harnesses = make(map[string]HarnessSpec, len(set.Harnesses))
-	for id, h := range set.Harnesses {
-		if !idShape.MatchString(id) {
-			return fmt.Errorf("harness id %q is not a plain name", id)
-		}
-		if strings.TrimSpace(h.Command) == "" {
-			return fmt.Errorf("harness %q needs a command", id)
-		}
-		previous := cfg.Harnesses[id]
-		if h.Adapter != nil && *h.Adapter != previous.Adapter {
-			return fmt.Errorf("harness %s adapter changes require configuration and restart", id)
-		}
-		if previous.Adapter != "" && h.Command != previous.Command {
-			return fmt.Errorf("harness %s has a pinned adapter; its generated command and arguments cannot be edited", id)
-		}
-		if h.Permission != nil && *h.Permission != "" {
-			return fmt.Errorf("harness %s permissions are managed by the hub", id)
-		}
-		previous.Command, previous.Args, previous.ProcessDir = h.Command, h.Args, h.ProcessDir
-		if h.Env != nil {
-			previous.Env = h.Env
-		}
-		if h.Models != nil {
-			previous.Models = h.Models
-		}
-		if h.Slots != nil {
-			if *h.Slots < 0 {
-				return fmt.Errorf("harness %s slots must be nonnegative", id)
-			}
-			previous.Slots = *h.Slots
-		}
-		command := previous.Command
-		if previous.Adapter != "" {
-			command = ""
-		}
-		if err := launchconfig.Validate(previous.Adapter, command, previous.Args, previous.Env); err != nil {
-			return fmt.Errorf("harness %q: %w", id, err)
-		}
-		next.Harnesses[id] = previous
-	}
-	next.Tools = cleanList(set.Tools)
-	next.Declares = cleanList(set.Declares)
-	for _, d := range next.Declares {
-		if !strings.Contains(d, ":") {
-			return fmt.Errorf("declaration %q must be kind:id, like network:office", d)
-		}
-	}
-	next.Capabilities = cleanList(set.Capabilities)
-	if cfg.MCPBroker != nil && cfg.MCPBroker.Socket != "" {
-		if len(set.MCPServers) > 0 {
-			return errors.New("this node's MCP servers belong to its broker process; edit the broker's config")
-		}
-	} else {
-		next.MCPServers = make(map[string]MCPSpec, len(set.MCPServers))
-		for id, m := range set.MCPServers {
-			previous := cfg.MCPServers[id]
-			if m.Env == nil {
-				m.Env = previous.Env
-			}
-			if m.Headers == nil {
-				m.Headers = previous.Headers
-			}
-			if !idShape.MatchString(id) {
-				return fmt.Errorf("MCP server id %q is not a plain name", id)
-			}
-			switch m.Type {
-			case "", "stdio":
-				if strings.TrimSpace(m.Command) == "" {
-					return fmt.Errorf("MCP server %q needs a command", id)
-				}
-				m.Type = "stdio"
-			case "http", "sse":
-				if !strings.HasPrefix(m.URL, "http://") && !strings.HasPrefix(m.URL, "https://") {
-					return fmt.Errorf("MCP server %q needs an http(s) url", id)
-				}
-			default:
-				return fmt.Errorf("MCP server %q: unknown type %q", id, m.Type)
-			}
-			next.MCPServers[id] = MCPSpec{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
-		}
+	next, err := configWithSettings(s.conf(), set)
+	if err != nil {
+		return err
 	}
 	var writeErr error
 	if next.Source != "" {
@@ -162,6 +83,110 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 	slog.Info(fmt.Sprintf("steve-node: settings applied from the hub: %d harnesses, %d tools, %d mcp, %d declares, %d tags",
 		len(next.Harnesses), len(next.Tools), len(next.MCPServers), len(next.Declares), len(next.Capabilities)))
 	return writeErr
+}
+
+// configWithSettings validates a replacement without publishing or persisting it.
+func configWithSettings(cfg ServerConfig, set nodewire.Settings) (ServerConfig, error) {
+	next := cfg
+	var err error
+	next.Harnesses, err = harnessesWithSettings(cfg.Harnesses, set.Harnesses)
+	if err != nil {
+		return next, err
+	}
+	next.Tools = cleanList(set.Tools)
+	next.Declares = cleanList(set.Declares)
+	for _, d := range next.Declares {
+		if !strings.Contains(d, ":") {
+			return next, fmt.Errorf("declaration %q must be kind:id, like network:office", d)
+		}
+	}
+	next.Capabilities = cleanList(set.Capabilities)
+	if cfg.MCPBroker != nil && cfg.MCPBroker.Socket != "" {
+		if len(set.MCPServers) > 0 {
+			return next, errors.New("this node's MCP servers belong to its broker process; edit the broker's config")
+		}
+	} else {
+		next.MCPServers, err = mcpServersWithSettings(cfg.MCPServers, set.MCPServers)
+		if err != nil {
+			return next, err
+		}
+	}
+	return next, nil
+}
+
+func harnessesWithSettings(current map[string]HarnessSpec, settings map[string]nodewire.HarnessSetting) (map[string]HarnessSpec, error) {
+	harnesses := make(map[string]HarnessSpec, len(settings))
+	for id, h := range settings {
+		if !idShape.MatchString(id) {
+			return nil, fmt.Errorf("harness id %q is not a plain name", id)
+		}
+		if strings.TrimSpace(h.Command) == "" {
+			return nil, fmt.Errorf("harness %q needs a command", id)
+		}
+		previous := current[id]
+		if h.Adapter != nil && *h.Adapter != previous.Adapter {
+			return nil, fmt.Errorf("harness %s adapter changes require configuration and restart", id)
+		}
+		if previous.Adapter != "" && h.Command != previous.Command {
+			return nil, fmt.Errorf("harness %s has a pinned adapter; its generated command and arguments cannot be edited", id)
+		}
+		if h.Permission != nil && *h.Permission != "" {
+			return nil, fmt.Errorf("harness %s permissions are managed by the hub", id)
+		}
+		previous.Command, previous.Args, previous.ProcessDir = h.Command, h.Args, h.ProcessDir
+		if h.Env != nil {
+			previous.Env = h.Env
+		}
+		if h.Models != nil {
+			previous.Models = h.Models
+		}
+		if h.Slots != nil {
+			if *h.Slots < 0 {
+				return nil, fmt.Errorf("harness %s slots must be nonnegative", id)
+			}
+			previous.Slots = *h.Slots
+		}
+		command := previous.Command
+		if previous.Adapter != "" {
+			command = ""
+		}
+		if err := launchconfig.Validate(previous.Adapter, command, previous.Args, previous.Env); err != nil {
+			return nil, fmt.Errorf("harness %q: %w", id, err)
+		}
+		harnesses[id] = previous
+	}
+	return harnesses, nil
+}
+
+func mcpServersWithSettings(current map[string]MCPSpec, settings map[string]nodewire.MCPSetting) (map[string]MCPSpec, error) {
+	servers := make(map[string]MCPSpec, len(settings))
+	for id, m := range settings {
+		previous := current[id]
+		if m.Env == nil {
+			m.Env = previous.Env
+		}
+		if m.Headers == nil {
+			m.Headers = previous.Headers
+		}
+		if !idShape.MatchString(id) {
+			return nil, fmt.Errorf("MCP server id %q is not a plain name", id)
+		}
+		switch m.Type {
+		case "", "stdio":
+			if strings.TrimSpace(m.Command) == "" {
+				return nil, fmt.Errorf("MCP server %q needs a command", id)
+			}
+			m.Type = "stdio"
+		case "http", "sse":
+			if !strings.HasPrefix(m.URL, "http://") && !strings.HasPrefix(m.URL, "https://") {
+				return nil, fmt.Errorf("MCP server %q needs an http(s) url", id)
+			}
+		default:
+			return nil, fmt.Errorf("MCP server %q: unknown type %q", id, m.Type)
+		}
+		servers[id] = MCPSpec{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
+	}
+	return servers, nil
 }
 
 // startBroker starts the MCP broker the settings call for, if any.

@@ -253,6 +253,39 @@ func (ch *terminalHandler) CreateTerminal(ctx context.Context, req *acp.CreateTe
 		return nil, terminalError(err)
 	}
 	h := ch.h
+	t, helperArgs, err := ch.registerTerminal(call, req, id, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		close(t.setupDone)
+		t.phase.Lock()
+		admitted := t.admitted
+		t.phase.Unlock()
+		if !admitted {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), terminalCleanupWait)
+			defer cancel()
+			if t.stop(cleanupCtx, h) == nil {
+				h.releaseTerminal(t)
+			}
+		}
+	}()
+	runtime, err := t.prepareForAdmission(call, req, cwd, helperArgs)
+	if err != nil {
+		return nil, err
+	}
+	if err := t.admitPayload(call, runtime); err != nil {
+		return nil, err
+	}
+	// Do not revalidate a cancelled create RPC here: after gate consumption,
+	// its cancellation is not authority to kill the successful terminal.
+	return &acp.CreateTerminalResponse{TerminalID: acp.TerminalID(t.intent.ID)}, nil
+}
+
+// registerTerminal reserves provisional collector capacity before durable
+// ownership or child preparation. Frozen references share the same lock order.
+func (ch *terminalHandler) registerTerminal(call *workspaceFileCall, req *acp.CreateTerminalRequest, id string, limit int) (*hostTerminal, []string, error) {
+	h := ch.h
 	// Snapshot's collector -> Host order also serializes capacity reservation
 	// with frozen swaps and reclamation of replaced references.
 	call.col.mu.Lock()
@@ -262,7 +295,7 @@ func (ch *terminalHandler) CreateTerminal(ctx context.Context, req *acp.CreateTe
 	if !h.terminalEnabled(original) {
 		h.mu.Unlock()
 		call.col.mu.Unlock()
-		return nil, fileError(acp.ErrorCodeInvalidRequest, "Owned terminal execution is unavailable")
+		return nil, nil, fileError(acp.ErrorCodeInvalidRequest, "Owned terminal execution is unavailable")
 	}
 	count := len(call.col.terminalReleased)
 	for _, previous := range h.terminals {
@@ -273,7 +306,7 @@ func (ch *terminalHandler) CreateTerminal(ctx context.Context, req *acp.CreateTe
 	if count >= maxTerminals {
 		h.mu.Unlock()
 		call.col.mu.Unlock()
-		return nil, fileError(acp.ErrorCodeInvalidRequest, "Terminal slots exhausted")
+		return nil, nil, fileError(acp.ErrorCodeInvalidRequest, "Terminal slots exhausted")
 	}
 	if h.terminalOutputBytes == nil {
 		h.terminalOutputBytes = map[*collector]int{}
@@ -293,19 +326,14 @@ func (ch *terminalHandler) CreateTerminal(ctx context.Context, req *acp.CreateTe
 	helperArgs := append([]string(nil), h.terminalHelperArgs...)
 	h.mu.Unlock()
 	call.col.mu.Unlock()
-	defer func() {
-		close(t.setupDone)
-		t.phase.Lock()
-		admitted := t.admitted
-		t.phase.Unlock()
-		if !admitted {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), terminalCleanupWait)
-			defer cancel()
-			if t.stop(cleanupCtx, h) == nil {
-				h.releaseTerminal(t)
-			}
-		}
-	}()
+	return t, helperArgs, nil
+}
+
+// prepareForAdmission records each durable phase before the next native gate.
+// Failed helpers remain attached to the provisional terminal until stop proof.
+func (t *hostTerminal) prepareForAdmission(call *workspaceFileCall, req *acp.CreateTerminalRequest, cwd *os.File, helperArgs []string) (terminalRuntime, error) {
+	h := call.h
+	original, owner, start := t.original, t.owner, t.start
 	config, err := localTerminalConfig(original, req)
 	if err != nil {
 		return nil, terminalError(err)
@@ -361,6 +389,13 @@ func (ch *terminalHandler) CreateTerminal(ctx context.Context, req *acp.CreateTe
 	if err := owner.Active(start, t.intent, identity, runtime.Place()); err != nil {
 		return nil, terminalError(err)
 	}
+	return runtime, nil
+}
+
+// admitPayload consumes only the owner's fresh grant, with no Owner callback
+// under phase. A written EXEC remains admitted even if its result is uncertain.
+func (t *hostTerminal) admitPayload(call *workspaceFileCall, runtime terminalRuntime) error {
+	owner, start := t.owner, t.start
 	validate := func() error { return t.validate(call) }
 	consume := func(grant context.Context) error {
 		// No Owner call under phase: the caller may hold Node's owner mutex.
@@ -382,20 +417,18 @@ func (ch *terminalHandler) CreateTerminal(ctx context.Context, req *acp.CreateTe
 		return err
 	}
 	if err := validate(); err != nil {
-		return nil, terminalError(err)
+		return terminalError(err)
 	}
 	if err := owner.Admit(start, t.intent, consume, validate); err != nil {
-		return nil, terminalError(err)
+		return terminalError(err)
 	}
 	t.phase.Lock()
 	admitted := t.admitted
 	t.phase.Unlock()
 	if !admitted {
-		return nil, fileError(acp.ErrorCodeInvalidRequest, "Terminal payload was not admitted")
+		return fileError(acp.ErrorCodeInvalidRequest, "Terminal payload was not admitted")
 	}
-	// Do not revalidate a cancelled create RPC here: after gate consumption,
-	// its cancellation is not authority to kill the successful terminal.
-	return &acp.CreateTerminalResponse{TerminalID: acp.TerminalID(t.intent.ID)}, nil
+	return nil
 }
 
 func (ch *terminalHandler) lookupTerminal(ctx context.Context, sid acp.SessionID, id acp.TerminalID, class string) (*workspaceFileCall, *hostTerminal, error) {

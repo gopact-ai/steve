@@ -1,6 +1,9 @@
 package app
 
-import "context"
+import (
+	"context"
+	"github.com/gopact-ai/steve/internal/turn"
+)
 
 func assembleFleetWorkers(boot runtimeAssembly, storage ledgerAssembly, machines fleetAssembly, modelInfo modelsAssembly, work executionAssembly, projection readModelAssembly) error {
 	background := boot.Background()
@@ -29,8 +32,9 @@ func assembleFleetWorkers(boot runtimeAssembly, storage ledgerAssembly, machines
 	// hand it to an agent, in the half-merged tree git kept.
 	background.Go(func(ctx context.Context) { sweepLandings(ctx, projects, artifacts, view, coordinator) })
 	background.Go(repos.Run)
+	idleClose := turn.IdleCloseReservation(coordinator)
 	background.Go(func(ctx context.Context) {
-		sweepIdleTasks(ctx, boot.Book(), tasks, attempts, view, coordinator.ReserveIdleClose)
+		sweepIdleTasks(ctx, boot.Book(), tasks, attempts, view, idleClose)
 	})
 	// Registered launch configurations are not permission to execute them.
 	// Sessions report their actual settings; explicit model probes remain

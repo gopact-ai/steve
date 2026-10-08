@@ -258,10 +258,9 @@ type coordinatorState struct {
 	preferenceLocks sync.Map // conversation/agent -> *sync.Mutex
 	lastSeen        map[string]time.Time
 	active          map[string]harness.Runner
-	cancels         map[string]*turnEntry
-	retiring        map[string]bool
-	cancelPending   map[string]time.Time
-	skillsLock      int
+	sessionAdmissionState
+	cancelPending map[string]time.Time
+	skillsLock    int
 }
 
 // Deps is everything a Coordinator is built with. New refuses a Deps
@@ -386,8 +385,9 @@ func New(deps Deps) (*Coordinator, error) {
 			offlineAfter: deps.OfflineAfter, consoleCompletionGuard: deps.ConsoleCompletionGuard,
 			nodes: deps.Nodes, planRecoveryOwner: deps.PlanRecoveryOwner,
 			plans: deps.Plans, fleet: deps.Fleet, prober: deps.Prober,
-			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
-			cancelPending: map[string]time.Time{},
+			active:                map[string]harness.Runner{},
+			sessionAdmissionState: sessionAdmissionState{cancels: map[string]*turnEntry{}},
+			cancelPending:         map[string]time.Time{},
 		},
 	}, nil
 }

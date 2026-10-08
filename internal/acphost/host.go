@@ -907,6 +907,11 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		return fmt.Errorf("identify agent process group: %w", local.unidentified)
 	}
 
+	return h.initializeLocked(ctx, proc, handler)
+}
+
+// initializeLocked completes the handshake while ensureStarted holds h.mu.
+func (h *Host) initializeLocked(ctx context.Context, proc Process, handler *clientHandler) error {
 	initCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	var files *acp.FileSystemCapabilities
@@ -1123,47 +1128,61 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 		if err != nil {
 			return "", 0, err
 		}
-		var modes *acp.SessionModeState
-		var options *[]acp.SessionConfigOption
-		var receipt acp.ResponseReceipt
-		if method == "load" {
-			var resp *acp.LoadSessionResponse
-			resp, receipt, err = caller.LoadSessionWithReceipt(ctx, &acp.LoadSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
-			if err == nil {
-				modes, options = resp.Modes, resp.ConfigOptions
-			}
-		} else {
-			var resp *acp.ResumeSessionResponse
-			resp, receipt, err = caller.ResumeSessionWithReceipt(ctx, &acp.ResumeSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
-			if err == nil {
-				modes, options = resp.Modes, resp.ConfigOptions
-			}
-		}
-		if err == nil && receipt.Sequence == 0 {
-			err = fmt.Errorf("session/%s: successful result lacks inbound receipt", method)
-		}
-		if err == nil {
-			h.mu.Lock()
-			applyOpenResponseAt(op.state, modes, options, receipt.Sequence)
-			h.mu.Unlock()
-			h.applyMode(ctx, caller, sessionID, generation, op.state, modes)
-		}
-		h.mu.Lock()
-		err = h.finishSessionOperationLocked(ctx, sessionID, op, err)
-		if err != nil && op.original == nil {
-			h.retireWorkspaceLocked(workspace)
-		}
-		h.mu.Unlock()
-		if err != nil {
-			return "", 0, err
-		}
-		return sessionID, generation, nil
+		return h.completeSessionRestore(ctx, caller, sessionID, cfg, generation, workspace, op)
 	}
 	opening, err := h.beginNewOpeningLocked(ctx)
 	h.mu.Unlock()
 	if err != nil {
 		return "", 0, err
 	}
+	return h.completeSessionCreation(ctx, caller, cfg, generation, workspace, opening)
+}
+
+// completeSessionRestore consumes the admitted load/resume result without
+// changing the outer workspace candidate's lifetime or unknown reservation.
+func (h *Host) completeSessionRestore(ctx context.Context, caller *acp.AgentCaller, sessionID acp.SessionID, cfg SessionConfig, generation uint64, workspace *workspaceFiles, op *sessionOperation) (acp.SessionID, uint64, error) {
+	method := op.method
+	var err error
+	var modes *acp.SessionModeState
+	var options *[]acp.SessionConfigOption
+	var receipt acp.ResponseReceipt
+	if method == "load" {
+		var resp *acp.LoadSessionResponse
+		resp, receipt, err = caller.LoadSessionWithReceipt(ctx, &acp.LoadSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
+		if err == nil {
+			modes, options = resp.Modes, resp.ConfigOptions
+		}
+	} else {
+		var resp *acp.ResumeSessionResponse
+		resp, receipt, err = caller.ResumeSessionWithReceipt(ctx, &acp.ResumeSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
+		if err == nil {
+			modes, options = resp.Modes, resp.ConfigOptions
+		}
+	}
+	if err == nil && receipt.Sequence == 0 {
+		err = fmt.Errorf("session/%s: successful result lacks inbound receipt", method)
+	}
+	if err == nil {
+		h.mu.Lock()
+		applyOpenResponseAt(op.state, modes, options, receipt.Sequence)
+		h.mu.Unlock()
+		h.applyMode(ctx, caller, sessionID, generation, op.state, modes)
+	}
+	h.mu.Lock()
+	err = h.finishSessionOperationLocked(ctx, sessionID, op, err)
+	if err != nil && op.original == nil {
+		h.retireWorkspaceLocked(workspace)
+	}
+	h.mu.Unlock()
+	if err != nil {
+		return "", 0, err
+	}
+	return sessionID, generation, nil
+}
+
+// completeSessionCreation binds the matched creation before publishing it.
+// Failed local publication still retains the original native lifecycle debt.
+func (h *Host) completeSessionCreation(ctx context.Context, caller *acp.AgentCaller, cfg SessionConfig, generation uint64, workspace *workspaceFiles, opening *newOpening) (acp.SessionID, uint64, error) {
 	resp, receipt, err := caller.NewSessionWithReceipt(ctx, &acp.NewSessionRequest{Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
 	h.mu.Lock()
 	if err != nil {
@@ -1367,28 +1386,7 @@ func (h *Host) promptTurn(
 	defer close(settled)
 	promptCtx, abandon := context.WithCancel(context.WithoutCancel(ctx))
 	defer abandon()
-	go func() {
-		select {
-		case <-settled:
-			return
-		case <-ctx.Done():
-		}
-		notifyCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), cancelNotifyTimeout)
-		err := caller.Cancel(notifyCtx, &acp.CancelNotification{SessionID: sid})
-		stop()
-		if err != nil {
-			slog.Error(fmt.Sprintf("acphost: cancel notify: %v", err))
-		}
-		select {
-		case <-settled:
-		case <-time.After(cancelSettleTimeout):
-			// The agent did not end the turn. Give up on a clean stop; the
-			// distinct error tells the caller it cannot prove writer quiescence.
-			slog.Warn(fmt.Sprintf("acphost: agent did not settle a cancelled turn in %s", cancelSettleTimeout))
-			abandoned.Store(true)
-			abandon()
-		}
-	}()
+	go cancelPromptOnContext(ctx, caller, sid, settled, &abandoned, abandon)
 
 	resp, err := caller.Prompt(promptCtx, &acp.PromptRequest{
 		SessionID: sid,
@@ -1415,6 +1413,31 @@ func (h *Host) promptTurn(
 		activity = append(activity, fmt.Sprintf("(stopReason: %s)", resp.StopReason))
 	}
 	return out, activity, nil
+}
+
+// cancelPromptOnContext requests a protocol stop before abandoning the RPC.
+// The outer prompt owns settlement and cancellation defer ordering.
+func cancelPromptOnContext(ctx context.Context, caller *acp.AgentCaller, sid acp.SessionID, settled <-chan struct{}, abandoned *atomic.Bool, abandon context.CancelFunc) {
+	select {
+	case <-settled:
+		return
+	case <-ctx.Done():
+	}
+	notifyCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), cancelNotifyTimeout)
+	err := caller.Cancel(notifyCtx, &acp.CancelNotification{SessionID: sid})
+	stop()
+	if err != nil {
+		slog.Error(fmt.Sprintf("acphost: cancel notify: %v", err))
+	}
+	select {
+	case <-settled:
+	case <-time.After(cancelSettleTimeout):
+		// The agent did not end the turn. Give up on a clean stop; the
+		// distinct error tells the caller it cannot prove writer quiescence.
+		slog.Warn(fmt.Sprintf("acphost: agent did not settle a cancelled turn in %s", cancelSettleTimeout))
+		abandoned.Store(true)
+		abandon()
+	}
 }
 
 // failedPrompt is the error, carrying cause, of a prompt that did not end

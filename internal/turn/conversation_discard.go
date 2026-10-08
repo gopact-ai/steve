@@ -117,14 +117,14 @@ func (c *Coordinator) busyWith(conversationID string) bool {
 
 // beginConversationRetirement fences every agent slot in this conversation,
 // including a newly selected agent, without blocking unrelated conversations.
-func (c *Coordinator) beginConversationRetirement(ctx context.Context, conversationID string) (func(), error) {
+func (c *coordinatorState) beginConversationRetirement(ctx context.Context, conversationID string) (func(), error) {
 	return c.beginSessionRetirement(ctx, conversationID, "")
 }
 
 // beginSessionRetirement also serializes history replacement and scheduled
 // rotation. An empty agent requires the entire conversation to be idle; a
 // specific agent preserves the other agents' already running turns.
-func (c *Coordinator) beginSessionRetirement(ctx context.Context, conversationID, agentID string) (func(), error) {
+func (c *coordinatorState) beginSessionRetirement(ctx context.Context, conversationID, agentID string) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -186,20 +186,4 @@ func (c *Coordinator) forgetConversation(conversationID string) {
 	defer c.mu.Unlock()
 	delete(c.modes, conversationID)
 	delete(c.lastSeen, conversationID)
-}
-
-// ReserveIdleClose gives automatic task closure the same admission boundary as
-// session retirement. The caller releases it outside its task/ledger locks.
-func (c *Coordinator) ReserveIdleClose(ctx context.Context, conversationID string) (func(), error) {
-	c.requestMu.RLock()
-	if c.maintaining {
-		c.requestMu.RUnlock()
-		return nil, errors.New("coordinator is under maintenance")
-	}
-	release, err := c.beginConversationRetirement(ctx, conversationID)
-	if err != nil {
-		c.requestMu.RUnlock()
-		return nil, err
-	}
-	return func() { release(); c.requestMu.RUnlock() }, nil
 }

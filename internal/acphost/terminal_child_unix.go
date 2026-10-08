@@ -149,6 +149,11 @@ func runTerminalChild() (result error) {
 	if err := cwd.Close(); err != nil {
 		return err
 	}
+	return execTerminalChildProfile(config, status)
+}
+
+// execTerminalChildProfile runs only after both gates and pinned cwd admission.
+func execTerminalChildProfile(config terminalChildConfig, status *os.File) error {
 	path := config.Command
 	if !strings.ContainsRune(path, '/') {
 		// The payload uses the original frozen profile PATH, never the

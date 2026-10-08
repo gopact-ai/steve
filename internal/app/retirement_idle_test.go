@@ -7,6 +7,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/turn/turntest"
 )
 
@@ -29,18 +30,19 @@ func TestIdleSweepSharesConversationRetirementAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	coordinator := turntest.New(t, func(o *turntest.Options) { o.Ledger = book; o.Tasks = tasks })
+	idleClose := turn.IdleCloseReservation(coordinator)
 	time.Sleep(3 * time.Millisecond)
-	release, err := coordinator.ReserveIdleClose(t.Context(), created.Channel)
+	release, err := idleClose(t.Context(), created.Channel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeIdleTasks(t.Context(), book, tasks, attempt.New(book), nil, time.Millisecond, coordinator.ReserveIdleClose)
+	closeIdleTasks(t.Context(), book, tasks, attempt.New(book), nil, time.Millisecond, idleClose)
 	got, _ := tasks.Get(created.ID)
 	if got.State != task.StateRunning || got.ExecutionEpoch != created.ExecutionEpoch {
 		t.Fatal("idle sweep closed a task whose context is retiring")
 	}
 	release()
-	closeIdleTasks(t.Context(), book, tasks, attempt.New(book), nil, time.Millisecond, coordinator.ReserveIdleClose)
+	closeIdleTasks(t.Context(), book, tasks, attempt.New(book), nil, time.Millisecond, idleClose)
 	got, _ = tasks.Get(created.ID)
 	if got.State != task.StateDone {
 		t.Fatalf("idle closure stayed fenced after release: %s", got.State)
