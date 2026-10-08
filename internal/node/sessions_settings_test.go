@@ -91,21 +91,25 @@ func TestNodeProgressKeepsAuthoritativeSelectors(t *testing.T) {
 func TestNodeCoalescedProgressCannotUndoConfirmedOption(t *testing.T) {
 	s, req, one := settingsTestSession(t)
 	stale := one.host.Settings(acp.SessionID(one.record.UpstreamID))
-	one.mu.Lock()
-	// This is the deterministic boundary where a running turn has queued
-	// an older progress snapshot while an option RPC is being processed.
-	next := one.copyLocked()
-	next.State.State = nodewire.SessionRunning
-	next.State.InputAccepted = 1
-	next.CurrentCommand = "settings/input"
-	next.Commands[next.CurrentCommand] = nodewire.SessionCommand{
-		ID: next.CurrentCommand, InputSequence: 1, State: nodewire.SessionCommandRunning, DispatchState: "dispatched",
-	}
-	next.CommandHashes[next.CurrentCommand] = "settings-input-hash"
-	if err := one.commitLocked(next); err != nil {
-		one.mu.Unlock()
+	req.Action, req.CommandID, req.InputSequence, req.Text = nodewire.SessionActionPrompt, "settings/input", 1, "askme"
+	state, err := s.sessions.Do(t.Context(), "cluster-1", req)
+	if err != nil {
 		t.Fatal(err)
 	}
+	// A real reverse question proves Host admission; dispatched alone does not.
+	for len(state.Questions) == 0 {
+		poll := req
+		poll.Action, poll.After, poll.WaitMS = nodewire.SessionActionPoll, state.Sequence, 50
+		state, err = s.sessions.Do(t.Context(), "cluster-1", poll)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Command != nil && state.Command.Settled {
+			t.Fatal("native turn ended before the progress boundary")
+		}
+	}
+	question := state.Questions[0]
+	one.mu.Lock()
 	one.pendingProgress = &view.Progress{Answer: "pending answer", Settings: stale}
 	one.mu.Unlock()
 	req.Action, req.CommandID, req.OptionID, req.OptionValue = nodewire.SessionActionOption, "settings/input", "mode", "read-only"
@@ -129,4 +133,14 @@ func TestNodeCoalescedProgressCannotUndoConfirmedOption(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireSettingsOption(t, savedProgress(t, one).State.Settings, "mode", "read-only")
+	answer := req
+	answer.Action, answer.QuestionID = nodewire.SessionActionAnswer, question.ID
+	answer.Answer = &nodewire.SessionAnswer{CommandID: "settings/answer", Decision: "accept", Choice: "Blue"}
+	if _, err := s.sessions.Do(t.Context(), "cluster-1", answer); err != nil {
+		t.Fatal(err)
+	}
+	finished := waitRecordedInput(t, s.sessions, req)
+	if finished.Command == nil || !finished.Command.Settled {
+		t.Fatal("original native prompt did not settle")
+	}
 }

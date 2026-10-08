@@ -1231,6 +1231,37 @@ func (h *Host) PromptTurn(
 	ask permission.AskFunc,
 	askUser AskUserFunc,
 	progress func(view.Progress),
+) (string, []string, error) {
+	return h.promptTurn(ctx, sid, generation, text, images, ask, askUser, progress, nil)
+}
+
+// PromptTurnWithAdmission observes the original collector/active admission.
+// Its one callback runs outside the Host lock, before protocol submission;
+// it is not native execution, completion or process-stop evidence.
+func (h *Host) PromptTurnWithAdmission(
+	ctx context.Context,
+	sid acp.SessionID,
+	generation uint64,
+	text string,
+	images []Image,
+	ask permission.AskFunc,
+	askUser AskUserFunc,
+	progress func(view.Progress),
+	onAdmitted func(),
+) (string, []string, error) {
+	return h.promptTurn(ctx, sid, generation, text, images, ask, askUser, progress, onAdmitted)
+}
+
+func (h *Host) promptTurn(
+	ctx context.Context,
+	sid acp.SessionID,
+	generation uint64,
+	text string,
+	images []Image,
+	ask permission.AskFunc,
+	askUser AskUserFunc,
+	progress func(view.Progress),
+	onAdmitted func(),
 ) (output string, activity []string, resultErr error) {
 	h.mu.Lock()
 	blocked := h.SessionBlockedLocked(sid)
@@ -1279,6 +1310,10 @@ func (h *Host) PromptTurn(
 			resultErr = errors.Join(ErrStopUnconfirmed, resultErr, err)
 		}
 	}()
+
+	if onAdmitted != nil {
+		onAdmitted()
+	}
 
 	// A cancelled turn has to be cancelled *through* the agent rather than
 	// by dropping the RPC. ACP ends a cancelled prompt by answering it with

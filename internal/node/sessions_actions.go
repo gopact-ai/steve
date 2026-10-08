@@ -78,13 +78,61 @@ func (one *ownedSession) poll(ctx context.Context, principal string, req nodewir
 	return one.stateForRequest(req)
 }
 
-func (one *ownedSession) option(ctx context.Context, req nodewire.SessionRequest) (nodewire.SessionState, error) {
+func (one *ownedSession) option(ctx context.Context, principal string, req nodewire.SessionRequest) (nodewire.SessionState, error) {
 	one.mu.Lock()
 	if err := one.admitLocked(req); err != nil {
 		one.mu.Unlock()
 		return nodewire.SessionState{}, err
 	}
 	host, id, generation := one.host, one.record.UpstreamID, one.record.Generation
+	if one.runningLocked() {
+		admitted, done := one.promptAdmitted, one.runDone
+		if admitted == nil || done == nil {
+			one.mu.Unlock()
+			return nodewire.SessionState{}, sessionError("busy", "original prompt admission is unavailable")
+		}
+		select {
+		case <-admitted:
+		default:
+			binding, commandID := one.record.State.Binding, one.record.CurrentCommand
+			one.mu.Unlock()
+			if hooks := one.service.admissionHooks; hooks != nil && hooks.optionWaiting != nil {
+				hooks.optionWaiting()
+			}
+			// Acceptance and the durable dispatched marker both precede
+			// Host admission. Configure must not overtake that original turn.
+			select {
+			case <-admitted:
+			case <-done:
+			case <-ctx.Done():
+				return nodewire.SessionState{}, ctx.Err()
+			case <-one.service.ctx.Done():
+				return nodewire.SessionState{}, sessionError("closed", "node session service closed")
+			}
+			if err := ctx.Err(); err != nil {
+				return nodewire.SessionState{}, err
+			}
+			if one.service.ctx.Err() != nil {
+				return nodewire.SessionState{}, sessionError("closed", "node session service closed")
+			}
+			// Waiting is not a fresh authority proof. Recheck the authenticated
+			// caller after admission, before touching the original native context.
+			if err := one.service.authorize(ctx, principal, req); err != nil {
+				return nodewire.SessionState{}, err
+			}
+			one.mu.Lock()
+			if one.host != host || one.record.UpstreamID != id || one.record.Generation != generation ||
+				one.record.State.Binding != binding || one.record.CurrentCommand != commandID ||
+				one.promptAdmitted != admitted || one.runDone != done {
+				one.mu.Unlock()
+				return nodewire.SessionState{}, sessionError("conflict", "original prompt changed while awaiting admission")
+			}
+			if err := one.admitLocked(req); err != nil {
+				one.mu.Unlock()
+				return nodewire.SessionState{}, err
+			}
+		}
+	}
 	// A selector can be set while the agent is answering. Approval mode is
 	// why: an owner who stops approving each command means now, not after
 	// this turn. The agent takes it on the same connection the turn runs
