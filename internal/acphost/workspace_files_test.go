@@ -550,6 +550,7 @@ func TestWorkspaceFilesCancelledRPCAndDistinctApprovals(t *testing.T) {
 		base.ready.Store(true)
 		handler := &workspaceFileHandler{base}
 		rpc, cancel := context.WithCancel(ctx)
+		defer cancel()
 		call, err := handler.beginFileCall(rpc, req.SessionID)
 		if err != nil {
 			return nil, err
