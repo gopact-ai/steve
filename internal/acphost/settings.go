@@ -15,6 +15,7 @@ import (
 // with config_option_update / current_mode_update notifications, so this
 // outlives any single collector and is read back on every progress snapshot.
 type sessionState struct {
+	workspace        *workspaceFiles
 	mu               sync.Mutex
 	options          []acp.SessionConfigOption
 	modes            []acp.SessionMode

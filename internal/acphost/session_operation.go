@@ -107,6 +107,9 @@ func (h *Host) finishSessionOperationLocked(ctx context.Context, sid acp.Session
 		h.preserveOperationNotificationsLocked(sid, op)
 	case "close", "delete":
 		if h.generation == op.generation && h.sessions[sid] == op.original {
+			if op.original != nil {
+				h.retireWorkspaceLocked(op.original.workspace)
+			}
 			delete(h.sessions, sid)
 		}
 	}
@@ -119,6 +122,7 @@ func copySessionState(original *sessionState) *sessionState {
 	}
 	original.mu.Lock()
 	defer original.mu.Unlock()
+	state.workspace = original.workspace
 	state.options = append([]acp.SessionConfigOption(nil), original.options...)
 	state.modes = append([]acp.SessionMode(nil), original.modes...)
 	state.modeID = original.modeID
@@ -166,6 +170,9 @@ func (h *Host) closeSession(ctx context.Context, sid acp.SessionID) error {
 		}
 		delete(h.sessionOperations, sid)
 		if h.generation == op.generation && h.sessions[sid] == op.original {
+			if op.original != nil {
+				h.retireWorkspaceLocked(op.original.workspace)
+			}
 			delete(h.sessions, sid)
 		}
 		h.mu.Unlock()
@@ -181,6 +188,7 @@ func (h *Host) closeSession(ctx context.Context, sid acp.SessionID) error {
 	}
 	caller, caps, alive := h.caller, h.capabilities, h.alive
 	if !alive || caller == nil || caps == nil || caps.SessionCapabilities == nil || caps.SessionCapabilities.Close == nil {
+		h.retireWorkspaceLocked(h.sessions[sid].workspace)
 		delete(h.sessions, sid)
 		h.mu.Unlock()
 		return nil
@@ -326,6 +334,9 @@ func (h *Host) newOpeningBlockedLocked() error {
 		if op := h.sessionOperations[opening.sid]; op != nil && op.method == "new" && !op.pending && op.process == opening.process && op.generation == opening.generation {
 			delete(h.sessionOperations, opening.sid)
 			if h.generation == op.generation && h.sessions[opening.sid] == op.original {
+				if op.original != nil {
+					h.retireWorkspaceLocked(op.original.workspace)
+				}
 				delete(h.sessions, opening.sid)
 			}
 		}

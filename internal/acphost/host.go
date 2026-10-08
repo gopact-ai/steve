@@ -91,6 +91,9 @@ type Config struct {
 	ProcessDir string
 	Env        []string
 	Permission *permission.Broker
+	// WorkspaceFiles enables callbacks on this hosts own authorized workspace.
+	// Remote raw transports must leave this false.
+	WorkspaceFiles bool
 	// Started learns the identity of each local agent process group; see
 	// LocalTransport.Started.
 	Started func(procgroup.Identity)
@@ -137,7 +140,10 @@ type Host struct {
 	sessionOperations map[acp.SessionID]*sessionOperation
 	generation        uint64
 	// adapter is the ACP agent's name and version as it introduced itself.
-	adapter string
+	adapter      string
+	fileCalls    map[*workspaceFileCall]struct{}
+	fileRoots    map[*workspaceFiles]uint64
+	nextFileCall uint64
 }
 
 func New(cfg Config) *Host {
@@ -178,6 +184,9 @@ type collector struct {
 	askUser      AskUserFunc
 	ctx          context.Context
 	cancelAsk    context.CancelFunc
+	filesClosing bool
+	fileCount    int
+	filesDone    chan struct{}
 }
 
 // maxCollectBytes caps the aggregated assistant text so a runaway agent
@@ -566,6 +575,7 @@ func (c *collector) result() (string, []string) {
 type clientHandler struct {
 	h          *Host
 	generation uint64
+	ready      atomic.Bool
 }
 
 func (ch *clientHandler) Update(ctx context.Context, n *acp.SessionNotification) error {
@@ -793,7 +803,15 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		return ErrClosed
 	}
 	if h.alive {
+		for call := range h.fileCalls {
+			if call.col.filesClosing || call.generation != h.generation {
+				return ErrStopUnconfirmed
+			}
+		}
 		return nil
+	}
+	if len(h.fileCalls) != 0 {
+		return ErrStopUnconfirmed
 	}
 	if h.cfg.NoRestart && h.generation != 0 {
 		return ErrClosed
@@ -804,9 +822,14 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	}
 	stdin := proc.Stdin()
 	generation := h.generation + 1
+	var handler *clientHandler
 	conn, err := acp.NewClient(proc.Stdout(), stdin, func(caller *acp.AgentCaller) acp.ClientHandler {
 		h.caller = caller
-		return &clientHandler{h: h, generation: generation}
+		handler = &clientHandler{h: h, generation: generation}
+		if h.cfg.WorkspaceFiles && workspaceFilesSupported {
+			return &workspaceFileHandler{handler}
+		}
+		return handler
 	})
 	if err != nil {
 		proc.Kill()
@@ -848,6 +871,10 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 
 	initCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
+	var files *acp.FileSystemCapabilities
+	if h.cfg.WorkspaceFiles && workspaceFilesSupported {
+		files = &acp.FileSystemCapabilities{ReadTextFile: true, WriteTextFile: true}
+	}
 	resp, err := h.caller.Initialize(initCtx, &acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionV1,
 		ClientInfo:      &acp.Implementation{Name: "steve", Version: "0.1.0"},
@@ -855,6 +882,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		// that is not told the client can ask the user anything will never
 		// try, so leaving this empty silently disabled every agent question.
 		ClientCapabilities: &acp.ClientCapabilities{
+			Fs:          files,
 			Session:     &acp.ClientSessionCapabilities{ConfigOptions: &acp.SessionConfigOptionsCapabilities{Boolean: &acp.BooleanConfigOptionCapabilities{}}},
 			Elicitation: &acp.ElicitationCapabilities{Form: &acp.ElicitationFormCapabilities{}},
 		},
@@ -874,6 +902,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	}
 	// The lock is already held here: this runs inside ensureStarted.
 	h.capabilities = resp.AgentCapabilities
+	handler.ready.Store(true)
 	h.adapter = name
 	slog.Info(fmt.Sprintf("acphost: connected to agent %s (protocol v%d)", name, resp.ProtocolVersion))
 	return nil
@@ -908,6 +937,8 @@ func (h *Host) watch(generation uint64, proc Process, conn *acp.Conn, exited, se
 			closeNewScratch(opening)
 		}
 		h.alive = false
+		h.cancelFileCallsLocked(generation)
+		h.retireFileRootsLocked(generation)
 		h.collectors = map[acp.SessionID]*collector{}
 		h.sessions = map[acp.SessionID]*sessionState{}
 		h.opening = map[acp.SessionID]uint64{}
@@ -959,6 +990,27 @@ func endConnection(conn *acp.Conn, proc Process) {
 }
 
 func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg SessionConfig) (acp.SessionID, uint64, error) {
+	var candidate *workspaceFiles
+	defer func() {
+		if candidate == nil {
+			return
+		}
+		h.mu.Lock()
+		_, retained := h.fileRoots[candidate]
+		h.mu.Unlock()
+		if !retained {
+			candidate.root.Close()
+		}
+	}()
+	var workspace *workspaceFiles
+	if h.cfg.WorkspaceFiles && workspaceFilesSupported {
+		var err error
+		workspace, err = prepareWorkspaceFiles(cfg.Workdir)
+		candidate = workspace
+		if err != nil {
+			return "", 0, err
+		}
+	}
 	if cfg.ReplayHistory && sessionID == "" {
 		return "", 0, fmt.Errorf("history replay requires an existing session id")
 	}
@@ -983,6 +1035,13 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 		return "", 0, err
 	}
 	generation := h.generation
+	if original := h.sessions[sessionID]; original != nil && original.workspace != nil {
+		if !original.workspace.matches(workspace) {
+			h.mu.Unlock()
+			return "", 0, errors.New("original filesystem workspace changed")
+		}
+		workspace = original.workspace
+	}
 	if sessionID != "" && h.opening[sessionID] != 0 {
 		h.mu.Unlock()
 		return "", 0, fmt.Errorf("session %q is already being opened", sessionID)
@@ -1011,6 +1070,15 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 			return "", 0, ErrResumeUnsupported
 		}
 		op, err := h.beginSessionOperationLocked(ctx, sessionID, method)
+		if err == nil {
+			op.state.workspace = workspace
+			if workspace != nil {
+				if h.fileRoots == nil {
+					h.fileRoots = map[*workspaceFiles]uint64{}
+				}
+				h.fileRoots[workspace] = generation
+			}
+		}
 		h.mu.Unlock()
 		if err != nil {
 			return "", 0, err
@@ -1042,6 +1110,9 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 		}
 		h.mu.Lock()
 		err = h.finishSessionOperationLocked(ctx, sessionID, op, err)
+		if err != nil && op.original == nil {
+			h.retireWorkspaceLocked(workspace)
+		}
 		h.mu.Unlock()
 		if err != nil {
 			return "", 0, err
@@ -1061,6 +1132,15 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 		return "", 0, err
 	}
 	op, err := h.bindNewOpeningLocked(ctx, opening, resp, receipt)
+	if err == nil {
+		op.state.workspace = workspace
+		if workspace != nil {
+			if h.fileRoots == nil {
+				h.fileRoots = map[*workspaceFiles]uint64{}
+			}
+			h.fileRoots[workspace] = generation
+		}
+	}
 	h.mu.Unlock()
 	if err != nil {
 		return "", 0, err
@@ -1074,6 +1154,9 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 	}
 	err = h.finishSessionOperationLocked(ctx, resp.SessionID, op, opening.cause)
 	if err != nil {
+		// A matched creation that fails local publication retains its native
+		// lifecycle obligation, but its unpublished passive root grants nothing.
+		h.retireWorkspaceLocked(workspace)
 		err = h.failNewOpeningLocked(ctx, opening, err, resp.SessionID, true)
 	} else if h.newOpening == opening {
 		h.newOpening = nil
@@ -1148,7 +1231,7 @@ func (h *Host) PromptTurn(
 	ask permission.AskFunc,
 	askUser AskUserFunc,
 	progress func(view.Progress),
-) (string, []string, error) {
+) (output string, activity []string, resultErr error) {
 	h.mu.Lock()
 	blocked := h.SessionBlockedLocked(sid)
 	h.mu.Unlock()
@@ -1192,15 +1275,9 @@ func (h *Host) PromptTurn(
 	h.active[sid] = generation
 	h.mu.Unlock()
 	defer func() {
-		cancelAsk()
-		h.mu.Lock()
-		if h.collectors[sid] == col {
-			delete(h.collectors, sid)
+		if err := h.retireCollector(sid, col); err != nil {
+			resultErr = errors.Join(ErrStopUnconfirmed, resultErr, err)
 		}
-		if h.active[sid] == generation {
-			delete(h.active, sid)
-		}
-		h.mu.Unlock()
 	}()
 
 	// A cancelled turn has to be cancelled *through* the agent rather than
@@ -1335,6 +1412,11 @@ func (h *Host) ProcessStopped(generation uint64) bool {
 }
 
 func (h *Host) processStoppedLocked(generation uint64) bool {
+	for call := range h.fileCalls {
+		if call.generation == generation {
+			return false
+		}
+	}
 	if generation == 0 || generation > h.generation {
 		return false
 	}
@@ -1434,6 +1516,9 @@ func (h *Host) Close() {
 func (h *Host) AllProcessesStopped() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if len(h.fileCalls) != 0 {
+		return false
+	}
 	for generation, proc := range h.processes {
 		if !proc.Stopped() {
 			return false
@@ -1454,6 +1539,8 @@ func (h *Host) AllProcessesStopped() bool {
 // nothing to ask to leave or to kill, so it waits only exitedGroupWait for
 // the groups of the agents that exited.
 func (h *Host) shutdownLocked() {
+	h.cancelFileCallsLocked(0)
+	h.retireFileRootsLocked(0)
 	alive := h.alive
 	h.alive = false
 	conn, stdin, exited, proc := h.conn, h.stdin, h.exited, h.proc
@@ -1607,7 +1694,7 @@ func (h *Host) SettingsForGeneration(sid acp.SessionID, generation uint64) (view
 func (h *Host) CloseIdle() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.active) > 0 || len(h.sessionOperations) > 0 || h.newOpening != nil {
+	if len(h.active) > 0 || len(h.sessionOperations) > 0 || h.newOpening != nil || len(h.fileCalls) > 0 {
 		return ErrSessionBusy
 	}
 	h.isClosed = true

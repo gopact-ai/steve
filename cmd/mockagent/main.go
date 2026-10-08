@@ -10,6 +10,8 @@
 // AskUserQuestion does, and echoes what came back. If it contains "slow", it
 // waits until the client cancels the session and then ends the turn with
 // StopReasonCanceled, the way a well-behaved agent answers session/cancel.
+// A "workspacefiles " line followed by JSON instead runs text-file callbacks
+// through the client, without interpreting the payload as script keywords.
 package main
 
 import (
@@ -42,6 +44,8 @@ type agent struct {
 	// mcp remembers each session's MCP server config, the way a real agent
 	// holds on to it to connect.
 	mcp sync.Map
+	// cwd holds the workspace received on each successful new/load request.
+	cwd sync.Map
 	// mode and model are what the selectors currently hold. A real agent
 	// answers with its revised list after a change, including one made
 	// while a turn is running, so this has to be remembered.
@@ -111,6 +115,7 @@ func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.
 		}
 	}
 	a.mcp.Store(string(id), req.MCPServers)
+	a.cwd.Store(string(id), req.Cwd)
 	return &acp.NewSessionResponse{
 		SessionID:     id,
 		ConfigOptions: &[]acp.SessionConfigOption{modeOption("agent"), modelOption("mock-fast")},
@@ -134,6 +139,7 @@ func (a *agent) LoadSession(_ context.Context, req *acp.LoadSessionRequest) (*ac
 		a.model.Store(memory.Model)
 		a.mode.Store(memory.Mode)
 		a.mcp.Store(string(req.SessionID), req.MCPServers)
+		a.cwd.Store(string(req.SessionID), req.Cwd)
 		return &acp.LoadSessionResponse{
 			ConfigOptions: &[]acp.SessionConfigOption{modeOption(memory.Mode), modelOption(memory.Model)},
 		}, nil
@@ -142,15 +148,23 @@ func (a *agent) LoadSession(_ context.Context, req *acp.LoadSessionRequest) (*ac
 		return nil, fmt.Errorf("fixture refuses selected native session")
 	}
 	a.mcp.Store(string(req.SessionID), req.MCPServers)
+	a.cwd.Store(string(req.SessionID), req.Cwd)
 	return &acp.LoadSessionResponse{}, nil
 }
 
 // Prompt runs the script the prompt's words select, in a fixed order: the
 // media markers first, then each keyword's exchange with the client, then
 // the echo and the stop reason. "ignore-cancel" and "slow" end the turn on
-// their own terms and skip everything after them.
+// their own terms and skip everything after them. An explicit workspacefiles
+// script bypasses these keyword behaviors altogether.
 func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.PromptResponse, error) {
 	input := promptText(req.Prompt)
+	if handled, err := a.workspaceFilesPrompt(ctx, req, input); handled {
+		if err != nil {
+			return nil, err
+		}
+		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+	}
 	if handled, err := a.memoryPrompt(ctx, req, input); handled {
 		if err != nil {
 			return nil, err
@@ -221,6 +235,65 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		return nil, err
 	}
 	return a.endTurn(ctx, req.SessionID, input)
+}
+
+// workspaceFilesPrompt selects an explicit JSON script even when plugin
+// instructions precede it. read/write are local relative paths; line/limit
+// select a positive, one-based range. All file access goes through ACP.
+func (a *agent) workspaceFilesPrompt(ctx context.Context, req *acp.PromptRequest, input string) (bool, error) {
+	for _, line := range strings.Split(input, "\n") {
+		payload, selected := strings.CutPrefix(line, "workspacefiles ")
+		if !selected {
+			continue
+		}
+		var script struct {
+			Read    string `json:"read"`
+			Write   string `json:"write"`
+			Content string `json:"content"`
+			Line    uint32 `json:"line"`
+			Limit   uint32 `json:"limit"`
+		}
+		if err := json.Unmarshal([]byte(payload), &script); err != nil {
+			return true, fmt.Errorf("workspacefiles: invalid JSON: %w", err)
+		}
+		if !filepath.IsLocal(script.Read) || !filepath.IsLocal(script.Write) || script.Line == 0 || script.Limit == 0 {
+			return true, errors.New("workspacefiles: local paths and a positive line/limit are required")
+		}
+		raw, _ := a.cwd.Load(string(req.SessionID))
+		cwd, _ := raw.(string)
+		if !filepath.IsAbs(cwd) {
+			return true, errors.New("workspacefiles: session workspace is unavailable")
+		}
+		readPath, writePath := filepath.Join(cwd, script.Read), filepath.Join(cwd, script.Write)
+		full, err := a.client.ReadTextFile(ctx, &acp.ReadTextFileRequest{SessionID: req.SessionID, Path: readPath})
+		if err != nil {
+			return true, fmt.Errorf("workspacefiles: read: %w", err)
+		}
+		ranged, err := a.client.ReadTextFile(ctx, &acp.ReadTextFileRequest{
+			SessionID: req.SessionID, Path: readPath, Line: &script.Line, Limit: &script.Limit,
+		})
+		if err != nil {
+			return true, fmt.Errorf("workspacefiles: range: %w", err)
+		}
+		if _, err := a.client.WriteTextFile(ctx, &acp.WriteTextFileRequest{SessionID: req.SessionID, Path: writePath, Content: script.Content}); err != nil {
+			return true, fmt.Errorf("workspacefiles: write: %w", err)
+		}
+		written, err := a.client.ReadTextFile(ctx, &acp.ReadTextFileRequest{SessionID: req.SessionID, Path: writePath})
+		if err != nil {
+			return true, fmt.Errorf("workspacefiles: read after write: %w", err)
+		}
+		result, err := json.Marshal(struct {
+			Cwd     string `json:"cwd"`
+			Read    string `json:"read"`
+			Range   string `json:"range"`
+			Written string `json:"written"`
+		}{cwd, full.Content, ranged.Content, written.Content})
+		if err != nil {
+			return true, err
+		}
+		return true, a.say(ctx, req.SessionID, string(result))
+	}
+	return false, nil
 }
 
 // promptText is the prompt's text blocks joined, which is what the script
@@ -506,6 +579,7 @@ func (a *agent) SetSessionConfigOption(_ context.Context, req *acp.SetSessionCon
 
 func (a *agent) DeleteSession(_ context.Context, req *acp.DeleteSessionRequest) (*acp.DeleteSessionResponse, error) {
 	a.deleted.Store(string(req.SessionID))
+	a.cwd.Delete(string(req.SessionID))
 	return &acp.DeleteSessionResponse{}, nil
 }
 

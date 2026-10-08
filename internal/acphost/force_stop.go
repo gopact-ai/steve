@@ -29,6 +29,8 @@ func (h *Host) Kill(parent context.Context) error {
 		}
 	}
 	h.isClosed, h.alive = true, false
+	h.cancelFileCallsLocked(0)
+	h.retireFileRootsLocked(0)
 	conn, stdin := h.conn, h.stdin
 	var processes []Process
 	for _, p := range h.processes {

@@ -365,7 +365,8 @@ func (m *Manager) host(at Placement) (*acphost.Host, error) {
 		return nil, err
 	}
 	hostCfg := acphost.Config{
-		Command: cfg.Command, Args: cfg.Args, ProcessDir: cfg.ProcessDir, Env: cfg.Env, Permission: broker,
+		WorkspaceFiles: true,
+		Command:        cfg.Command, Args: cfg.Args, ProcessDir: cfg.ProcessDir, Env: cfg.Env, Permission: broker,
 	}
 	if at.Node != "" {
 		if m.remote == nil {

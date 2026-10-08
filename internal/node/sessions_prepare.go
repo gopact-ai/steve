@@ -37,7 +37,7 @@ func (s *SessionService) prepareSessionHost(ctx context.Context, id, resumeRunti
 			return cfg, "", err
 		}
 		instructions = prepared.Instructions
-		cfg = acphost.Config{NoRestart: true, Command: prepared.Config.Command, Args: prepared.Config.Args, Env: prepared.Config.Env, ProcessDir: prepared.Config.ProcessDir, Permission: broker}
+		cfg = acphost.Config{WorkspaceFiles: true, NoRestart: true, Command: prepared.Config.Command, Args: prepared.Config.Args, Env: prepared.Config.Env, ProcessDir: prepared.Config.ProcessDir, Permission: broker}
 		req.MCPServers = append(append([]acp.MCPServer(nil), req.MCPServers...), prepared.Servers...)
 	} else if req.Binding.PluginRuntimeID != "" {
 		return cfg, "", plugins.ErrInvalid
@@ -53,6 +53,9 @@ func (s *SessionService) prepareSessionHost(ctx context.Context, id, resumeRunti
 		}
 		cfg.Env = isolated.Env
 	}
+	// Only an admitted owned session, not a capability/history probe,
+	// serves filesystem requests on this node.
+	cfg.WorkspaceFiles = true
 	return cfg, instructions, nil
 }
 
