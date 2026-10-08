@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/acphost"
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/app"
@@ -18,6 +20,14 @@ import (
 )
 
 func main() {
+	// Trusted terminal helpers run before provider/config initialization.
+	if handled, err := acphost.RunTerminalChild(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "terminal child failed")
+			os.Exit(1)
+		}
+		return
+	}
 	if err := agenttools.InitializePath(); err != nil {
 		log.Fatal(err)
 	}

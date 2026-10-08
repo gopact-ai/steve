@@ -94,6 +94,9 @@ type Config struct {
 	// WorkspaceFiles enables callbacks on this hosts own authorized workspace.
 	// Remote raw transports must leave this false.
 	WorkspaceFiles bool
+	// TerminalOwner is supplied only by an original, durably owned execution.
+	// A raw remote transport or unnegotiated parent must leave this nil.
+	TerminalOwner TerminalOwner
 	// Started learns the identity of each local agent process group; see
 	// LocalTransport.Started.
 	Started func(procgroup.Identity)
@@ -140,17 +143,29 @@ type Host struct {
 	sessionOperations map[acp.SessionID]*sessionOperation
 	generation        uint64
 	// adapter is the ACP agent's name and version as it introduced itself.
-	adapter      string
-	fileCalls    map[*workspaceFileCall]struct{}
-	fileRoots    map[*workspaceFiles]uint64
-	nextFileCall uint64
+	adapter             string
+	fileCalls           map[*workspaceFileCall]struct{}
+	fileRoots           map[*workspaceFiles]uint64
+	nextFileCall        uint64
+	terminals           map[string]*hostTerminal
+	nextTerminal        uint64
+	terminalOutputBytes map[*collector]int
+	// Only tests override the trusted self-executable helper arguments.
+	terminalHelperArgs []string
 }
 
 func New(cfg Config) *Host {
 	if cfg.Permission == nil {
 		cfg.Permission, _ = permission.New("deny")
 	}
+	if local, ok := cfg.Transport.(LocalTransport); ok && cfg.TerminalOwner != nil && TerminalsSupported && local.Started == nil {
+		local.Started = func(procgroup.Identity) {}
+		cfg.Transport = local
+	}
 	if cfg.Transport == nil {
+		if cfg.TerminalOwner != nil && TerminalsSupported && cfg.Started == nil {
+			cfg.Started = func(procgroup.Identity) {}
+		}
 		cfg.Transport = LocalTransport{
 			Command: cfg.Command, Args: cfg.Args, ProcessDir: cfg.ProcessDir, Env: cfg.Env, Started: cfg.Started,
 		}
@@ -164,29 +179,33 @@ func New(cfg Config) *Host {
 
 // collector accumulates streamed session updates for one in-flight prompt.
 type collector struct {
-	mu           sync.Mutex
-	text         strings.Builder
-	thought      string
-	thoughtHead  string
-	thoughtBytes int
-	activity     []string
-	tools        []view.Tool
-	toolIndex    map[string]int
-	timeline     []collectedSpan
-	toolSpans    map[string]bool
-	usage        view.Usage
-	plan         []view.Step
-	progress     func(view.Progress)
-	settings     func() view.Settings
-	generation   uint64
-	overflow     bool
-	ask          permission.AskFunc
-	askUser      AskUserFunc
-	ctx          context.Context
-	cancelAsk    context.CancelFunc
-	filesClosing bool
-	fileCount    int
-	filesDone    chan struct{}
+	mu               sync.Mutex
+	text             strings.Builder
+	thought          string
+	thoughtHead      string
+	thoughtBytes     int
+	activity         []string
+	tools            []view.Tool
+	toolIndex        map[string]int
+	timeline         []collectedSpan
+	toolSpans        map[string]bool
+	usage            view.Usage
+	plan             []view.Step
+	progress         func(view.Progress)
+	settings         func() view.Settings
+	generation       uint64
+	overflow         bool
+	ask              permission.AskFunc
+	askUser          AskUserFunc
+	ctx              context.Context
+	cancelAsk        context.CancelFunc
+	filesClosing     bool
+	fileCount        int
+	filesDone        chan struct{}
+	terminalTools    map[string][]string
+	terminalToolBase map[string]string
+	terminalTexts    map[string]string
+	terminalReleased map[string]bool
 }
 
 // maxCollectBytes caps the aggregated assistant text so a runaway agent
@@ -198,6 +217,12 @@ const maxCollectBytes = 1 << 20 // 1 MiB
 const truncationMarker = "\n…(output truncated)"
 
 func (c *collector) handle(u acp.SessionUpdate) {
+	c.handleWithTerminals(u, nil)
+}
+
+// Register terminal content under the same lock as tool upsert, before any
+// progress callback can observe the notification or race its release.
+func (c *collector) handleWithTerminals(u acp.SessionUpdate, terminalContent func()) {
 	c.mu.Lock()
 	switch u.SessionUpdate {
 	case acp.SessionUpdateTypeAgentMessageChunk:
@@ -210,6 +235,9 @@ func (c *collector) handle(u acp.SessionUpdate) {
 		}
 	case acp.SessionUpdateTypeToolCall, acp.SessionUpdateTypeToolCallUpdate:
 		c.upsertTool(u)
+		if terminalContent != nil {
+			terminalContent()
+		}
 	case acp.SessionUpdateTypeUsageUpdate:
 		c.usage.ContextTokens = u.Used
 		c.usage.ContextWindow = u.Size
@@ -608,7 +636,7 @@ func (ch *clientHandler) Update(ctx context.Context, n *acp.SessionNotification)
 		forward := op.method == "configure" && op.generation == ch.generation && col != nil && col.generation == ch.generation
 		ch.h.mu.Unlock()
 		if forward {
-			col.handle(n.Update)
+			ch.h.handleUpdate(col, n.Update)
 		}
 		return nil
 	}
@@ -621,7 +649,7 @@ func (ch *clientHandler) Update(ctx context.Context, n *acp.SessionNotification)
 	col := ch.h.collectors[n.SessionID]
 	ch.h.mu.Unlock()
 	if col != nil && col.generation == ch.generation {
-		col.handle(n.Update)
+		ch.h.handleUpdate(col, n.Update)
 	}
 	return nil
 }
@@ -802,6 +830,9 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	if h.isClosed {
 		return ErrClosed
 	}
+	if !h.terminalsConfirmedLocked(0) && !h.alive {
+		return ErrStopUnconfirmed
+	}
 	if h.alive {
 		for call := range h.fileCalls {
 			if call.col.filesClosing || call.generation != h.generation {
@@ -826,6 +857,13 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	conn, err := acp.NewClient(proc.Stdout(), stdin, func(caller *acp.AgentCaller) acp.ClientHandler {
 		h.caller = caller
 		handler = &clientHandler{h: h, generation: generation}
+		if h.terminalEnabled(proc) {
+			terminal := &terminalHandler{handler}
+			if h.cfg.WorkspaceFiles && workspaceFilesSupported {
+				return &workspaceTerminalHandler{terminal}
+			}
+			return terminal
+		}
 		if h.cfg.WorkspaceFiles && workspaceFilesSupported {
 			return &workspaceFileHandler{handler}
 		}
@@ -883,6 +921,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		// try, so leaving this empty silently disabled every agent question.
 		ClientCapabilities: &acp.ClientCapabilities{
 			Fs:          files,
+			Terminal:    h.terminalEnabled(proc),
 			Session:     &acp.ClientSessionCapabilities{ConfigOptions: &acp.SessionConfigOptionsCapabilities{Boolean: &acp.BooleanConfigOptionCapabilities{}}},
 			Elicitation: &acp.ElicitationCapabilities{Form: &acp.ElicitationFormCapabilities{}},
 		},
@@ -939,6 +978,7 @@ func (h *Host) watch(generation uint64, proc Process, conn *acp.Conn, exited, se
 		h.alive = false
 		h.cancelFileCallsLocked(generation)
 		h.retireFileRootsLocked(generation)
+		h.cleanupTerminalsLocked(generation, nil)
 		h.collectors = map[acp.SessionID]*collector{}
 		h.sessions = map[acp.SessionID]*sessionState{}
 		h.opening = map[acp.SessionID]uint64{}
@@ -953,7 +993,7 @@ func (h *Host) watch(generation uint64, proc Process, conn *acp.Conn, exited, se
 	}
 	<-waited
 	h.mu.Lock()
-	if proc.Stopped() {
+	if proc.Stopped() && h.terminalsConfirmedLocked(generation) {
 		delete(h.processes, generation)
 	}
 	delete(h.settling, generation)
@@ -1003,7 +1043,7 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 		}
 	}()
 	var workspace *workspaceFiles
-	if h.cfg.WorkspaceFiles && workspaceFilesSupported {
+	if (h.cfg.WorkspaceFiles && workspaceFilesSupported) || (h.cfg.TerminalOwner != nil && TerminalsSupported) {
 		var err error
 		workspace, err = prepareWorkspaceFiles(cfg.Workdir)
 		candidate = workspace
@@ -1422,6 +1462,9 @@ func (h *Host) Cancel(ctx context.Context, sid acp.SessionID, generation uint64)
 	caller, alive := h.caller, h.alive && h.generation == generation
 	if col := h.collectors[sid]; alive && col != nil && col.generation == generation && col.cancelAsk != nil {
 		col.cancelAsk()
+		// Node cancel may hold its owner lock. Start cleanup without awaiting a
+		// Stopped callback here; turn retirement/NativeStop retains its obligation.
+		h.cleanupTerminalsLocked(generation, col)
 	}
 	h.mu.Unlock()
 	if !alive || caller == nil {
@@ -1447,6 +1490,9 @@ func (h *Host) ProcessStopped(generation uint64) bool {
 }
 
 func (h *Host) processStoppedLocked(generation uint64) bool {
+	if !h.terminalsConfirmedLocked(generation) {
+		return false
+	}
 	for call := range h.fileCalls {
 		if call.generation == generation {
 			return false
@@ -1551,7 +1597,7 @@ func (h *Host) Close() {
 func (h *Host) AllProcessesStopped() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.fileCalls) != 0 {
+	if len(h.fileCalls) != 0 || !h.terminalsConfirmedLocked(0) {
 		return false
 	}
 	for generation, proc := range h.processes {
@@ -1574,11 +1620,17 @@ func (h *Host) AllProcessesStopped() bool {
 // nothing to ask to leave or to kill, so it waits only exitedGroupWait for
 // the groups of the agents that exited.
 func (h *Host) shutdownLocked() {
+	terminalDone := h.cleanupTerminalsLocked(0, nil)
 	h.cancelFileCallsLocked(0)
 	h.retireFileRootsLocked(0)
 	alive := h.alive
 	h.alive = false
 	conn, stdin, exited, proc := h.conn, h.stdin, h.exited, h.proc
+	for _, process := range h.processes {
+		if local, ok := process.(*localProcess); ok {
+			local.closeTerminalAdmission()
+		}
+	}
 	// Shutdown: the closes tell the agent to leave, and the monitor
 	// goroutine reports how it went.
 	if alive && conn != nil {
@@ -1592,11 +1644,19 @@ func (h *Host) shutdownLocked() {
 		settling = append(settling, settled)
 	}
 	running := alive && exited != nil
-	if !running && len(settling) == 0 {
+	if !running && len(settling) == 0 && h.terminalsConfirmedLocked(0) {
 		return
 	}
 	h.mu.Unlock()
 	defer h.mu.Lock()
+	terminalTimer := time.NewTimer(terminalCleanupWait)
+	defer terminalTimer.Stop()
+	defer func() {
+		select {
+		case <-terminalDone:
+		case <-terminalTimer.C:
+		}
+	}()
 	if !running {
 		awaitSettled(settling)
 		return

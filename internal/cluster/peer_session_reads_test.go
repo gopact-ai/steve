@@ -3,12 +3,39 @@ package cluster
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
 )
+
+func TestTerminalAdmissionNeedsLeasesBeyondItsConsumptionWindow(t *testing.T) {
+	book, _, _, r, binding := sessionReadFixture(t)
+	attempts := attempt.New(book)
+	if _, err := attempts.Advance(t.Context(), r.ID, attempt.Prepared, "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := attempts.Advance(t.Context(), r.ID, attempt.Running, "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := book.Renew(t.Context(), r.Leases[0], time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSessionExecution(t.Context(), book, binding, nodewire.SessionActionTerminalAdmit); !errors.Is(err, ledger.ErrStale) {
+		t.Fatalf("terminal borrowed a lease expiring inside its payload window: %v", err)
+	}
+	if _, err := readSessionExecution(t.Context(), book, binding, nodewire.SessionActionClose); err != nil {
+		t.Fatalf("short lease prevented original cleanup: %v", err)
+	}
+	if _, err := book.Renew(t.Context(), r.Leases[0], time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSessionExecution(t.Context(), book, binding, nodewire.SessionActionTerminalAdmit); err != nil {
+		t.Fatalf("fresh long-lived lease could not admit terminal: %v", err)
+	}
+}
 
 func sessionReadFixture(t *testing.T) (*ledger.Ledger, *task.Store, task.Task, attempt.Record, nodewire.SessionBinding) {
 	t.Helper()
@@ -143,5 +170,51 @@ func TestSessionAuthorizationCannotReuseAnotherRuntimeScopeCheck(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("execution used a runtime reference its scope check never saw")
+	}
+}
+
+func TestTerminalAdmissionRequiresRunningCurrentExecution(t *testing.T) {
+	book, tasks, root, r, binding := sessionReadFixture(t)
+	observation, stopping, err := sessionActionMode(nodewire.SessionActionTerminalAdmit)
+	if err != nil || observation || stopping {
+		t.Fatalf("terminal admission was not execution: %v %v %v", observation, stopping, err)
+	}
+	if _, err := readSessionExecution(t.Context(), book, binding, nodewire.SessionActionTerminalAdmit); err == nil {
+		t.Fatal("preparation phase admitted terminal payload")
+	}
+	attempts := attempt.New(book)
+	if _, err := attempts.Advance(t.Context(), r.ID, attempt.Prepared, "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := attempts.Advance(t.Context(), r.ID, attempt.Running, "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSessionExecution(t.Context(), book, binding, nodewire.SessionActionTerminalAdmit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Advance(root.ID, task.StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSessionExecution(t.Context(), book, binding, nodewire.SessionActionTerminalAdmit); !errors.Is(err, task.ErrExecutionStopped) {
+		t.Fatalf("ancestor revocation still admitted terminal: %v", err)
+	}
+	if _, err := readSessionExecution(t.Context(), book, binding, nodewire.SessionActionClose); err != nil {
+		t.Fatalf("revoked execution blocked original cleanup: %v", err)
+	}
+}
+func TestTerminalAdmissionCannotBorrowReleasedLease(t *testing.T) {
+	book, _, _, r, binding := sessionReadFixture(t)
+	attempts := attempt.New(book)
+	if _, err := attempts.Advance(t.Context(), r.ID, attempt.Prepared, "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := attempts.Advance(t.Context(), r.ID, attempt.Running, "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := book.Release(t.Context(), r.Leases[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSessionExecution(t.Context(), book, binding, nodewire.SessionActionTerminalAdmit); !errors.Is(err, ledger.ErrStale) {
+		t.Fatalf("released writer lease admitted terminal: %v", err)
 	}
 }

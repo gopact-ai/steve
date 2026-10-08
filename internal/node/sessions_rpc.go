@@ -26,11 +26,23 @@ func (CoordinatorSessionAuthorizer) AuthorizeNodeSession(ctx context.Context, pr
 	if !ok || ctx.Err() != nil {
 		return errors.New("session authority requires a live authenticated request")
 	}
+	if action == nodewire.SessionActionTerminalAdmit {
+		// The terminal's bounded authority window also owns the blocking
+		// challenge I/O. Close only this request, never its node connection.
+		stop := context.AfterFunc(ctx, func() { _ = stream.Close() })
+		defer stop()
+	}
 	if err := writeSessionMessage(stream, nodewire.SessionReply{AuthorizeAction: action}); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return err
 	}
 	var reply nodewire.SessionAuthorization
 	if err := readSessionMessage(stream, &reply); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -140,6 +152,15 @@ func (r *Registry) NodeSession(ctx context.Context, node string, request nodewir
 	}
 	if (request.NativeImport != nil || request.Binding.NativeImportID != "") && !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeatureNativeHistory) {
 		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node cannot import native history: "+nativeHistoryMissing)}
+	}
+	terminalFeature := nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeatureTerminalAdmission)
+	if request.Action == nodewire.SessionActionOpen {
+		// Only a parent that understands the fresh gate requests it, and only
+		// a node advertising durable ownership can receive that request.
+		request.TerminalAdmission = request.TerminalAdmission && terminalFeature
+	}
+	if request.Action == nodewire.SessionActionTerminalAdmit && !terminalFeature {
+		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node has no owned terminal admission")}
 	}
 	stream, err := conn.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamNodeSessions})
 	if err != nil {

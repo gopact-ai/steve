@@ -140,7 +140,7 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 	if policy == "" {
 		policy = permission.PolicyRead
 	}
-	request := nodewire.SessionRequest{Action: nodewire.SessionActionOpen, NativeImport: binding.NativeImport.Clone(), Plugin: profile, Authority: binding.Authority, Binding: binding.Binding, ID: upstreamID, Harness: at.Harness, Workdir: workdir, MCPServers: servers, Permission: policy, CommandID: binding.CommandID + "/open"}
+	request := nodewire.SessionRequest{Action: nodewire.SessionActionOpen, NativeImport: binding.NativeImport.Clone(), Plugin: profile, Authority: binding.Authority, Binding: binding.Binding, ID: upstreamID, Harness: at.Harness, Workdir: workdir, MCPServers: servers, Permission: policy, CommandID: binding.CommandID + "/open", TerminalAdmission: true}
 	if refresh, _ := ctx.Value(mcpAuthorizationRefreshKey{}).(*nodewire.MCPAuthorizationRefresh); refresh != nil {
 		copy := *refresh
 		request.MCPAuthorizationRefresh = &copy
@@ -365,6 +365,9 @@ func (s *managedSession) follow(ctx context.Context, request nodewire.SessionReq
 	var delivered uint64
 observe:
 	for {
+		if err := s.admitReadyTerminals(ctx, request, state); err != nil {
+			return "", nil, fmt.Errorf("%w: terminal admission: %w", ErrStopUnconfirmed, err)
+		}
 		if state.Sequence > delivered {
 			if progress != nil {
 				p := state.Progress
@@ -432,6 +435,11 @@ observe:
 		poll.Media = nil
 		poll.After = state.Sequence
 		poll.WaitMS = 20000
+		if len(state.PendingTerminalStarts) != 0 {
+			// A known unconsumed contention needs another fresh authority request
+			// before the inert helper expires, even if its owner emits no update.
+			poll.WaitMS = 100
+		}
 		state, err = s.call(ctx, poll)
 		if err != nil {
 			return "", nil, fmt.Errorf("%w: observer detached: %w", ErrStopUnconfirmed, err)
@@ -512,6 +520,11 @@ func (s *managedSession) collectAnswer(ctx context.Context, request nodewire.Ses
 			poll.WaitMS = 1000
 			state, err := s.call(watcherCtx, poll)
 			if err != nil {
+				cancelQuestion()
+				done <- err
+				return
+			}
+			if err := s.admitReadyTerminals(watcherCtx, request, state); err != nil {
 				cancelQuestion()
 				done <- err
 				return

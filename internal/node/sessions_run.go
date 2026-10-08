@@ -51,7 +51,8 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		NativeImport                 *nativehistory.Reference          `json:"native_import,omitempty"`
 		ResumeFrom                   string                            `json:"resume_from,omitempty"`
 		MCPAuthorizationRefresh      *nodewire.MCPAuthorizationRefresh `json:"mcp_authorization_refresh,omitempty"`
-	}{req.Binding, req.Harness, req.Workdir, permissionName, req.MCPServers, req.NativeImport, req.ID, req.MCPAuthorizationRefresh})
+		TerminalAdmission            bool                              `json:"terminal_admission,omitempty"`
+	}{req.Binding, req.Harness, req.Workdir, permissionName, req.MCPServers, req.NativeImport, req.ID, req.MCPAuthorizationRefresh, req.TerminalAdmission})
 	id := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness)
 	s.mu.Lock()
 	if s.closed {
@@ -560,7 +561,8 @@ func configHash(req nodewire.SessionRequest, servers []acp.MCPServer) string {
 		Harness, Workdir, Permission string
 		Servers                      []acp.MCPServer
 		NativeImport                 *nativehistory.Reference `json:"native_import,omitempty"`
-	}{ref, req.Harness, req.Workdir, policy, servers, req.NativeImport})
+		TerminalAdmission            bool                     `json:"terminal_admission,omitempty"`
+	}{ref, req.Harness, req.Workdir, policy, servers, req.NativeImport, req.TerminalAdmission})
 }
 
 // serverIdentities are the servers as a native context's recorded

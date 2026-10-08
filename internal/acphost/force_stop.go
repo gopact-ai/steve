@@ -29,6 +29,7 @@ func (h *Host) Kill(parent context.Context) error {
 		}
 	}
 	h.isClosed, h.alive = true, false
+	terminalDone := h.cleanupTerminalsLocked(0, nil)
 	h.cancelFileCallsLocked(0)
 	h.retireFileRootsLocked(0)
 	conn, stdin := h.conn, h.stdin
@@ -74,6 +75,11 @@ func (h *Host) Kill(parent context.Context) error {
 			return errors.Join(procgroup.ErrRunning, ctx.Err())
 		}
 	}
+	select {
+	case <-terminalDone:
+	case <-ctx.Done():
+		return errors.Join(procgroup.ErrRunning, ctx.Err())
+	}
 	if !h.AllProcessesStopped() {
 		return procgroup.ErrRunning
 	}
@@ -91,6 +97,8 @@ func (p *localProcess) KillNow(ctx context.Context) error {
 		return err
 	}
 	p.mu.Lock()
+	p.closing = true
+	defer p.stopTerminalChildren()
 	if p.stopped.Load() {
 		p.mu.Unlock()
 		return nil

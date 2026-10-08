@@ -193,9 +193,10 @@ func testNodeReceiptConsoleClosure(t *testing.T, bin, key string) {
 		t.Fatal("real delivery lost its server attempt/receipt")
 	}
 	// Rebind the live native conversation and accept a new input before the
-	// original ack arrives. Its active/unknown evidence must remain untouched.
+	// original ack arrives. Keep the original manager capability negotiation;
+	// its active/unknown evidence must remain untouched.
 	late := nodewire.SessionRequest{Action: nodewire.SessionActionOpen, Authority: authority, Binding: bound.Binding,
-		ID: record.Session, Harness: "mock", Workdir: workdir, Permission: permission.PolicyRead, CommandID: "late/open"}
+		ID: record.Session, Harness: "mock", Workdir: workdir, Permission: permission.PolicyRead, CommandID: "late/open", TerminalAdmission: true}
 	late.Binding.AttemptID, late.Binding.TaskID = "late-attempt", "late-task"
 	if state, err := registry.NodeSession(ctx, "worker", late); err != nil || state.ID != record.Session {
 		t.Fatalf("warm rebind: %+v %v", state, err)

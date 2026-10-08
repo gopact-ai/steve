@@ -106,8 +106,17 @@ func (s *SessionService) reconcileRecordedOpenLocked(id string, req nodewire.Ses
 			next.State.State = nodewire.SessionClosed
 			saveErr = one.commitLocked(next)
 		}
-		if err := errors.Join(saveErr, s.endStoppedRuntime(next)); err != nil {
-			return nodewire.SessionState{}, false, err
+		if next.Format == 1 {
+			if err := errors.Join(saveErr, s.endStoppedRuntime(next)); err != nil {
+				return nodewire.SessionState{}, false, err
+			}
+		} else {
+			if saveErr != nil {
+				return nodewire.SessionState{}, false, saveErr
+			}
+			if err := s.endStoppedRuntime(one.record); err != nil {
+				return nodewire.SessionState{}, false, err
+			}
 		}
 	}
 	return openRecoveryReceipt(one.stateLocked(""), req, record.OpenCancelled), false, nil

@@ -95,6 +95,7 @@ type workspaceFileCall struct {
 	cancel     context.CancelFunc
 	stopRPC    func() bool
 	id         string
+	class      string
 }
 
 func fileError(code acp.ErrorCode, message string) error {
@@ -115,6 +116,10 @@ func fileIOError(err error) error {
 }
 
 func (ch *workspaceFileHandler) beginFileCall(ctx context.Context, sid acp.SessionID) (*workspaceFileCall, error) {
+	return ch.beginWorkspaceCall(ctx, sid, "")
+}
+
+func (ch *workspaceFileHandler) beginWorkspaceCall(ctx context.Context, sid acp.SessionID, class string) (*workspaceFileCall, error) {
 	// Initialize is called while ensureStarted holds h.mu. Reject a reverse
 	// request before acquiring that lock, rather than deadlocking the handshake.
 	if !ch.ready.Load() {
@@ -130,13 +135,33 @@ func (ch *workspaceFileHandler) beginFileCall(ctx context.Context, sid acp.Sessi
 		col.ctx == nil || col.ctx.Err() != nil || ctx.Err() != nil {
 		return nil, fileError(acp.ErrorCodeInvalidRequest, "Text-file request has no active turn")
 	}
-	if len(h.fileCalls) >= maxWorkspaceFileCalls {
+	count, limit := 0, maxWorkspaceFileCalls
+	if class == "terminal-control" {
+		limit = 8
+	}
+	for accepted := range h.fileCalls {
+		if (accepted.class == "terminal-control") == (class == "terminal-control") {
+			count++
+		}
+	}
+	if count >= limit {
 		return nil, fileError(acp.ErrorCodeInvalidRequest, "Too many active text-file requests")
+	}
+	if class == "terminal-create" || class == "terminal-wait" {
+		waiting := 0
+		for accepted := range h.fileCalls {
+			if accepted.class == "terminal-create" || accepted.class == "terminal-wait" {
+				waiting++
+			}
+		}
+		if waiting >= 8 {
+			return nil, fileError(acp.ErrorCodeInvalidRequest, "Too many pending terminal creates or waiters")
+		}
 	}
 	request, cancel := context.WithCancel(col.ctx)
 	call := &workspaceFileCall{
 		h: h, col: col, sid: sid, generation: ch.generation,
-		workspace: state.workspace, ctx: request, rpc: ctx, cancel: cancel,
+		workspace: state.workspace, ctx: request, rpc: ctx, cancel: cancel, class: class,
 	}
 	call.stopRPC = context.AfterFunc(ctx, cancel)
 	if h.fileCalls == nil {
@@ -197,6 +222,11 @@ func (h *Host) closeUnusedWorkspaceLocked(workspace *workspaceFiles) {
 			return
 		}
 	}
+	for _, terminal := range h.terminals {
+		if terminal.workspace == workspace && !terminal.confirmed {
+			return
+		}
+	}
 	workspace.root.Close()
 	delete(h.fileRoots, workspace)
 }
@@ -217,6 +247,18 @@ func (h *Host) retireFileRootsLocked(generation uint64) {
 }
 
 func (h *Host) forgetCollectorLocked(sid acp.SessionID, col *collector) {
+	retainedTerminal := false
+	for _, terminal := range h.terminals {
+		if terminal.col == col {
+			retainedTerminal = true
+			if !terminal.confirmed {
+				return
+			}
+		}
+	}
+	if !retainedTerminal {
+		delete(h.terminalOutputBytes, col)
+	}
 	if h.collectors[sid] == col {
 		delete(h.collectors, sid)
 		if h.active[sid] == col.generation {
@@ -229,21 +271,36 @@ func (h *Host) retireCollector(sid acp.SessionID, col *collector) error {
 	h.mu.Lock()
 	col.filesClosing = true
 	col.cancelAsk()
+	terminalDone := h.cleanupTerminalsLocked(col.generation, col)
 	done := col.filesDone
 	if col.fileCount == 0 {
 		h.forgetCollectorLocked(sid, col)
-		h.mu.Unlock()
-		return nil
 	}
 	h.mu.Unlock()
-	timer := time.NewTimer(workspaceFileDrain)
+	timer := time.NewTimer(terminalCleanupWait)
 	defer timer.Stop()
-	select {
-	case <-done:
-		return nil
-	case <-timer.C:
-		return errors.New("accepted text-file requests have not settled")
+	if done != nil {
+		files := time.NewTimer(workspaceFileDrain)
+		defer files.Stop()
+		select {
+		case <-done:
+		case <-files.C:
+			return errors.New("accepted workspace requests have not settled")
+		}
 	}
+	select {
+	case <-terminalDone:
+	case <-timer.C:
+		return errors.New("accepted terminal cleanup has not settled")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, terminal := range h.terminals {
+		if terminal.col == col && !terminal.confirmed {
+			return errors.New("terminal writer stop has not been confirmed")
+		}
+	}
+	return nil
 }
 
 func (h *Host) cancelFileCallsLocked(generation uint64) {

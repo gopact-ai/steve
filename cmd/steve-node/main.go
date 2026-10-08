@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/adapter"
 	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/launchconfig"
@@ -29,6 +30,14 @@ import (
 )
 
 func main() {
+	// Trusted terminal helpers run before provider/config initialization.
+	if handled, err := acphost.RunTerminalChild(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "terminal child failed")
+			os.Exit(1)
+		}
+		return
+	}
 	log.SetFlags(log.LstdFlags)
 	logs.Install()
 	if err := agenttools.InitializePath(); err != nil {

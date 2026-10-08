@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/mcpscan"
 	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -28,6 +29,9 @@ func (s *Server) advert() nodewire.Advert {
 	adv.Snapshot = s.snapshot()
 	if s.sessions != nil && nativehistory.StorageSupported {
 		adv.Features = append(adv.Features, nodewire.FeatureNativeHistory)
+	}
+	if s.sessions != nil && s.sessions.placeKnown && acphost.TerminalsSupported {
+		adv.Features = append(adv.Features, nodewire.FeatureTerminalAdmission)
 	}
 	s.restart.mu.Lock()
 	if s.restart.enabled && s.conf().StateDir != "" {

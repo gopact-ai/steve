@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/processrestart"
@@ -180,6 +181,9 @@ func TestAdvertListsOnlyConditionalFeatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	var want []string
+	if acphost.TerminalsSupported && server.sessions != nil && server.sessions.placeKnown {
+		want = append(want, nodewire.FeatureTerminalAdmission)
+	}
 	if nativehistory.StorageSupported {
 		want = append(want, nodewire.FeatureNativeHistory)
 	}

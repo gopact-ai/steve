@@ -156,10 +156,16 @@ func sessionHeader(record sessionRecord) sessionRecord {
 	record.State.Command, record.State.Questions = nil, nil
 	record.State.Progress = view.Progress{}
 	record.State.NextInputSequence = 0
+	record.State.PendingTerminalStarts = nil
 	return record
 }
 
 func sessionRecordJSON(value any) ([]byte, error) {
+	if record, ok := value.(sessionRecord); ok {
+		if err := validateSessionTerminals(record); err != nil {
+			return nil, err
+		}
+	}
 	raw, err := json.Marshal(value)
 	if err == nil && len(raw) > nodewire.NodeSessionMaxBytes {
 		err = sessionError("unavailable", "node session record exceeded its bound")
@@ -170,6 +176,9 @@ func sessionRecordJSON(value any) ([]byte, error) {
 // save does not infer deletion from a hot record omitting old commands. Only
 // an explicitly authorized acknowledgement may remove durable receipts.
 func (s *sessionRecords) save(before, next sessionRecord) error {
+	if err := validateTerminalTransition(before, next); err != nil {
+		return err
+	}
 	if !sessionIDValid(next.State.ID) || next.State.Sequence == 0 || next.State.Sequence <= before.State.Sequence || next.State.InputAccepted < before.State.InputAccepted {
 		return errors.New("node session transition identity or sequence is invalid")
 	}
@@ -236,7 +245,10 @@ func (s *sessionRecords) read(id, commandID string) (sessionRecord, bool, error)
 	if err := json.Unmarshal(raw, &record); err != nil {
 		return record, true, err
 	}
-	if record.State.ID != id || record.State.Sequence != sequence || record.Format != 1 || record.BindingInputStart > record.State.InputAccepted ||
+	if err := validateSessionTerminals(record); err != nil {
+		return record, true, err
+	}
+	if record.State.ID != id || record.State.Sequence != sequence || (record.Format != 1 && record.Format != 2) || record.BindingInputStart > record.State.InputAccepted ||
 		len(record.Commands) != 0 || len(record.CommandHashes) != 0 || len(record.State.Questions) != 0 || record.State.Command != nil || record.State.NextInputSequence != 0 {
 		return record, true, errors.New("node session header identity differs")
 	}
@@ -278,6 +290,9 @@ func (s *sessionRecords) read(id, commandID string) (sessionRecord, bool, error)
 				}
 			}
 		}
+	}
+	if err := validateTerminalCommandStop(record); err != nil {
+		return record, true, err
 	}
 	rows, err := tx.Query(`SELECT question FROM session_questions WHERE session_id=? AND command_id=? ORDER BY rowid`, id, selected)
 	if err != nil {

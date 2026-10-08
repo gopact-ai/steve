@@ -95,7 +95,13 @@ func (s *sessionRecords) acknowledge(ctx context.Context, request nodewire.Sessi
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return fail(err)
 	}
-	if header.Format != 1 || header.State.ID != receipt.SessionID || header.State.ContextID != receipt.ContextID ||
+	if err := validateSessionTerminals(header); err != nil {
+		return fail(err)
+	}
+	if header.Format == 2 && !sessionTerminalsStopped(header) {
+		return fail(errors.New("receipt acknowledgement has outstanding terminal cleanup"))
+	}
+	if (header.Format != 1 && header.Format != 2) || header.State.ID != receipt.SessionID || header.State.ContextID != receipt.ContextID ||
 		header.State.Sequence != sequence || header.State.InputAccepted < receipt.InputSequence ||
 		header.ClusterID != authority.ClusterID || header.Authority.CoordinatorEpoch > authority.CoordinatorEpoch ||
 		header.Authority.WriterGeneration > authority.WriterGeneration ||

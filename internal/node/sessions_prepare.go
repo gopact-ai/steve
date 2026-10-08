@@ -75,12 +75,23 @@ func (s *SessionService) prepareOwnedSession(ctx context.Context, id, hash strin
 		return nil, acphost.Config{}, err
 	}
 	one := &ownedSession{pluginInstructions: pluginInstructions, processConfigHash: processHash, service: s, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
+	one.terminalAdmission = req.TerminalAdmission && acphost.TerminalsSupported && s.placeKnown
+	if req.TerminalAdmission && !one.terminalAdmission {
+		return nil, acphost.Config{}, sessionError("unavailable", "owned terminals require native cleanup support")
+	}
+	if one.terminalAdmission {
+		hostCfg.TerminalOwner = nodeTerminalOwner{one}
+	}
 	if s.placeKnown {
 		hostCfg.Started = one.observeProcess
 	}
 	host := acphost.New(hostCfg)
 	one.host = host
 	one.record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: configHash, State: nodewire.SessionState{ID: id, ContextID: id, NativeImport: req.NativeImport.Clone(), Plugin: req.Plugin.Clone(), Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionOpening, ProcessStopped: true, Questions: []nodewire.SessionQuestion{}}, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}}
+	if one.terminalAdmission {
+		one.record.Format = 2
+		one.record.State.TerminalAdmission = true
+	}
 	if source != nil {
 		one.record.UpstreamID, one.record.ResumedFrom, one.record.RuntimeSession = source.UpstreamID, source.State.ID, runtimeID
 		one.record.State.ContextID = runtimeID

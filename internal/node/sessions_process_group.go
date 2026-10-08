@@ -1,6 +1,8 @@
 package node
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -68,24 +70,68 @@ func (s *SessionService) endRecordedGroups(unstopped []*ownedSession) error {
 	return nil
 }
 
-// endRecordedGroup ends the process group one's record names, left by an
-// earlier node process, and records the stop once no member of it runs by
-// deadline. one is not shared: its record was just read.
+// endRecordedGroup first ends the original Agent group, closing admission
+// and covering reservations and unsplit helpers. Its retained terminal groups
+// and transitions then share the same deadline. No stop fact is committed
+// unless every original cleanup owner is positively ended.
+// one is not shared: its record was just read.
 func (s *SessionService) endRecordedGroup(one *ownedSession, deadline time.Time) error {
+	if err := validateSessionTerminals(one.record); err != nil {
+		return err
+	}
 	if !s.placeKnown {
 		return procgroup.ErrUnsupported
 	}
 	process := one.record.Process
+	if time.Until(deadline) <= 0 {
+		return procgroup.ErrRunning
+	}
 	if err := s.settle(process.Identity, process.Place, s.place, time.Until(deadline)); err != nil {
 		return err
 	}
-	next := one.copyLocked()
-	next.State.ProcessStopped = true
-	for id, command := range next.Commands {
-		command.ProcessStopped = true
-		next.Commands[id] = command
+	if time.Until(deadline) <= 0 {
+		return procgroup.ErrRunning
 	}
-	return one.commitLocked(next)
+	// validateSessionTerminals bounds this fan-out to 32 retained owners.
+	failed := make(chan error, len(one.record.Terminals))
+	var wg sync.WaitGroup
+	for _, owner := range one.record.Terminals {
+		switch owner.Phase {
+		case "reserved", "stopped":
+			// A reservation admits no split before its preparation is durable.
+			// The original Agent group is now ended; stopped slots remain facts.
+			continue
+		}
+		wg.Go(func() {
+			var err error
+			if time.Until(deadline) <= 0 {
+				err = procgroup.ErrRunning
+			} else if owner.Phase == "preparing" {
+				prep := owner.Preparation
+				err = procgroup.SettlePreparation(procgroup.Preparation{
+					PID: prep.PID, Start: prep.Start, ParentGroup: prep.ParentGroup,
+				}, process.Identity, prep.Mark, process.Place, s.place, deadline)
+			} else {
+				err = s.settle(owner.Process.Identity, owner.Process.Place, s.place, time.Until(deadline))
+			}
+			if err != nil {
+				failed <- fmt.Errorf("terminal %s cleanup: %w", owner.ID, err)
+			}
+		})
+	}
+	wg.Wait()
+	close(failed)
+	var err error
+	for failure := range failed {
+		err = errors.Join(err, failure)
+	}
+	if err != nil {
+		return err
+	}
+	if time.Until(deadline) <= 0 {
+		return procgroup.ErrRunning
+	}
+	return one.commitRecordedStop(deadline)
 }
 
 // settleUnverified tries again to end the process group of a record an
