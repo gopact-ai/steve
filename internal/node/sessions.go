@@ -53,6 +53,10 @@ type SessionService struct {
 	records             *sessionRecords
 	recordsErr          error
 
+	// admissionHooks only controls test scheduling; nil leaves dispatch alone.
+	// Hooks run without owner/Host locks and never replace native operations.
+	admissionHooks *sessionAdmissionHooks
+
 	// unverifiedProcesses names, under mu, the records a previous node
 	// process left without a confirmed stop whose process group this one
 	// has not ended yet; a stop of one of them tries again. place is where
@@ -117,6 +121,11 @@ func (s *SessionService) forgetCapabilities(harnessID string) {
 	delete(s.capabilities, harnessID)
 }
 
+type sessionAdmissionHooks struct {
+	beforePrompt  func(context.Context)
+	optionWaiting func()
+}
+
 type ownedSession struct {
 	pluginInstructions string
 	service            *SessionService
@@ -131,6 +140,10 @@ type ownedSession struct {
 	failure            error
 	pendingProgress    *view.Progress
 	progressTimer      *time.Timer
+
+	// promptAdmitted belongs only to CurrentCommand. It observes Host
+	// collector admission, not native dispatch, completion or process exit.
+	promptAdmitted chan struct{}
 
 	// recording counts identities of started process groups not yet
 	// committed; an open publishes its agent only after they are.
@@ -349,7 +362,7 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 	case nodewire.SessionActionAnswer:
 		return one.answer(req)
 	case nodewire.SessionActionOption:
-		return one.option(ctx, req)
+		return one.option(ctx, principal, req)
 	case nodewire.SessionActionCancel:
 		return one.cancel(ctx, req)
 	case nodewire.SessionActionKill:

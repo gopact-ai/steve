@@ -263,12 +263,13 @@ func (one *ownedSession) prompt(req nodewire.SessionRequest) (nodewire.SessionSt
 	}
 	one.service.wg.Add(1)
 	one.runDone = make(chan struct{})
-	done := one.runDone
-	go func() { defer one.service.wg.Done(); defer close(done); one.run(req) }()
+	one.promptAdmitted = make(chan struct{})
+	done, admitted := one.runDone, one.promptAdmitted
+	go func() { defer one.service.wg.Done(); defer close(done); one.run(req, admitted) }()
 	return one.stateLocked(req.CommandID), nil
 }
 
-func (one *ownedSession) run(req nodewire.SessionRequest) {
+func (one *ownedSession) run(req nodewire.SessionRequest, admitted chan struct{}) {
 	one.mu.Lock()
 	next := one.copyLocked()
 	command := next.Commands[req.CommandID]
@@ -311,7 +312,10 @@ func (one *ownedSession) run(req nodewire.SessionRequest) {
 	if one.pluginInstructions != "" {
 		req.Text = one.pluginInstructions + "\n\n" + req.Text
 	}
-	output, activity, runErr := host.PromptTurn(one.service.ctx, native, generation, req.Text, media,
+	if hooks := one.service.admissionHooks; hooks != nil && hooks.beforePrompt != nil {
+		hooks.beforePrompt(one.service.ctx)
+	}
+	output, activity, runErr := host.PromptTurnWithAdmission(one.service.ctx, native, generation, req.Text, media,
 		func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 			return one.askPermission(ctx, req.CommandID, ask)
 		},
@@ -322,6 +326,18 @@ func (one *ownedSession) run(req nodewire.SessionRequest) {
 			if err := one.updateProgress(req.CommandID, progress); err != nil {
 				go host.Abort(generation)
 			}
+		},
+		func() {
+			one.mu.Lock()
+			defer one.mu.Unlock()
+			command, exists := one.record.Commands[req.CommandID]
+			if admitted == nil || one.promptAdmitted != admitted || one.host != host ||
+				one.record.State.ID != req.ID || one.record.State.Binding != req.Binding ||
+				one.record.CurrentCommand != req.CommandID || one.record.UpstreamID != string(native) ||
+				one.record.Generation != generation || !exists || command.InputSequence != req.InputSequence {
+				return
+			}
+			close(admitted)
 		},
 	)
 	one.mu.Lock()
