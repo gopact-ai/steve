@@ -11,9 +11,17 @@
 @property(nonatomic, assign) NSUInteger opens;
 @property(nonatomic, assign) BOOL holdLauncher;
 @property(nonatomic, copy) void (^heldLauncher)(NSString *, NSString *);
+@property(nonatomic, assign) NSUInteger confirmations;
+@property(nonatomic, copy) void (^heldConfirmation)(BOOL);
+- (void)presentJavaScriptConfirmation:(NSString *)message window:(NSWindow *)window completion:(void (^)(BOOL))completion;
+
 @end
 
 @implementation TestApplication
+- (void)presentJavaScriptConfirmation:(NSString *)message window:(NSWindow *)window completion:(void (^)(BOOL))completion {
+    self.confirmations++;
+    self.heldConfirmation = completion;
+}
 - (void)runLauncher:(void (^)(NSString *, NSString *))completion {
     self.launches++;
     if (self.holdLauncher) { self.heldLauncher = completion; return; }
@@ -168,6 +176,138 @@ static void checkNavigationIsolation(TestApplication *app, TestWebView *web) {
     check([web.loadedRequest.URL isEqual:app.serviceURL], @"Trusted service link was not kept in the workspace");
 }
 
+@interface TestWindow : NSObject
+@property(nonatomic, assign, getter=isVisible) BOOL visible;
+@property(nonatomic, strong) id attachedSheet;
+@end
+@implementation TestWindow
+@end
+
+static void checkJavaScriptConfirmIsolation(void) {
+    SEL selector = @selector(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:);
+    TestApplication *app = [[TestApplication alloc] init];
+    check([app respondsToSelector:selector], @"Workspace window.confirm defaults to rejection without a native delegate");
+    TestWebView *web = [[TestWebView alloc] init];
+    TestWindow *window = [[TestWindow alloc] init];
+    window.visible = YES;
+    app.window = (NSWindow *)window;
+    app.serviceURL = [NSURL URLWithString:@"http://127.0.0.1:12345/"];
+    web.URL = app.serviceURL;
+    app.webView = (WKWebView *)web;
+    app.viewLoaded = YES;
+    TestFrame *workspace = frame(app.serviceURL.absoluteString, YES);
+    TestFrame *preview = frame(@"about:srcdoc", NO);
+    __block NSUInteger calls = 0;
+    __block BOOL result = NO;
+    void (^answered)(BOOL) = ^(BOOL accepted) { calls++; result = accepted; };
+    [app webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"trusted"
+        initiatedByFrame:(WKFrameInfo *)workspace completionHandler:answered];
+    check(app.confirmations == 1 && calls == 0, @"Trusted confirm did not wait for a native decision");
+    void (^firstAnswer)(BOOL) = app.heldConfirmation;
+    firstAnswer(YES);
+    check(calls == 1 && result, @"Accepted native confirm did not answer true");
+    firstAnswer(NO);
+    check(calls == 1, @"A confirmation was answered twice");
+    calls = 0;
+    [app webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"cancel"
+        initiatedByFrame:(WKFrameInfo *)workspace completionHandler:answered];
+    app.heldConfirmation(NO);
+    check(calls == 1 && !result, @"Cancelled native confirm did not answer false");
+    NSUInteger shown = app.confirmations;
+    NSArray *rejected = @[preview, frame(app.serviceURL.absoluteString, NO),
+        frame(@"http://127.0.0.1:23456/", YES), frame(@"https://example.test/", YES)];
+    for (TestFrame *untrusted in rejected) {
+        calls = 0; result = YES;
+        [app webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"untrusted"
+            initiatedByFrame:(WKFrameInfo *)untrusted completionHandler:answered];
+        check(calls == 1 && !result && app.confirmations == shown, @"Untrusted frame opened a native confirm");
+    }
+    workspace.securityOrigin.port++;
+    calls = 0; result = YES;
+    [app webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"origin mismatch"
+        initiatedByFrame:(WKFrameInfo *)workspace completionHandler:answered];
+    check(calls == 1 && !result && app.confirmations == shown, @"Frame URL bypassed origin checks for confirm");
+    workspace.securityOrigin.port--;
+    calls = 0; result = YES;
+    [app webView:(WKWebView *)[[TestWebView alloc] init] runJavaScriptConfirmPanelWithMessage:@"stale view"
+        initiatedByFrame:(WKFrameInfo *)workspace completionHandler:answered];
+    check(calls == 1 && !result && app.confirmations == shown, @"Stale view opened a native confirm");
+    window.attachedSheet = [[NSObject alloc] init];
+    calls = 0; result = YES;
+    [app webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"sheet busy"
+        initiatedByFrame:(WKFrameInfo *)workspace completionHandler:answered];
+    check(calls == 1 && !result && app.confirmations == shown, @"An existing sheet queued another confirm");
+    window.attachedSheet = nil;
+    calls = 0;
+    [app webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"pending"
+        initiatedByFrame:(WKFrameInfo *)workspace completionHandler:answered];
+    void (^pending)(BOOL) = app.heldConfirmation;
+    NSUInteger pendingShown = app.confirmations;
+    __block BOOL repeated = YES;
+    [app webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"second pending"
+        initiatedByFrame:(WKFrameInfo *)workspace completionHandler:^(BOOL accepted) { repeated = accepted; }];
+    check(!repeated && app.confirmations == pendingShown, @"A pending confirm admitted another confirm");
+    app.loadGeneration++;
+    pending(YES);
+    check(calls == 1 && !result, @"A decision from before navigation approved the new document");
+    calls = 0;
+    [app webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"replace"
+        initiatedByFrame:(WKFrameInfo *)workspace completionHandler:answered];
+    pending = app.heldConfirmation;
+    app.webView = (WKWebView *)[[TestWebView alloc] init];
+    pending(YES);
+    check(calls == 1 && !result, @"A retired view received a positive confirm");
+    app.webView = (WKWebView *)web;
+    calls = 0;
+    [app webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"hide"
+        initiatedByFrame:(WKFrameInfo *)workspace completionHandler:answered];
+    pending = app.heldConfirmation;
+    window.visible = NO;
+    pending(YES);
+    check(calls == 1 && !result, @"A closed window received a positive confirm");
+    window.visible = YES;
+    calls = 0;
+    [app webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"window replacement"
+        initiatedByFrame:(WKFrameInfo *)workspace completionHandler:answered];
+    pending = app.heldConfirmation;
+    app.window = (NSWindow *)[[TestWindow alloc] init];
+    pending(YES);
+    check(calls == 1 && !result, @"A replacement window received an old decision");
+    app.window = (NSWindow *)window;
+    calls = 0;
+    [app webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"frame origin changed"
+        initiatedByFrame:(WKFrameInfo *)workspace completionHandler:answered];
+    pending = app.heldConfirmation;
+    workspace.securityOrigin.port++;
+    pending(YES);
+    check(calls == 1 && !result, @"A changed frame origin received a positive decision");
+    workspace.securityOrigin.port--;
+    app.viewLoaded = NO;
+    shown = app.confirmations;
+    calls = 0; result = YES;
+    [app webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"not loaded"
+        initiatedByFrame:(WKFrameInfo *)workspace completionHandler:answered];
+    check(calls == 1 && !result && app.confirmations == shown, @"An unloaded workspace opened a confirm");
+    calls = 0; result = YES;
+    void (^orphanedAnswer)(BOOL) = nil;
+    __weak TestApplication *weakOwner = nil;
+    @autoreleasepool {
+        TestApplication *disposable = [[TestApplication alloc] init];
+        disposable.window = (NSWindow *)window;
+        disposable.webView = (WKWebView *)web;
+        disposable.serviceURL = app.serviceURL;
+        disposable.viewLoaded = YES;
+        weakOwner = disposable;
+        [disposable webView:(WKWebView *)web runJavaScriptConfirmPanelWithMessage:@"orphaned"
+            initiatedByFrame:(WKFrameInfo *)workspace completionHandler:answered];
+        orphanedAnswer = disposable.heldConfirmation;
+    }
+    check(!weakOwner, @"A pending confirmation retained the application owner");
+    orphanedAnswer(YES);
+    check(calls == 1 && !result, @"A lost owner left a confirmation unanswered or approved");
+    puts("Desktop confirm ownership passed");
+}
+
 // The console's sidebar links are fragment routes (#/tasks). WebKit reports
 // an empty source frame for them, so they must not depend on it.
 static void checkFragmentRoutes(TestApplication *app, TestWebView *web) {
@@ -290,6 +430,7 @@ int main(void) {
         [app closeLayer:nil];
         check(content.closeRequests == 2 && app.windowCloses == 2, @"An empty workspace did not let the window close");
 
+        checkJavaScriptConfirmIsolation();
         checkNavigationIsolation(app, content);
         checkFragmentRoutes(app, content);
         checkServiceWatch();

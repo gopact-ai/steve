@@ -14,6 +14,7 @@
 @property(nonatomic, assign) BOOL showingFailure;
 @property(nonatomic, assign) NSUInteger loadGeneration;
 @property(nonatomic, assign) BOOL pickingDirectory;
+@property(nonatomic, assign) BOOL confirmingJavaScript;
 @end
 
 @implementation SteveApplication
@@ -351,6 +352,44 @@
     parts.host = origin.host;
     parts.port = @(origin.port);
     return [self isServiceURL:parts.URL];
+}
+
+- (void)presentJavaScriptConfirmation:(NSString *)message window:(NSWindow *)window completion:(void (^)(BOOL))completion {
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"Steve · 网页请求确认";
+    alert.informativeText = message;
+    [alert addButtonWithTitle:@"确定"];
+    [alert addButtonWithTitle:@"取消"];
+    alert.buttons[0].keyEquivalent = @"\r";
+    alert.buttons[1].keyEquivalent = @"\e";
+    [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse response) {
+        completion(response == NSAlertFirstButtonReturn);
+    }];
+}
+
+- (void)webView:(WKWebView *)webView runJavaScriptConfirmPanelWithMessage:(NSString *)message
+    initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(BOOL))completionHandler {
+    NSWindow *window = self.window;
+    if (webView != self.webView || ![self isWorkspaceFrame:frame] || !self.viewLoaded ||
+        self.showingFailure || !window.isVisible || window.attachedSheet || self.confirmingJavaScript) {
+        completionHandler(NO);
+        return;
+    }
+    self.confirmingJavaScript = YES;
+    NSUInteger generation = self.loadGeneration;
+    __block BOOL answered = NO;
+    __weak SteveApplication *weakSelf = self;
+    NSString *detail = [NSString stringWithFormat:@"%@\n\n%@", frame.request.URL.host, message ?: @""];
+    [self presentJavaScriptConfirmation:detail window:window completion:^(BOOL accepted) {
+        if (answered) return;
+        answered = YES;
+        SteveApplication *owner = weakSelf;
+        owner.confirmingJavaScript = NO;
+        BOOL current = owner && owner.webView == webView && owner.window == window &&
+            owner.viewLoaded && !owner.showingFailure && window.isVisible &&
+            owner.loadGeneration == generation && [owner isWorkspaceFrame:frame];
+        completionHandler(accepted && current);
+    }];
 }
 
 - (BOOL)isWorkspaceFragment:(NSURL *)url of:(NSURL *)current {
