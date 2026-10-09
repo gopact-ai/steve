@@ -65,3 +65,47 @@ func TestFileDiffTruncationKeepsCompleteUTF8(t *testing.T) {
 		}
 	}
 }
+
+func TestFileDiffTruncationDoesNotRepairInvalidText(t *testing.T) {
+	repo, err := Open(t.Context(), filepath.Join(t.TempDir(), "objects.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	path := filepath.Join(work, "invalid.txt")
+	prefix := "bad:\xff\n"
+	probeBody := prefix + "probe\n"
+	if err := os.WriteFile(path, []byte(probeBody), 0600); err != nil {
+		t.Fatal(err)
+	}
+	probe, _, err := repo.Snapshot(t.Context(), work, "", "probe", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color"}
+	raw, err := repo.Git(t.Context(), nil, append(args, EmptyTree, probe, "--", "invalid.txt")...)
+	if err != nil || utf8.ValidString(raw) {
+		t.Fatal("Git fixture must retain the invalid byte")
+	}
+	header := len(raw) - len(probeBody)
+	body := prefix + strings.Repeat("a", budget.ReviewDiffBytes-header-len(prefix)-1) + "中\n"
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	commit, _, err := repo.Snapshot(t.Context(), work, probe, "invalid text", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = repo.Git(t.Context(), nil, append(args, EmptyTree, commit, "--", "invalid.txt")...)
+	if err != nil || len(raw) <= budget.ReviewDiffBytes || strings.Index(raw, "中") != budget.ReviewDiffBytes-1 {
+		t.Fatal("Git fixture must split the trailing rune after an earlier invalid byte")
+	}
+	bounded, rawCut, err := repo.GitBounded(t.Context(), budget.ReviewDiffBytes, append(args, EmptyTree, commit, "--", "invalid.txt")...)
+	if err != nil || !rawCut || string(bounded) != raw[:budget.ReviewDiffBytes] {
+		t.Fatal("raw Git output must stay byte-exact")
+	}
+	diff, cut, err := repo.FileDiff(t.Context(), "", commit, "invalid.txt")
+	if err != nil || !cut || diff != string(bounded) {
+		t.Fatal("FileDiff must not silently sanitize earlier invalid text")
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // EmptyTree is git's well-known empty tree: the "before" of a first
@@ -100,6 +101,17 @@ func (r *Repo) FileDiff(ctx context.Context, from, to, path string) (string, boo
 	raw, truncated, err := runBounded(ctx, r.Dir, r.Review.WithDefaults().MaxDiffBytes, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", from, to, "--", path)
 	if err != nil {
 		return "", false, err
+	}
+	if truncated && len(raw) > 0 {
+		start := len(raw) - 1
+		for start > 0 && !utf8.RuneStart(raw[start]) {
+			start--
+		}
+		// A text projection must not split a valid codepoint. Earlier invalid
+		// bytes remain raw; this is not a decoder or a binary repair policy.
+		if !utf8.FullRune(raw[start:]) && utf8.Valid(raw[:start]) {
+			raw = raw[:start]
+		}
 	}
 	return string(raw), truncated, nil
 }
