@@ -47,6 +47,7 @@ const page = await context.newPage();
 page.setDefaultTimeout(7000);
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+gxkAAAAASUVORK5CYII=", "base64");
 const reads = [];
+let failContent = true;
 const errors = [];
 page.on("pageerror", error => errors.push(String(error)));
 await page.addInitScript(bytes => {
@@ -75,7 +76,7 @@ await page.route("**/*", route => {
     assert.equal(request.method(), "GET", "thumbnail rendering cannot submit mutations");
     if (parsed.pathname.endsWith("/content")) {
         reads.push(parsed.pathname);
-        if (parsed.pathname.includes("failed")) return route.fulfill({ status: 503, body: "controlled refusal" });
+        if (failContent && parsed.pathname.includes("failed")) return route.fulfill({ status: 503, body: "controlled refusal" });
         return route.fulfill({ contentType: "image/png", body: png });
     }
     throw new Error("Unexpected API " + parsed.pathname);
@@ -140,17 +141,18 @@ try {
     console.log("PASS StrictMode acquire/release replay leaves no retained URLs");
 
     await show(["failed"], "failed");
-    await page.getByRole("button", { name: "Open failed.png", exact: true }).waitFor();
-    await page.waitForFunction(() => document.querySelectorAll("img").length === 0);
-    await show([], "failed");
-    await show(["retry"], "failed");
-    await page.getByRole("button", { name: "Open failed.png", exact: true }).waitFor();
-    await page.waitForFunction(() => document.querySelectorAll("img").length === 0);
-    assert.equal(reads.filter(path => path.includes("failed")).length, 2, "new mount may retry a failed content read");
+    await page.getByRole("button", { name: "Open failed.png", exact: true }).getByText("68 B", { exact: true }).waitFor();
+    assert.equal(await page.locator("img").count(), 0, "failed read is a file fallback, not a loading image");
+    // A failed copy can remain on the page when another reference appears.
+    // Recovering the service permits that new consumer to try a new read.
+    failContent = false;
+    await show(["failed", "retry"], "failed");
+    await loaded(1);
+    assert.equal(reads.filter(path => path.includes("failed")).length, 2, "new consumer retries even while an old fallback remains mounted");
     await show([], "failed");
     await released();
     assert.deepEqual(errors, []);
-    console.log("PASS failed fetch retains the file fallback and new mount retries without mutation");
+    console.log("PASS failed fetch shows a file fallback; new consumer retries after recovery while the failed copy remains mounted");
 } finally {
     await context.close();
     await browser.close();
