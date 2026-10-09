@@ -13,10 +13,15 @@ const app = await createServer({ root: fileURLToPath(new URL("../../web/console"
             assert.equal(source.split(marker).length, 2, "Count the production timeline row");
             return source.replace(marker, marker + " globalThis.historyRowRenders = (globalThis.historyRowRenders || 0) + 1;");
         }
+        if (id.endsWith("/src/lib/node-name.ts")) {
+            const marker = 'const named = nodes.map((n) => `${n.name}\\u0000${nodeLabel(n)}`).join("\\u001f");';
+            assert.equal(source.split(marker).length, 2, "Observe the real node-name revision");
+            return source.replace(marker, marker + " globalThis.historyNodeNames = named;");
+        }
         if (id.endsWith("/src/lib/history-lines.ts")) {
             const marker = "const d = entry.data || {};";
             assert.equal(source.split(marker).length, 2, "Count the production history description");
-            return source.replace(marker, marker + " globalThis.historyDescriptions = (globalThis.historyDescriptions || 0) + 1;");
+            return source.replace(marker, marker + ' if (entry.kind === "observe.fixture") globalThis.historyDescriptions = (globalThis.historyDescriptions || 0) + 1;');
         }
     },
 }], server: { host: "127.0.0.1", port: 0 }, logLevel: "error" });
@@ -34,7 +39,7 @@ try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
     const page = await context.newPage();
     page.setDefaultTimeout(10000);
-    const f = { requests: [], errors: [], hold: null, status: 0, empty: false, refreshed: false };
+    const f = { requests: [], errors: [], hold: null, status: 0, empty: false, refreshed: false, nodeTitle: "First fixture node" };
     page.on("pageerror", (err) => f.errors.push(String(err)));
     await page.addInitScript(() => {
         localStorage.setItem("steve.ui.locale", "en");
@@ -47,7 +52,7 @@ try {
         if (url.origin !== origin) { f.errors.push(`Unexpected external request: ${url.origin}`); return route.abort(); }
         if (!["/state", "/events", "/history"].includes(pathname) && !pathname.startsWith("/console/")) return route.continue();
         assert.equal(request.method(), "GET", "History tests must not write to any service");
-        if (pathname === "/state") return route.fulfill({ json: workState({ at, hub: { node: "fixture", version: "test", started: at }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] }) });
+        if (pathname === "/state") return route.fulfill({ json: workState({ at, hub: { node: "fixture", version: "test", started: at }, nodes: [{ name: "fixture", display_name: f.nodeTitle, up: true }], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] }) });
         if (pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
         if (pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
         if (pathname === "/console/queue") return route.fulfill({ json: { submission_keys: true, queue: [] } });
@@ -100,6 +105,12 @@ try {
             await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
         }
         assert.deepEqual(await work(), beforeFilter, "Unchanged search membership must not re-describe or render history");
+        await filter.fill("record");
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.deepEqual(await work(), beforeFilter, "A changed search with identical membership preserves the timeline");
+        await filter.fill("RECORD ");
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.deepEqual(await work(), beforeFilter, "Case and surrounding spaces do not redraw retained rows");
         await filter.fill("Middle record");
         await page.waitForFunction(() => document.querySelectorAll("main ol > li").length === 1);
         assert.equal((await work()).descriptions, beforeFilter.descriptions, "Filtering reuses unchanged descriptions");
@@ -157,6 +168,16 @@ try {
         await page.getByRole("alert").filter({ hasText: "History unavailable" }).waitFor();
         f.status = 0; await page.getByRole("button", { name: "Retry", exact: true }).click();
         await eventually(async () => await page.getByRole("button", { name: "All records shown", exact: true }).isDisabled(), "Empty first-page retry did not recover");
+        f.empty = false;
+        await emit();
+        await page.getByText("Refreshed record", { exact: true }).waitFor();
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await page.getByRole("tab", { name: "Audit", exact: true }).click();
+        const descriptionsBeforeAuditRename = await page.evaluate(() => window.historyDescriptions);
+        f.nodeTitle = "Second fixture node";
+        await emit();
+        await page.waitForFunction(() => window.historyNodeNames?.includes("Second fixture node"));
+        assert.equal(await page.evaluate(() => window.historyDescriptions), descriptionsBeforeAuditRename, "Hidden timeline does not describe retained history after a node rename");
         assert.deepEqual(f.errors, []);
         console.log("PASS opaque paging, keyboard repeats, terminal/empty pages, stale refresh, retry/expiry and narrow long content");
     }
