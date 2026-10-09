@@ -2,7 +2,7 @@ import { Button } from "@/components/base/buttons/button";
 import { IconButton } from "@/components/steve/icon-button";
 import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
-import { memo, useEffect, useRef, useState, type RefObject } from "react";
+import { lazy, memo, useEffect, useRef, useState, type RefObject } from "react";
 import { ArrowUp, ChevronDown, CornerDownRight, DotsHorizontal, Edit05, Folder, MessageChatSquare, Plus, Square, Trash01 } from "@untitledui/icons";
 import { Button as AriaButton, Dialog, DialogTrigger, Popover } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
@@ -10,7 +10,7 @@ import type { ConversationContext, Exchange, Project, QuoteRef, Selectors, Sugge
 import { plain } from "@/lib/plain";
 import { MarkdownInput, type DraftBox } from "@/components/steve/markdown-input";
 import { useNodeLabel } from "@/lib/node-name";
-import { SessionOptionControl } from "@/components/steve/session-option";
+import { LazyRegion } from "@/components/steve/lazy-region";
 import { ownPreference, sessionOption, sessionOptionRole } from "@/lib/session-options";
 
 // Composer is the console's input, in the proportions of a chat app's:
@@ -70,6 +70,7 @@ export interface ComposerProps {
 }
 
 const chip = "composer-chip";
+const SessionOptionControl = lazy(() => import("@/components/steve/session-option").then(module => ({ default: module.SessionOptionControl })));
 
 export const Composer = memo(function Composer(p: ComposerProps) {
     const { t } = useI18n();
@@ -284,6 +285,7 @@ function PreferenceChips({ agent, scope, load, onPrefer }: { agent: NonNullable<
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const [accepted, setAccepted] = useState<Record<string, string>>({});
+    const [optionsOpen, setOptionsOpen] = useState(false);
     const changing = useRef(false);
     const mounted = useRef(true);
     useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -332,7 +334,7 @@ function PreferenceChips({ agent, scope, load, onPrefer }: { agent: NonNullable<
     const options = (sel?.options || []).filter(option => sessionOptionRole(option) !== "model" && option.ID !== approval?.ID && option.ID !== reasoning?.ID);
     return (
         <>
-            <DialogTrigger onOpenChange={isOpen => { if (isOpen) open(); }}>
+            <DialogTrigger isOpen={optionsOpen} onOpenChange={isOpen => { setOptionsOpen(isOpen); if (isOpen) open(); }}>
                 <AriaButton aria-label={t("consoleChrome.sessionOptions")} data-preference-scope={scope} className={`${chip} text-quaternary`}>
                     {t("consoleChrome.sessionOptions")}<ChevronDown className="size-3" />
                 </AriaButton>
@@ -340,9 +342,11 @@ function PreferenceChips({ agent, scope, load, onPrefer }: { agent: NonNullable<
                     <Dialog aria-label={t("consoleChrome.sessionOptions")} className="max-h-[min(560px,70dvh)] space-y-4 overflow-y-auto overscroll-contain p-3 outline-hidden" aria-busy={busy}>
                         <h3 className="text-sm font-semibold text-primary">{t("consoleChrome.sessionOptions")}</h3>
                         <p className="text-xs text-tertiary">{t("consoleChrome.optionPreferenceHint")}</p>
-                        {!sel ? <p role="status" className="text-xs text-tertiary">{t("consoleChrome.loadingChoices")}</p> : options.map(raw => <SessionOptionControl key={raw.ID}
-                            option={sessionOption(raw)} requested={requested(raw.ID)} acceptedRequest={ownPreference(accepted, raw.ID)} disabled={busy || !onPrefer}
-                            onChange={value => void prefer({ [raw.ID]: value ?? "" })} />)}
+                        {!sel ? <p role="status" className="text-xs text-tertiary">{t("consoleChrome.loadingChoices")}</p> : options.length > 0 && <LazyRegion resetKey={scope} onClose={() => setOptionsOpen(false)}>
+                            {options.map(raw => <SessionOptionControl key={raw.ID}
+                                option={sessionOption(raw)} requested={requested(raw.ID)} acceptedRequest={ownPreference(accepted, raw.ID)} disabled={busy || !onPrefer}
+                                onChange={value => void prefer({ [raw.ID]: value ?? "" })} />)}
+                        </LazyRegion>}
                         {sel && options.length === 0 && <p className="text-xs text-tertiary">{t("consoleChrome.noSessionOptions")}</p>}
                         <Button size="sm" color="link-gray" isDisabled={busy} onClick={() => open(true)}>{t("consoleChrome.optionReload")}</Button>
                         {error && <p role="alert" className="break-words text-xs text-error-primary">{error}</p>}
