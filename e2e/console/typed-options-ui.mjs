@@ -8,7 +8,7 @@ import { createServer } from "../../web/console/node_modules/vite/dist/node/inde
 import react from "../../web/console/node_modules/@vitejs/plugin-react/dist/index.js";
 import tailwindcss from "../../web/console/node_modules/@tailwindcss/vite/dist/index.mjs";
 import { chromium } from "../../web/console/node_modules/playwright/index.mjs";
-const web = fileURLToPath(new URL("../../web/console", import.meta.url));
+const web = process.env.TYPED_OPTIONS_WEB_ROOT || fileURLToPath(new URL("../../web/console", import.meta.url));
 const scratch = await realpath(await mkdtemp(path.join(tmpdir(), "topt-")));
 const selectors = { model: "Reported model", models: [], preferred: {}, options: [
     { ID: "vendor/toggle", Name: "Fast lane", Type: "boolean", Category: "vendor/private", Current: "false" },
@@ -24,14 +24,14 @@ try {
     await writeFile(path.join(scratch, "index.html"), '<html><body><div id="root"></div><script type="module" src="/fixture.tsx"></script></body></html>');
     await writeFile(path.join(scratch, "fixture.css"), `@import "${web}/src/styles/globals.css";\n@source "${web}/src";\n@source "./fixture.tsx";`);
     await writeFile(path.join(scratch, "fixture.tsx"), `
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { LocaleProvider } from "@/providers/locale-provider";
 import { Composer } from "@/components/steve/composer";
 import { fetchSelectors, setPreferences } from "@/lib/api/console";
 import "./fixture.css";
 const agent = { id: "fixture-agent", harness: "fixture", node: "fixture-node", usable: true, ready: true };
-function Fixture() { const box = useRef(null); return <div className="workbench-shell"><main className="app-main"><div className="console-workbench"><div className="console-content"><div className="conversation-content"><div className="transcript-scroll">Fixture transcript</div><div className="composer-dock"><Composer value="" onChange={() => {}} onKey={() => {}} onSubmit={() => {}} onStop={() => {}} boxRef={box} busy={false} suggestions={[]} pick={0} onApply={() => {}} verbs={[]} onVerb={() => {}} projects={[]} agents={[agent]} agent={agent} onProject={() => {}} onAgent={() => {}} onSelectors={() => fetchSelectors("console:fixture", agent.id)} onPrefer={async patch => { await setPreferences("console:fixture", agent.id, patch); }} /></div></div></div></div></main></div>; }
+function Fixture() { const box = useRef(null), [text,setText] = useState(""); return <div className="workbench-shell"><main className="app-main"><div className="console-workbench"><div className="console-content"><div className="conversation-content"><div className="transcript-scroll">Fixture transcript</div><div className="composer-dock"><Composer value={text} onChange={setText} onKey={() => {}} onSubmit={() => {}} onStop={() => {}} boxRef={box} busy={false} suggestions={[]} pick={0} onApply={() => {}} verbs={[]} onVerb={() => {}} projects={[]} agents={[agent]} agent={agent} onProject={() => {}} onAgent={() => {}} onSelectors={() => fetchSelectors("console:fixture", agent.id)} onPrefer={async patch => { await setPreferences("console:fixture", agent.id, patch); }} /></div></div></div></div></main></div>; }
 createRoot(document.getElementById("root")).render(<LocaleProvider><Fixture /></LocaleProvider>);
 `);
     server = await createServer({ root: scratch, configFile: false, envDir: false, cacheDir: path.join(scratch, "cache"), plugins: [react(), tailwindcss()], resolve: { alias: { "@": path.join(web, "src") }, dedupe: ["react", "react-dom"] }, server: { host: "127.0.0.1", port: 0, fs: { allow: [web, scratch] } }, logLevel: "error" });
@@ -40,9 +40,15 @@ createRoot(document.getElementById("root")).render(<LocaleProvider><Fixture /></
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block", reducedMotion: "reduce" });
     await context.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); });
     const page = await context.newPage(); page.setDefaultTimeout(6000); page.on("pageerror", e => errors.push(String(e)));
-    await page.route("**/*", async route => {
+    const modules = { count: 0, mode: "normal", release: null };
+    async function observe(page) { await page.route("**/*", async route => {
         const req = route.request(), url = new URL(req.url());
         assert.equal(url.origin, origin, "external traffic prohibited");
+        if (url.pathname.endsWith("/session-option.tsx")) {
+            modules.count++;
+            if (modules.mode === "hold") await new Promise(resolve => { modules.release = resolve; });
+            if (modules.mode === "failed") return route.fulfill({ status:503, body:"Controlled optional-module failure" });
+        }
         if (url.pathname === "/console/queue" && url.searchParams.get("capabilities") === "1") return route.fulfill({ json: { queue: [], submission_keys: true } });
         if (url.pathname === "/console/selectors") { if (failReload) { failReload=false; return route.fulfill({ status:503, json:{error:"Fixture report unavailable"} }); } return route.fulfill({ json: selectors }); }
         if (url.pathname === "/console/preferences") {
@@ -54,8 +60,11 @@ createRoot(document.getElementById("root")).render(<LocaleProvider><Fixture /></
         }
         assert.ok(!url.pathname.startsWith("/console/"), `unexpected API ${req.method()} ${url.pathname}`);
         return route.continue();
-    });
+    }); }
+    await observe(page);
     await page.goto(origin);
+    await page.getByRole("button", { name: "Session options", exact: true }).waitFor();
+    assert.equal(modules.count, 0, "optional rich controls are not requested before the options panel opens");
     await page.getByRole("button", { name: "Session options", exact: true }).click();
     const panel = page.getByRole("dialog", { name: "Session options", exact: true }); await panel.waitFor();
     await panel.getByText("Fast lane", { exact: true }).waitFor();
@@ -100,5 +109,25 @@ createRoot(document.getElementById("root")).render(<LocaleProvider><Fixture /></
     assert.equal(await panel.evaluate(el => el.contains(document.activeElement)), true, "focus remains in popover dialog");
     if (process.env.TYPED_OPTIONS_SCREENSHOTS) { await mkdir(process.env.TYPED_OPTIONS_SCREENSHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.TYPED_OPTIONS_SCREENSHOTS, "conversation-options-light.png") }); await page.evaluate(() => document.documentElement.classList.add("dark-mode")); await page.screenshot({ path: path.join(process.env.TYPED_OPTIONS_SCREENSHOTS, "conversation-options-dark.png") }); }
     assert.deepEqual(errors, []); console.log("PASS real Composer/API typed booleans: false vs unset, requested vs Actual, errors, opaque IDs, narrow/focus; fixture only");
+    await page.close();
+    for (const mode of ["hold", "failed"]) {
+        const optional = await context.newPage(); optional.setDefaultTimeout(6000); optional.on("pageerror", e => errors.push(String(e)));
+        await observe(optional); modules.count=0; modules.mode=mode; modules.release=null;
+        await optional.goto(origin); const box=optional.getByRole("textbox",{name:"Message",exact:true}); await box.waitFor(); await box.fill("Keep my options draft");
+        assert.equal(modules.count,0); const beforeWrites=writes.length;
+        await optional.getByRole("button",{name:"Session options",exact:true}).click();
+        const local=optional.getByRole("dialog",{name:"Session options",exact:true});await local.waitFor();
+        const notice=local.getByRole(mode==="failed"?"alert":"status");await notice.getByRole("button",{name:"Close",exact:true}).waitFor();
+        assert.equal(modules.count,1);await notice.getByRole("button",{name:"Close",exact:true}).click();await local.waitFor({state:"hidden"});
+        assert.equal(await box.innerText(),"Keep my options draft");assert.equal(writes.length,beforeWrites,"closing optional load cannot write a preference");
+        if(mode==="hold") {
+            modules.mode="normal";modules.release();
+            await optional.getByRole("button",{name:"Session options",exact:true}).click();await local.getByText("Fast lane",{exact:true}).waitFor();
+            assert.equal(modules.count,1,"reopening waits for the original import rather than issuing another fetch");
+            await optional.keyboard.press("Escape");await local.waitFor({state:"hidden"});assert.equal(await box.innerText(),"Keep my options draft");
+        }
+        await optional.close();
+    }
+    assert.deepEqual(errors,[]);console.log("PASS optional controls load only on opening; delayed/failed imports close locally and keep the draft without preference writes");
     await context.close();
 } finally { await browser?.close(); await server?.close(); await rm(scratch, { recursive: true, force: true }); }
