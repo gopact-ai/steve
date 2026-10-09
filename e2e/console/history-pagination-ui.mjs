@@ -6,7 +6,20 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "../../web/console/node_modules/vite/dist/node/index.js";
 import { chromium } from "../../web/console/node_modules/playwright/index.mjs";
 
-const app = await createServer({ root: fileURLToPath(new URL("../../web/console", import.meta.url)), server: { host: "127.0.0.1", port: 0 }, logLevel: "error" });
+const app = await createServer({ root: fileURLToPath(new URL("../../web/console", import.meta.url)), plugins: [{
+    name: "history-filter-work", enforce: "pre", transform(source, id) {
+        if (id.endsWith("/src/pages/dashboard.tsx")) {
+            const marker = "const [all, setAll] = useState(false);";
+            assert.equal(source.split(marker).length, 2, "Count the production timeline row");
+            return source.replace(marker, marker + " globalThis.historyRowRenders = (globalThis.historyRowRenders || 0) + 1;");
+        }
+        if (id.endsWith("/src/lib/history-lines.ts")) {
+            const marker = "const d = entry.data || {};";
+            assert.equal(source.split(marker).length, 2, "Count the production history description");
+            return source.replace(marker, marker + " globalThis.historyDescriptions = (globalThis.historyDescriptions || 0) + 1;");
+        }
+    },
+}], server: { host: "127.0.0.1", port: 0 }, logLevel: "error" });
 await app.listen();
 const origin = `http://127.0.0.1:${app.httpServer.address().port}`;
 const browser = await chromium.launch({ headless: true, channel: process.env.BROWSER_CHANNEL });
@@ -76,6 +89,23 @@ try {
         await page.getByText(long, { exact: true }).waitFor();
         assert.equal(f.requests.at(-1).cursor, cursors[1]);
         assert.equal(await page.getByRole("button", { name: "All records shown", exact: true }).isDisabled(), true);
+        const filter = page.getByRole("textbox", { name: "Filter history", exact: true });
+        await filter.click();
+        const work = () => page.evaluate(() => ({ rows: window.historyRowRenders, descriptions: window.historyDescriptions }));
+        const beforeFilter = await work();
+        assert.ok(beforeFilter.rows > 0 && beforeFilter.descriptions > 0, "Observe the real history path");
+        const requestsBeforeFilter = f.requests.length;
+        for (let i = 0; i < 6; i++) {
+            await filter.press(i % 2 ? "Backspace" : "Space");
+            await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        }
+        assert.deepEqual(await work(), beforeFilter, "Unchanged search membership must not re-describe or render history");
+        await filter.fill("Middle record");
+        await page.waitForFunction(() => document.querySelectorAll("main ol > li").length === 1);
+        assert.equal((await work()).descriptions, beforeFilter.descriptions, "Filtering reuses unchanged descriptions");
+        await filter.fill("");
+        await page.waitForFunction(() => document.querySelectorAll("main ol > li").length === 3);
+        assert.equal(f.requests.length, requestsBeforeFilter, "Filtering never refetches history");
         await page.setViewportSize({ width: 390, height: 844 });
         // The phone layout replaces the sidebar with this bar once the
         // breakpoint change has rendered; measuring before it reads the
