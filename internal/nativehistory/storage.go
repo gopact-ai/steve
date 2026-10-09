@@ -22,6 +22,9 @@ func CheckStorage(ctx context.Context, store string, reserveEntries int, reserve
 		return err
 	}
 	count, size := reserveEntries, reserveBytes
+	if count > MaxStoreEntries || size > MaxStoreBytes {
+		return ErrStorageFull
+	}
 	for _, entry := range entries {
 		if entry.Name() == ".admission.lock" {
 			continue
