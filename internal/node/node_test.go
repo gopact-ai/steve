@@ -591,7 +591,7 @@ func TestSkillsArePushedAndMaterialized(t *testing.T) {
 // nowhere.
 func TestMCPBindingKeepsSecretsOnTheNode(t *testing.T) {
 	bin := buildMockAgent(t)
-	state := t.TempDir()
+	state := brokerTempDir(t)
 	// A real HTTP MCP server would live here; this one shows what reached
 	// it, so the proxy's header injection can be seen from outside.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -802,7 +802,7 @@ func TestHubTokenVouchesForTheName(t *testing.T) {
 // work the same; a caller without the token gets nothing.
 func TestExternalBrokerHoldsTheSecrets(t *testing.T) {
 	bin := buildMockAgent(t)
-	dir := t.TempDir()
+	dir := brokerTempDir(t)
 	socket := filepath.Join(dir, "mcp.sock")
 	broker := NewBroker(BrokerConfig{Socket: socket, Token: "ctl-secret", PortFile: filepath.Join(dir, "proxy.port"),
 		MCPServers: map[string]MCPSpec{"echo": {Type: "stdio", Command: "sh", Args: []string{"-c", `read line; echo "ext $line $TOKEN"`}, Env: map[string]string{"TOKEN": "S3"}}}})

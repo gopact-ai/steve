@@ -15,7 +15,7 @@ import (
 
 func brokerOnSocket(t *testing.T) (*Broker, string, context.CancelFunc) {
 	t.Helper()
-	socket := filepath.Join(t.TempDir(), "mcp.sock")
+	socket := filepath.Join(brokerTempDir(t), "mcp.sock")
 	broker := NewBroker(BrokerConfig{Socket: socket, MCPServers: map[string]MCPSpec{
 		"echo": {Type: "stdio", Command: "sh", Args: []string{"-c", "cat"}},
 	}})

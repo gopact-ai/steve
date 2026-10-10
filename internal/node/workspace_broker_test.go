@@ -80,7 +80,7 @@ func TestWorkspaceChangeAppliesToNextMCPLaunchWithoutRestart(t *testing.T) {
 
 func TestBrokerInitializationSharesSettingsPublicationBoundary(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
-	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(),
+	s := NewServer(ServerConfig{Name: "worker", StateDir: brokerTempDir(t), WorkspaceRoot: t.TempDir(),
 		MCPServers: map[string]MCPSpec{"cwd": {Command: "sh", Args: []string{"-c", "pwd; cat"}}}})
 	s.ctx = ctx
 	t.Cleanup(func() { cancel(); s.backgroundWG.Wait() })
