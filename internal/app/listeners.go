@@ -7,6 +7,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/debugapi"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
@@ -29,6 +30,17 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 	recoverRetainedDelegates := delegates.RecoverRetainedDelegates()
 	reconcileDeliveries := delegates.ReconcileDeliveries()
 	channel := channels.Channel()
+	receivers := &schedule.ReceiverRegistry{}
+	if cons != nil {
+		if err := receivers.Register("console", consoleScheduleReceiver{page: cons}); err != nil {
+			return err
+		}
+	}
+	if gw != nil {
+		if err := receivers.Register("feishu", gatewayScheduleReceiver{chat: gw}); err != nil {
+			return err
+		}
+	}
 	// The console starts serving below and may rewrite the configuration
 	// from then on; take what the listeners need from it first.
 	cfg := boot.Config()
@@ -79,7 +91,7 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 	// signed-in address from the same configuration.
 	slog.Info(fmt.Sprintf("steve: console on %s  (open it: steve dash -config %q)", dashboard.URL(), *configPath))
 
-	background.Go(func(ctx context.Context) { runScheduleDispatcher(ctx, schedules, cons, gw, coordinator) })
+	background.Go(func(ctx context.Context) { runScheduleDispatcher(ctx, schedules, receivers, coordinator) })
 
 	if debugAddr != "" && channel != nil {
 		background.Go(func(ctx context.Context) {

@@ -92,7 +92,7 @@ func TestConsoleScheduleCrashGapReplaysOnlyItsDurableExchange(t *testing.T) {
 		t.Fatal(err)
 	}
 	im := &fakeScheduleIM{}
-	dispatchFiring(t.Context(), restarted, page, im, nil, again[0])
+	dispatchFiring(t.Context(), restarted, testScheduleReceivers(t, page, im), nil, again[0])
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		list := page.Queue("scheduled")
@@ -132,7 +132,7 @@ func TestUnknownScheduleDeliveryIsVisibleAndNeverAutomaticallyReplayed(t *testin
 		t.Fatal(err)
 	}
 	im := &fakeScheduleIM{err: errors.Join(channel.ErrOutcomeUnknown, errors.New("response lost"))}
-	dispatchFiring(t.Context(), store, nil, im, nil, due[0])
+	dispatchFiring(t.Context(), store, testScheduleReceivers(t, nil, im), nil, due[0])
 	pending, ok := store.Get(job.ID)
 	if !ok || pending.State != schedule.FiringUnknown || pending.Error == "" || pending.Runs != 0 {
 		t.Fatalf("unknown delivery consumed or hidden: %+v", pending)
@@ -143,4 +143,20 @@ func TestUnknownScheduleDeliveryIsVisibleAndNeverAutomaticallyReplayed(t *testin
 	if err := store.ResolveFiring(job.ID, "confirm", "owner"); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func testScheduleReceivers(t *testing.T, page scheduledConsole, chat scheduledGateway) *schedule.ReceiverRegistry {
+	t.Helper()
+	r := &schedule.ReceiverRegistry{}
+	if page != nil {
+		if err := r.Register("console", consoleScheduleReceiver{page}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if chat != nil {
+		if err := r.Register("feishu", gatewayScheduleReceiver{chat}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return r
 }
