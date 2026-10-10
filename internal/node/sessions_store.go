@@ -1,8 +1,12 @@
 package node
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -79,11 +83,125 @@ func (one *ownedSession) commitLocked(next sessionRecord) error {
 	return nil
 }
 
+// commitRecordedStop strengthens cleanup evidence only. The command journal
+// can retain older inputs not present in the hot/current-command snapshot.
+// Their stop flags and the complete owner aggregate cross one transaction;
+// output, frozen receipts, bindings and command settlement stay unchanged.
+func (one *ownedSession) commitRecordedStop(deadline time.Time) error {
+	if one.failure != nil {
+		return one.failure
+	}
+	next := one.copyLocked()
+	next.State.Sequence++
+	next.State.ProcessStopped = true
+	for id, owner := range next.Terminals {
+		owner.Phase = "stopped"
+		next.Terminals[id] = owner
+	}
+	for id, command := range next.Commands {
+		command.ProcessStopped = true
+		next.Commands[id] = command
+	}
+	store, err := one.service.recordsStore()
+	if err == nil {
+		err = store.saveRecordedStop(one.record, next, deadline)
+	}
+	if err != nil {
+		one.failure = fmt.Errorf("node session persistence failed: %w", err)
+		close(one.changed)
+		one.changed = make(chan struct{})
+		return one.failure
+	}
+	one.record = liveSessionRecord(next)
+	close(one.changed)
+	one.changed = make(chan struct{})
+	return nil
+}
+
+func (s *sessionRecords) saveRecordedStop(before, next sessionRecord, deadline time.Time) error {
+	if err := validateTerminalTransition(before, next); err != nil {
+		return err
+	}
+	if !sessionIDValid(next.State.ID) || next.State.ID != before.State.ID ||
+		before.State.Sequence == 0 || next.State.Sequence != before.State.Sequence+1 ||
+		!next.State.ProcessStopped || !sessionTerminalsStopped(next) {
+		return errors.New("recorded cleanup transition identity differs")
+	}
+	header, err := sessionRecordJSON(sessionHeader(next))
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE sessions SET sequence=?,header=? WHERE id=? AND sequence=?`,
+		next.State.Sequence, header, next.State.ID, before.State.Sequence)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return errors.New("recorded cleanup lost its durable sequence")
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,input_sequence,command FROM session_commands WHERE session_id=? ORDER BY id LIMIT 513`, next.State.ID)
+	if err != nil {
+		return err
+	}
+	type stoppedCommand struct {
+		id  string
+		raw []byte
+	}
+	var stopped []stoppedCommand
+	for rows.Next() {
+		var id string
+		var input uint64
+		var raw []byte
+		var command nodewire.SessionCommand
+		if err = rows.Scan(&id, &input, &raw); err == nil {
+			err = json.Unmarshal(raw, &command)
+		}
+		if err == nil && (len(stopped) == 512 || command.ID != id || input == 0 ||
+			command.InputSequence != input || input > next.State.InputAccepted) {
+			err = errors.New("recorded cleanup command identity or bound differs")
+		}
+		if err == nil {
+			command.ProcessStopped = true
+			raw, err = sessionRecordJSON(command)
+		}
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		stopped = append(stopped, stoppedCommand{id: id, raw: raw})
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, command := range stopped {
+		result, err := tx.ExecContext(ctx, `UPDATE session_commands SET command=? WHERE session_id=? AND id=?`,
+			command.raw, next.State.ID, command.id)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil || n != 1 {
+			return errors.New("recorded cleanup command disappeared")
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (one *ownedSession) stateLocked(commandID string) nodewire.SessionState {
 	state := copySessionState(one.record.State)
 	if commandID == "" {
 		commandID = one.record.CurrentCommand
 	}
+	state.PendingTerminalStarts = one.projectedTerminalStartsLocked(commandID)
 	if command, ok := one.record.Commands[commandID]; ok {
 		copy := command
 		copy.Activity = append([]string(nil), command.Activity...)
@@ -123,6 +241,9 @@ func (one *ownedSession) stateForRequest(req nodewire.SessionRequest) (nodewire.
 		return nodewire.SessionState{}, err
 	}
 	state := (&ownedSession{record: record}).stateLocked(req.CommandID)
+	if req.Binding == one.record.State.Binding {
+		state.PendingTerminalStarts = one.projectedTerminalStartsLocked(req.CommandID)
+	}
 	if req.Action == nodewire.SessionActionAttach && state.Command == nil && sessionNameValid(req.CommandID) &&
 		req.InputSequence == 0 && req.Binding == record.State.Binding && one.host != nil &&
 		state.State == nodewire.SessionIdle && record.BindingInputStart == state.InputAccepted {
@@ -183,7 +304,7 @@ func (s *SessionService) loadRecord(store *sessionRecords, id string) (*ownedSes
 	if err != nil {
 		return nil, err
 	}
-	if record.Format != 1 || record.State.ID != id || record.State.Binding.NodeID != s.server.conf().Name || record.Commands == nil || record.CommandHashes == nil {
+	if (record.Format != 1 && record.Format != 2) || record.State.ID != id || record.State.Binding.NodeID != s.server.conf().Name || record.Commands == nil || record.CommandHashes == nil {
 		return nil, sessionError("unavailable", "node session state identity differs")
 	}
 	one := &ownedSession{service: s, record: record, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
@@ -228,7 +349,7 @@ func (s *SessionService) readRecord(id string) (sessionRecord, bool, error) {
 	if err != nil || !exists {
 		return record, exists, err
 	}
-	if record.Format != 1 || record.State.ID != id || record.State.Binding.NodeID != s.server.conf().Name {
+	if (record.Format != 1 && record.Format != 2) || record.State.ID != id || record.State.Binding.NodeID != s.server.conf().Name {
 		return sessionRecord{}, false, sessionError("unavailable", "archived session identity differs")
 	}
 	return record, true, nil

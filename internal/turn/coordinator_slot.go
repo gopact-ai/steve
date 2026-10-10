@@ -100,7 +100,7 @@ func (c *Coordinator) takeTurn(ctx context.Context, conversationID, agentID stri
 		c.mu.Lock()
 		// A skills update rewrites what the agent is about to be told, so it
 		// still blocks: interrupting would not help, the input is not ready.
-		if c.skillsLock > 0 {
+		if c.skillsLock > 0 || c.retiring[conversationID] {
 			c.mu.Unlock()
 			return false
 		}
@@ -145,7 +145,7 @@ func (c *Coordinator) beginTurn(conversationID, agentID string, cancel context.C
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := sessionKey(conversationID, agentID)
-	if c.skillsLock > 0 || c.cancels[key] != nil {
+	if c.skillsLock > 0 || c.retiring[conversationID] || c.cancels[key] != nil {
 		return false
 	}
 	c.cancels[key] = &turnEntry{cancel: cancel, done: make(chan struct{})}
@@ -174,7 +174,7 @@ func (c *Coordinator) turnInFlight(conversationID, agentID string) bool {
 	if _, running := c.active[key]; running {
 		return true
 	}
-	return c.cancels[key] != nil
+	return c.cancels[key] != nil || c.retiring[conversationID]
 }
 
 // pendingCancelWindow is how long an armed cancel stays effective when no

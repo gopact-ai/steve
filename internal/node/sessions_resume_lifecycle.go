@@ -47,7 +47,13 @@ func (s *SessionService) archiveStoppedSession(req nodewire.SessionRequest) erro
 		command.ProcessStopped = true
 		next.Commands[id] = command
 	}
-	if err := errors.Join(one.commitLocked(next), s.endStoppedRuntime(next)); err != nil {
+	var err error
+	if next.Format == 1 {
+		err = errors.Join(one.commitLocked(next), s.endStoppedRuntime(next))
+	} else if err = one.commitLocked(next); err == nil {
+		err = s.endStoppedRuntime(one.record)
+	}
+	if err != nil {
 		return err
 	}
 	delete(s.sessions, id)
@@ -61,8 +67,14 @@ func (one *ownedSession) stateAfterFailedOpen(cause error) (nodewire.SessionStat
 	defer one.mu.Unlock()
 	next := one.copyLocked()
 	next.State.ProcessStopped = one.host.AllProcessesStopped()
-	err := errors.Join(one.commitLocked(next), one.service.endStoppedRuntime(next))
-	return one.stateLocked(""), errors.Join(cause, err)
+	if next.Format == 1 {
+		err := errors.Join(one.commitLocked(next), one.service.endStoppedRuntime(next))
+		return one.stateLocked(""), errors.Join(cause, err)
+	}
+	if err := one.commitLocked(next); err != nil {
+		return one.stateLocked(""), errors.Join(cause, err)
+	}
+	return one.stateLocked(""), errors.Join(cause, one.service.endStoppedRuntime(one.record))
 }
 
 // An explicit durable stop receipt also reconciles plugin accounting if a
@@ -71,6 +83,39 @@ func (one *ownedSession) stateAfterFailedOpen(cause error) (nodewire.SessionStat
 func (s *SessionService) endStoppedRuntime(record sessionRecord) error {
 	if !record.State.ProcessStopped || record.State.Plugin == nil {
 		return nil
+	}
+	if !sessionTerminalsStopped(record) {
+		return sessionError("uncertain", "plugin runtime use has outstanding terminal cleanup")
+	}
+	if err := validateSessionTerminals(record); err != nil {
+		return err
+	}
+	if record.Format == 2 {
+		// Terminal-aware ownership requires a durable aggregate stop, not
+		// just a caller's proposed transport stop. Legacy physical-stop
+		// cleanup remains independent of receipt persistence.
+		durable, exists, err := s.readRecord(record.State.ID)
+		if err != nil {
+			return err
+		}
+		if !exists || durable.Format != 2 || durable.State.Sequence != record.State.Sequence ||
+			!durable.State.ProcessStopped || !sessionTerminalsStopped(durable) ||
+			durable.Process != record.Process || durable.State.Plugin == nil ||
+			durable.State.Plugin.ID != record.State.Plugin.ID {
+			return sessionError("uncertain", "plugin runtime use lacks its original durable aggregate stop")
+		}
+		want, err := record.State.Plugin.Selection.Hash()
+		if err != nil {
+			return err
+		}
+		actual, err := durable.State.Plugin.Selection.Hash()
+		if err != nil {
+			return err
+		}
+		if actual != want {
+			return sessionError("uncertain", "plugin runtime use differs from its original durable selection")
+		}
+		record = durable
 	}
 	err := s.server.pluginStore().EndRuntimeUse(context.Background(), *record.State.Plugin, "session/"+record.State.ID)
 	if os.IsNotExist(err) {

@@ -135,7 +135,7 @@ func (m *Manager) pluginHost(at Placement, ref plugins.RuntimeRef, cfg Config) (
 	if err != nil {
 		return nil, err
 	}
-	hostCfg := acphost.Config{Command: cfg.Command, Args: cfg.Args, Env: cfg.Env, ProcessDir: cfg.ProcessDir, Permission: broker}
+	hostCfg := acphost.Config{WorkspaceFiles: true, Command: cfg.Command, Args: cfg.Args, Env: cfg.Env, ProcessDir: cfg.ProcessDir, Permission: broker}
 	if at.Node != "" {
 		remote, ok := m.remote.(PluginTransports)
 		if !ok {

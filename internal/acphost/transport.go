@@ -20,10 +20,9 @@ import (
 // implementation forks a subprocess, and a remote one opens a stream to the
 // node that forks it there.
 //
-// The whole ACP surface Steve uses is pure messages — it advertises only
-// Elicitation as a client capability, so no method ever asks the client to
-// touch a filesystem — which is why swapping these two pipes is enough to
-// move an agent to another machine.
+// Raw remote transports keep client workspace callbacks disabled: only a
+// client on the actual execution node may serve filesystem/terminal resources.
+// Swapping stdio alone never grants access to the hub's local workspace.
 type Transport interface {
 	// Start launches the agent. The returned Process is running; the caller
 	// owns it until Wait returns.
@@ -167,8 +166,10 @@ type localProcess struct {
 	groupUnsupported atomic.Bool
 	// mu keeps a kill from reaching the group's id once the leader is
 	// reaped: from then on the id can belong to another process's group.
-	mu     sync.Mutex
-	reaped bool
+	mu                sync.Mutex
+	reaped            bool
+	closing           bool
+	terminalProcesses map[terminalRuntime]struct{}
 }
 
 func (p *localProcess) Stdout() io.ReadCloser   { return p.stdout }
@@ -193,15 +194,23 @@ func (p *localProcess) observe() {
 	switch err := p.group.waitExit(pid); {
 	case errors.Is(err, procgroup.ErrUnsupported):
 		p.groupUnsupported.Store(true)
+		p.closeTerminalAdmission()
+		p.stopTerminalChildren()
 		p.err = p.reapRunning()
 		return
 	case err != nil:
 		// Nothing then shows the group is empty, so the stop stays
 		// unconfirmed.
 		slog.Error(fmt.Sprintf("acphost: wait for agent process %d: %v", pid, err))
+		p.closeTerminalAdmission()
+		p.stopTerminalChildren()
 		p.err = p.reapRunning()
 		return
 	}
+	p.mu.Lock()
+	p.closing = true
+	p.mu.Unlock()
+	p.stopTerminalChildren()
 	close(p.exited)
 	p.endGroup(pid)
 	p.mu.Lock()
@@ -298,14 +307,28 @@ func (r *stuckReport) due() (time.Duration, bool) {
 	return now.Sub(r.began).Round(time.Second), true
 }
 
-func (p *localProcess) Stopped() bool { return p.stopped.Load() && !p.groupUnsupported.Load() }
+func (p *localProcess) Stopped() bool {
+	if !p.stopped.Load() || p.groupUnsupported.Load() {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for terminal := range p.terminalProcesses {
+		if !terminal.NativeStopped() {
+			return false
+		}
+	}
+	return true
+}
 
 // Kill signals the whole process group: the agent spawns MCP stdio servers
 // and tools of its own, and killing only the parent orphans them.
 func (p *localProcess) Kill() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.closing = true
 	if !p.reaped {
 		killProcessGroup(p.cmd)
 	}
+	p.mu.Unlock()
+	p.stopTerminalChildren()
 }

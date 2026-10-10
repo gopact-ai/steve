@@ -1,5 +1,6 @@
 import { request } from "../http";
-export interface NodeAgentSelector { id: string; name: string; category?: string; current?: string; choices?: string[]; values?: string[] }
+import type { Selector } from "../types";
+export interface NodeAgentSelector extends Selector {}
 export interface NodeAgentCandidate { id: string; name: string; harness: string; executable?: string; adapter?: string; installed: boolean; requires?: string[]; configured: boolean; registered: boolean; model?: string; models?: string[]; selectors?: NodeAgentSelector[] }
 export interface NodeAgentDiscovery { revision: string; agents: NodeAgentCandidate[] }
 export interface NodeAgentChoice { candidate_id: string; agent_id: string; about?: string; model?: string; options?: Record<string, string>; default?: boolean }

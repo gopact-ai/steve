@@ -129,8 +129,7 @@ type modelsValues struct {
 }
 
 // probeWorkdir is the working directory in which model probes open their
-// throwaway sessions on a hub or node whose state lives in stateDir. Both the
-// background discovery after startup and explicitly requested probes use it.
+// throwaway sessions on a hub or node whose state lives in stateDir. Explicitly requested probes use it; registration alone starts no session.
 func probeWorkdir(stateDir string) string { return filepath.Join(stateDir, "probe") }
 
 func (v *modelsValues) Endpoints() func(ctx context.Context) []models.Endpoint { return v.endpoints }

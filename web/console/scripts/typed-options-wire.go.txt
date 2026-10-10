@@ -1,0 +1,45 @@
+// Test overlay for the real observation, readmodel and HTTP serialization owners.
+package httpapi
+
+import (
+ "context"
+ "encoding/json"
+ "net/http"
+ "net/http/httptest"
+ "os"
+ "testing"
+
+ "github.com/gopact-ai/steve/internal/agent"
+ "github.com/gopact-ai/steve/internal/consoleapi"
+ "github.com/gopact-ai/steve/internal/models"
+ "github.com/gopact-ai/steve/internal/readmodel"
+ "github.com/gopact-ai/steve/internal/roster"
+ "github.com/gopact-ai/steve/internal/view"
+)
+
+type typedOptionsWireAdmin struct { consoleapi.Admin; selectors consoleapi.Selectors }
+func (a typedOptionsWireAdmin) Selectors(context.Context,string,string)(consoleapi.Selectors,error) { return a.selectors,nil }
+func TestTypedOptionsFrontendWireFixture(t *testing.T) {
+ destination := os.Getenv("TYPED_OPTIONS_WIRE")
+ if destination=="" { t.Fatal("TYPED_OPTIONS_WIRE required") }
+ options:=[]view.Option{
+  {ID:"vendor/toggle",Name:"Fast lane",Type:"boolean",Category:"vendor/private",Current:"false"},
+  {ID:"unset-toggle",Name:"Unset toggle",Type:"boolean"},
+  {ID:"opaque",Name:"Opaque choice",Type:"select",Category:"vendor/unknown",Current:"false",Choices:[]view.Choice{{Value:"false",Label:"Literal false ID"},{Value:"__none",Label:"Opaque reserved-looking ID"}}},
+  {ID:"untyped",Name:"Untyped option",Current:"false"},
+  {ID:"future",Name:"Future option",Type:"future",Current:"false"},
+ }
+ book:=models.New()
+ book.Observe(models.Observation{Harness:"fixture",Source:"session",Selectors:models.SelectorsOf(options)})
+ catalog,err:=agent.NewCatalog(map[string]agent.Config{"fixture-agent":{Harness:"fixture",Default:true}})
+ if err!=nil { t.Fatal(err) }
+ fleet:=roster.New(catalog);fleet.SetModels(book)
+ s:=&Server{admin:typedOptionsWireAdmin{selectors:consoleapi.Selectors{Options:options,Preferred:map[string]string{"vendor/toggle":"true"}}},model:readmodel.New(readmodel.Sources{Hub:readmodel.Hub{Node:"fixture-node"},Roster:fleet,Models:book})}
+ capture:=func(handler http.HandlerFunc,path string) json.RawMessage {
+  recorder:=httptest.NewRecorder();handler(recorder,httptest.NewRequest("GET",path,nil))
+  if recorder.Code!=200 { t.Fatalf("%s: %d %s",path,recorder.Code,recorder.Body) }
+  return append(json.RawMessage(nil),recorder.Body.Bytes()...)
+ }
+ raw,err:=json.Marshal(map[string]json.RawMessage{"selectors":capture(s.consoleSelectors,"/console/selectors?conversation=console:fixture&agent=fixture-agent"),"state":capture(s.state,"/state")})
+ if err!=nil { t.Fatal(err) };if err:=os.WriteFile(destination,raw,0600);err!=nil { t.Fatal(err) }
+}

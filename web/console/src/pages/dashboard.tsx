@@ -1,7 +1,7 @@
 import { useAbandonExecution } from "@/hooks/use-abandon-execution";
 import { useForceStop } from "@/hooks/use-force-stop";
 import { useI18n } from "@/providers/locale-provider";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { BookOpen01, Database01, HardDrive, SearchSm, ShieldTick, Users01, Zap } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
@@ -21,7 +21,7 @@ import type { Locale, MessageKey, Translator } from "@/lib/i18n";
 import { PageBody, PageHeader, Panel } from "@/components/steve/page";
 import { RunningExecutions } from "@/components/steve/running-executions";
 import { usePaged } from "@/components/steve/table-paging";
-import { Mono, Nothing, StateBadge, Where, useStateWord } from "@/components/steve/ui";
+import { Mono, Nothing, StateBadge, Where, stateWordIn } from "@/components/steve/ui";
 
 const UsageDashboard = lazy(() => import("./usage-dashboard"));
 
@@ -39,7 +39,7 @@ export function DashboardPage() {
     const snap = useFleet((fleet) => fleet.snap);
     const events = useFleetEvents();
     const nodeLabelOf = useNodeLabel();
-    const stateWord = useStateWord();
+    const stateWord = useCallback((state: string) => stateWordIn(state, tr), [tr]);
     const [params, setParams] = useSearchParams();
     // "usage" was the board tab this page absorbed; its links still open here.
     const asked = params.get("tab") === "usage" ? "overview" : params.get("tab");
@@ -94,12 +94,16 @@ export function DashboardPage() {
     // A row is searched by what it says, so a machine can be found by the
     // name its owner gave it and not only by its node ID.
     const query = filter.trim().toLowerCase();
-    const read = entries.map((e) => ({ entry: e, line: describeHistory(e, tr, nodeLabelOf, stateWord) }));
-    const counts = new Map<HistoryFamily, number>();
-    for (const { entry } of read) counts.set(familyOf(entry), (counts.get(familyOf(entry)) || 0) + 1);
-    const shown = read.filter(({ entry, line }) => (!family || line.family === family)
-        && (!query || `${line.title} ${line.facts.join(" ")} ${line.note || ""} ${entry.subject || ""} ${entry.text} ${entry.actor || ""}`.toLowerCase().includes(query)));
+    const read = useMemo(() => reads ? entries.map((entry, index) => ({ entry, index, line: describeHistory(entry, tr, nodeLabelOf, stateWord) })) : [], [reads, entries, tr, nodeLabelOf, stateWord]);
+    const counts = useMemo(() => {
+        const counts = new Map<HistoryFamily, number>();
+        for (const { entry } of read) counts.set(familyOf(entry), (counts.get(familyOf(entry)) || 0) + 1);
+        return counts;
+    }, [read]);
+    const shown = useMemo(() => read.filter(({ entry, line }) => (!family || line.family === family)
+        && (!query || `${line.title} ${line.facts.join(" ")} ${line.note || ""} ${entry.subject || ""} ${entry.text} ${entry.actor || ""}`.toLowerCase().includes(query))), [read, family, query]);
     const families = historyFamilies.filter((name) => counts.get(name));
+
     const f = snap.facts;
     // The audit lists grow without bound — forty replicas, a machine's
     // worth of observations — so each is read a page at a time.
@@ -137,20 +141,7 @@ export function DashboardPage() {
                         {historyError && <p role="alert" className="mb-2 break-words text-sm text-error-primary">{historyError.message}</p>}
                         <Button size="sm" color="link-gray" isLoading={loading} isDisabled={loading || (!next && !historyError)} onClick={() => void load(historyError?.cursor ?? next, historyError?.replace ?? !next)}>{historyError ? tr("common.retry") : next ? tr("history.loadEarlier") : tr("history.allLoaded")}</Button>
                     </>}>
-                    {shown.length === 0 ? <Nothing icon={BookOpen01} title={filter || family ? tr("history.noMatches") : loading ? tr("history.loading") : tr("history.empty")} /> : (
-                        <ol className="divide-y divide-secondary">
-                            {shown.map(({ entry, line }, i) => {
-                                const day = dateTime(entry.at, locale, { year: "numeric", month: "2-digit", day: "2-digit" });
-                                const fresh = i === 0 || dateTime(shown[i - 1].entry.at, locale, { year: "numeric", month: "2-digit", day: "2-digit" }) !== day;
-                                return (
-                                    <li key={`${entry.seq}-${entry.at}-${i}`}>
-                                        {fresh && <p className="bg-secondary_subtle px-4 py-1 u-meta text-quaternary">{day}</p>}
-                                        <TimelineRow at={entry.at} raw={entry.text} line={line} locale={locale} tr={tr} />
-                                    </li>
-                                );
-                            })}
-                        </ol>
-                    )}
+                    {shown.length === 0 ? <Nothing icon={BookOpen01} title={filter || family ? tr("history.noMatches") : loading ? tr("history.loading") : tr("history.empty")} /> : <HistoryTimeline rows={shown} locale={locale} tr={tr} />}
                 </Panel>
             )}
             {tab === "audit" && (
@@ -252,6 +243,29 @@ const familyWords = {
     ledger: "history.familyLedger",
     other: "history.familyOther",
 } as const satisfies Record<HistoryFamily, MessageKey>;
+
+
+type HistoryRecord = { entry: HistoryEntry; index: number; line: HistoryLine };
+
+// A new search can select the same records. Preserve the timeline in that
+// case rather than formatting and reconciling every retained row again.
+const HistoryTimeline = memo(function HistoryTimeline({ rows, locale, tr }: { rows: HistoryRecord[]; locale: Locale; tr: Translator }) {
+    return (
+        <ol className="divide-y divide-secondary">
+            {rows.map(({ entry, index, line }, i) => {
+                const day = dateTime(entry.at, locale, { year: "numeric", month: "2-digit", day: "2-digit" });
+                const fresh = i === 0 || dateTime(rows[i - 1].entry.at, locale, { year: "numeric", month: "2-digit", day: "2-digit" }) !== day;
+                return (
+                    <li key={`${entry.seq ?? "observation"}-${entry.at}-${index}`}>
+                        {fresh && <p className="bg-secondary_subtle px-4 py-1 u-meta text-quaternary">{day}</p>}
+                        <TimelineRow at={entry.at} raw={entry.text} line={line} locale={locale} tr={tr} />
+                    </li>
+                );
+            })}
+        </ol>
+    );
+}, (before, after) => before.locale === after.locale && before.tr === after.tr
+    && before.rows.length === after.rows.length && before.rows.every((row, index) => row === after.rows[index]));
 
 const toneColor: Record<HistoryTone, BadgeColors> = { good: "success", bad: "error", warn: "warning", info: "blue", quiet: "gray" };
 

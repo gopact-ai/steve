@@ -17,6 +17,7 @@ func (one *ownedSession) copyLocked() sessionRecord {
 	next.State = copySessionState(next.State)
 	next.CommandHashes = maps.Clone(next.CommandHashes)
 	next.Commands = maps.Clone(next.Commands)
+	next.Terminals = maps.Clone(next.Terminals)
 	for id, command := range next.Commands {
 		command.Activity = slices.Clone(command.Activity)
 		next.Commands[id] = command
@@ -26,6 +27,7 @@ func (one *ownedSession) copyLocked() sessionRecord {
 
 // A poll owns its state and selected command, not the session's receipt journal.
 func copySessionState(state nodewire.SessionState) nodewire.SessionState {
+	state.PendingTerminalStarts = slices.Clone(state.PendingTerminalStarts)
 	state.NativeImport = state.NativeImport.Clone()
 	state.Plugin = state.Plugin.Clone()
 	if state.OpenReceipt != nil {

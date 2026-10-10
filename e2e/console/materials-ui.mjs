@@ -75,6 +75,24 @@ await page.route("**/*",async route=>{
 });
 await page.addInitScript((conversation)=>{sessionStorage.setItem('steve.conversation',conversation);if(!localStorage.getItem('steve.ui.locale'))localStorage.setItem('steve.ui.locale','en');window.sources=[];window.EventSource=class{addEventListener(){}constructor(){window.sources.push(this);setTimeout(()=>this.onopen?.(),0)}close(){window.sources=window.sources.filter(s=>s!==this)}};window.emit=(e)=>window.sources.forEach(s=>s.onmessage?.({data:JSON.stringify(e)}));},A);
 async function waitFor(test,label){for(let i=0;i<100;i++){if(await test())return;await new Promise(r=>setTimeout(r,30));}assert.fail(label);}
+async function draftAttachmentPresentation() {
+ await page.evaluate(A=>{for(const kind of ['submission','materials','text'])localStorage.removeItem('steve.console.draft.'+kind+':'+A);localStorage.setItem('steve.ui.locale','en');},A);
+ await page.reload();const message=page.getByRole('textbox',{name:'Message',exact:true});await message.waitFor();await message.fill('Body stays a draft');
+ const uploads=f.uploads.length,posts=f.posts.length;
+ await page.getByLabel('Attach files',{exact:true}).setInputFiles([{name:'draft-preview.png',mimeType:'image/png',buffer:png},{name:'draft-file.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF test')}]);
+ const list=page.getByRole('list',{name:'Attached materials',exact:true});await list.getByText('draft-file.pdf',{exact:true}).waitFor();
+ const image=list.getByRole('img',{name:'draft-preview.png',exact:true});await image.waitFor();await image.evaluate(image=>image.decode());
+ assert.equal(await image.evaluate(image=>image.complete&&image.naturalWidth===1),true,'draft renders the decoded image rather than just a filename');
+ const file=list.getByRole('button',{name:'Open draft-file.pdf',exact:true});await file.waitFor();assert.match(await file.innerText(),/Attachment/);assert.match(await file.innerText(),/9 B/);
+ assert.equal(await draftOf(message),'Body stays a draft');assert.equal(f.posts.length,posts);assert.equal(f.uploads.length,uploads+2);
+ await file.press('Enter');const dialog=page.getByRole('dialog',{name:'Preview',exact:true});await dialog.getByRole('heading',{name:'draft-file.pdf',exact:true}).waitFor();await dialog.getByRole('button',{name:'Close',exact:true}).click();await dialog.waitFor({state:'hidden'});
+ await page.setViewportSize({width:390,height:844});await image.waitFor();assert.ok(await list.evaluate(list=>list.getBoundingClientRect().right<=window.innerWidth),'draft cards fit the narrow composer');
+ await list.getByRole('button',{name:'Remove draft-preview.png',exact:true}).click();await image.waitFor({state:'hidden'});assert.equal(await draftOf(message),'Body stays a draft');assert.equal(f.posts.length,posts);
+ await list.getByRole('button',{name:'Remove draft-file.pdf',exact:true}).click();await list.waitFor({state:'hidden'});
+ await page.setViewportSize({width:1600,height:1000});f.materials=new Map(initialMaterials);f.uploads=[];
+ console.log('PASS uploaded draft shows decoded image and typed/size file card, keyboard preview, narrow layout and independent removal without submission');
+}
+
 async function fileDropRegressions() {
  // DOM DragEvents cover the browser input contract. Native Finder gestures
  // and real backend byte receipts are separate acceptance evidence.
@@ -413,6 +431,7 @@ async function uploadErrorRegressions() {
 }
 try{
  await page.goto(url+'#/console');await page.getByRole('heading',{name:'Material conversation',exact:true}).waitFor();await page.getByRole('button',{name:'Actions',exact:true}).waitFor();
+ await draftAttachmentPresentation();
  await fileDropRegressions();
  await uploadErrorRegressions();
  if(!process.env.MATERIAL_UPLOAD_ERRORS_ONLY){

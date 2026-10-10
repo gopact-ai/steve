@@ -41,6 +41,29 @@ func NewLocalObservation(launch *node.LaunchProbe) *LocalObservation {
 	return o
 }
 
+// RunLaunchProbe observes explicitly configured host tools, never a configured
+// agent command. The caller owns this worker's context and shutdown join.
+func (o *LocalObservation) RunLaunchProbe(ctx context.Context, store *ConfigStore) {
+	if o == nil || o.Launch == nil {
+		return
+	}
+	var planned uint64
+	o.Launch.Run(ctx, func() []string {
+		snapshot, epoch := store.launchSnapshot()
+		planned = epoch
+		if snapshot == nil {
+			return nil
+		}
+		agents := make([]string, 0, len(snapshot.Harnesses))
+		for _, h := range snapshot.Harnesses {
+			agents = append(agents, h.Command)
+		}
+		return node.BackgroundToolCommands(snapshot.Gateway.Tools, agents)
+	}, func(_ string, start func() error) (bool, error) {
+		return store.admitLaunch(planned, start)
+	})
+}
+
 // number is the generation and next sequence of a snapshot.
 func (o *LocalObservation) number() (generation, sequence int64) {
 	o.generation.CompareAndSwap(0, time.Now().Unix())
@@ -188,22 +211,7 @@ func (c *RepoCache) pass(ctx context.Context) {
 
 // selectorsOf keeps every selector a session exposed, choices by label
 // and by value, so the page can offer them and a pin can be matched.
-func SelectorsOf(options []steveview.Option) []models.Selector {
-	var out []models.Selector
-	for _, o := range options {
-		sel := models.Selector{ID: o.ID, Name: o.Name, Category: o.Category, Current: o.Current}
-		for _, c := range o.Choices {
-			label := c.Label
-			if label == "" {
-				label = c.Value
-			}
-			sel.Choices = append(sel.Choices, label)
-			sel.Values = append(sel.Values, c.Value)
-		}
-		out = append(out, sel)
-	}
-	return out
-}
+func SelectorsOf(options []steveview.Option) []models.Selector { return models.SelectorsOf(options) }
 
 // skillShipper keeps every node's harness homes holding the same skills
 // the hub enabled. The bundle is packed from the live map each time it is

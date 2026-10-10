@@ -93,7 +93,10 @@ func (a *Service) UpdateAgent(ctx context.Context, id string, spec consoleapi.Ag
 }
 
 func (a *Service) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) error {
-	if a.ClusterMode {
+	if err := validateAgentPermissionConfirmation(req); err != nil {
+		return err
+	}
+	if a.ClusterMode || req.ExpectedPermission != nil {
 		req.Node = a.nodeKey(req.Node)
 	}
 	id := strings.ToLower(strings.TrimSpace(req.ID))
@@ -113,6 +116,9 @@ func (a *Service) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) 
 			if err := checkAgentNodeTarget(textFor(ctx), c, req.Node, target); err != nil {
 				return err
 			}
+		}
+		if err := a.confirmAgentPermission(c, req); err != nil {
+			return err
 		}
 		if _, exists := agents[id]; exists {
 			return textFor(ctx).Errorf(i18n.AdminAgentExists, id)

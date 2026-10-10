@@ -2,9 +2,10 @@ import { Button } from "@/components/base/buttons/button";
 import { Select } from "@/components/base/select/select";
 import { DrawerSection } from "@/components/steve/drawer";
 import type { Agent, Selector } from "@/lib/types";
+import { ownPreference, withOptionPreference } from "@/lib/session-options";
 import { useI18n } from "@/providers/locale-provider";
 
-export const isApprovalSelector = (selector: Selector) => selector.category === "mode" || selector.id === "mode";
+export const isApprovalSelector = (selector: Selector) => selector.type === "select" && (selector.category === "mode" || !selector.category && selector.id === "mode");
 const approvalNames = { ask: "fleet.approval.ask", auto: "fleet.approval.auto", full: "fleet.approval.full" } as const;
 
 // Use the tool's actual selector, just as the runtime does. An unobserved
@@ -21,8 +22,8 @@ export function AgentApproval({ agent, options, editing, contextChanged, disable
     const { t } = useI18n();
     const selector = agent.selectors?.find(isApprovalSelector);
     const id = selector?.id || "mode";
-    const pinned = (editing ? options : agent.options)?.[id];
-    const key = agent.approval && approvalNames[agent.approval as keyof typeof approvalNames];
+    const pinned = ownPreference(editing ? options : agent.options, id);
+    const key = agent.approval && Object.hasOwn(approvalNames, agent.approval) ? approvalNames[agent.approval as keyof typeof approvalNames] : undefined;
     const inherited = key ? t(key) : t("fleet.approvalToolDefault");
     const choices = (selector?.values || selector?.choices || []).map((value, index) => ({
         id: value, label: selector?.choices?.[index] || value,
@@ -43,9 +44,7 @@ export function AgentApproval({ agent, options, editing, contextChanged, disable
                 isDisabled={disabled || contextChanged || choices.length === 0}
                 onSelectionChange={value => {
                     if (value == null) return;
-                    const next = { ...options };
-                    if (value === "__none") delete next[id]; else next[id] = String(value);
-                    onChange(next);
+                    onChange(withOptionPreference(options, id, value === "__none" ? undefined : String(value)));
                 }}>
                 {item => <Select.Item id={item.id}>{item.label}</Select.Item>}
             </Select> : <p className="text-sm text-secondary [overflow-wrap:anywhere]">

@@ -89,3 +89,53 @@ func TestTheTurnRecordReportsTheSessionsOwnSelectors(t *testing.T) {
 		t.Fatalf("an agent without selectors lost its configuration: %q %v", plain, fallback)
 	}
 }
+
+func TestBooleanRecoveryPreferencesKeepFalseDistinctFromUnset(t *testing.T) {
+	for _, tc := range []struct {
+		name, actual, want       string
+		ignore, refused, success bool
+	}{
+		{"false", "true", "false", false, false, true},
+		{"true", "false", "true", false, false, true},
+		{"confirmed false", "false", "false", false, false, true},
+		{"unreported is not false", "", "false", true, false, false},
+		{"corrected actual", "true", "false", true, false, false},
+		{"invalid bool", "false", "0", false, false, false},
+		{"RPC refused", "true", "false", false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &recoveryConfigurable{fakeRunner: &fakeRunner{}, settings: view.Settings{Options: []view.Option{{ID: "vendor-toggle", Type: "boolean", Category: "vendor/private", Current: tc.actual}}}, ignore: tc.ignore, refused: tc.refused}
+			prefs := &attempt.SessionPreferences{Options: map[string]string{"vendor-toggle": tc.want}}
+			err := applyRecoveryPreferences(t.Context(), i18n.New(i18n.LocaleZH), r, prefs)
+			if (err == nil) != tc.success {
+				t.Fatalf("recovery = %v; success=%v", err, tc.success)
+			}
+			if tc.success && sessionPreferences(r).Options["vendor-toggle"] != tc.want {
+				t.Fatal("frozen false was omitted")
+			}
+			if len(r.seen()) != 0 {
+				t.Fatal("preference recovery sent a business prompt")
+			}
+		})
+	}
+}
+
+func TestLivePreferenceResultMeansConfirmedActualNotAcceptedRequest(t *testing.T) {
+	c, rt, _ := selectorCoordinator(t, true)
+	r := rt.runner.(*recoveryConfigurable)
+	r.settings.Options = []view.Option{{ID: "vendor-toggle", Type: "boolean", Current: "true"}}
+	c.beginTurn("chat", "grok", func() {})
+	defer c.clearActive("chat", "grok")
+	c.setRunner("chat", "grok", r)
+	r.ignore = true
+	if c.applyLive(t.Context(), "chat", "grok", map[string]string{"vendor-toggle": "false"}) {
+		t.Fatal("ignored false was reported as applied")
+	}
+	r.ignore = false
+	if !c.applyLive(t.Context(), "chat", "grok", map[string]string{"vendor-toggle": "false"}) {
+		t.Fatal("confirmed false was not applied")
+	}
+	if sessionPreferences(r).Options["vendor-toggle"] != "false" {
+		t.Fatal("confirmed false was omitted")
+	}
+}

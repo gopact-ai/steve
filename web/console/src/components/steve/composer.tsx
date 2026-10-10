@@ -2,14 +2,16 @@ import { Button } from "@/components/base/buttons/button";
 import { IconButton } from "@/components/steve/icon-button";
 import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
-import { memo, useState, type RefObject } from "react";
+import { lazy, memo, useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { ArrowUp, ChevronDown, CornerDownRight, DotsHorizontal, Edit05, Folder, MessageChatSquare, Plus, Square, Trash01 } from "@untitledui/icons";
-import { Button as AriaButton } from "react-aria-components";
+import { Button as AriaButton, Dialog, DialogTrigger, Popover } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import type { ConversationContext, Exchange, Project, QuoteRef, Selectors, Suggestion, Verb } from "@/lib/types";
 import { plain } from "@/lib/plain";
 import { MarkdownInput, type DraftBox } from "@/components/steve/markdown-input";
 import { useNodeLabel } from "@/lib/node-name";
+import { LazyRegion } from "@/components/steve/lazy-region";
+import { ownPreference, sessionOption, sessionOptionRole } from "@/lib/session-options";
 
 // Composer is the console's input, in the proportions of a chat app's:
 // a textarea that grows, a row of small round controls under it — the
@@ -22,8 +24,8 @@ export type Queued = Exchange;
 export interface ComposerProps {
     // Selectors are fetched when either preference chip opens — that may open a
     // session — and a choice is a preference for this thread's agent.
-    onSelectors?: () => Promise<Selectors>;
-    onPrefer?: (patch: Record<string, string>) => Promise<void>;
+    onSelectors?: (scope?: string) => Promise<Selectors>;
+    onPrefer?: (patch: Record<string, string>, scope?: string) => Promise<void>;
     preferenceKey?: string;
     quotes?: QuoteRef[];
     onDropQuote?: (q: QuoteRef) => void;
@@ -68,11 +70,17 @@ export interface ComposerProps {
 }
 
 const chip = "composer-chip";
+const SessionOptionControl = lazy(() => import("@/components/steve/session-option").then(module => ({ default: module.SessionOptionControl })));
 
 export const Composer = memo(function Composer(p: ComposerProps) {
     const { t } = useI18n();
     const nodeLabelOf = useNodeLabel();
     const inputDisabled = !!p.disabled || (p.busy && p.queueing === false);
+    const preferenceScope = p.preferenceKey || p.agent?.id || "";
+    const [preferenceError, setPreferenceError] = useState({ scope: "", message: "" });
+    const reportPreferenceError = useCallback((message: string) => {
+        setPreferenceError({ scope: preferenceScope, message });
+    }, [preferenceScope]);
     return (
         <div className="composer" onDragOver={(event) => {
             if (!p.onDropFiles || !Array.from(event.dataTransfer.types).includes("Files")) return;
@@ -114,6 +122,11 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                     <span className="min-w-0 flex-1 text-secondary">{p.rewind.following > 0 ? t("console.rewindNotice", { count: number(p.rewind.following) }) : t("console.rewindNoticeLast")}</span>
                     <button type="button" onClick={p.onCancelRewind} className="shrink-0 rounded-md px-1.5 py-0.5 text-tertiary hover:bg-primary hover:text-primary">{t("console.rewindCancel")}</button>
                 </div>
+            )}
+            {/* Keep errors outside the control row: clearing an error while
+                opening a menu must not move its trigger under the pointer. */}
+            {preferenceError.scope === preferenceScope && preferenceError.message && (
+                <div role="alert" className="mb-1 break-words text-xs text-error-primary">{preferenceError.message}</div>
             )}
             <div className="composer-input">
                 {p.quotes && p.quotes.length > 0 && (
@@ -192,7 +205,7 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                         </Dropdown.Popover>
                     </Dropdown.Root>
                     </div><div className="composer-run">
-                    {p.agent && p.onSelectors && <PreferenceChips key={p.preferenceKey || p.agent.id} agent={p.agent} load={p.onSelectors} onPrefer={p.onPrefer} />}
+                    {p.agent && p.onSelectors && <PreferenceChips key={p.preferenceKey || p.agent.id} scope={p.preferenceKey || p.agent.id} agent={p.agent} load={p.onSelectors} onPrefer={p.onPrefer} onError={reportPreferenceError} />}
                     <button type="button" onClick={p.onToggleQueueing} aria-pressed={p.queueing !== false} className={`${chip} shrink-0 whitespace-nowrap text-quaternary`} title={p.queueing === false ? t("consoleChrome.enableQueue") : t("consoleChrome.disableQueue")}>
                         <CornerDownRight className="size-3.5" aria-hidden="true" /><span>{p.queueing === false ? t("consoleChrome.noQueue") : t("consoleChrome.queue")}</span>
                     </button>
@@ -274,41 +287,83 @@ function QueuedLine({ q, p }: { q: Queued; p: ComposerProps }) {
     );
 }
 
-// PreferenceChips are the model and, when the harness offers them, the
-// approval mode and reasoning level of the current agent in this thread.
-// The choices come from the harness itself when a chip opens; picking one
-// is remembered for this thread and takes effect from the next turn, in a
-// fresh session.
-function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<ConversationContext["agent"]>; load: () => Promise<Selectors>; onPrefer?: (patch: Record<string, string>) => Promise<void> }) {
+// PreferenceChips expose the Agent's typed options. Choices are requests for
+// this thread, not evidence of the settings a running session has accepted.
+function PreferenceChips({ agent, scope, load, onPrefer, onError }: { agent: NonNullable<ConversationContext["agent"]>; scope: string; load: (scope?: string) => Promise<Selectors>; onPrefer?: (patch: Record<string, string>, scope?: string) => Promise<void>; onError: (error: string) => void }) {
     const { t } = useI18n();
     const [sel, setSel] = useState<Selectors | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
-    const open = () => { if (busy) return; setError(""); if (sel) return; setBusy(true); load().then(setSel).catch((e) => setError(String(e).replace(/^Error: /, ""))).finally(() => setBusy(false)); };
-    const prefer = async (patch: Record<string, string>) => {
-        if (busy || !onPrefer) return;
-        setBusy(true); setError("");
-        try { await onPrefer(patch); setSel(null); setSel(await load()); }
-        catch (e) { setError(String(e).replace(/^Error: /, "")); }
-        finally { setBusy(false); }
+    useEffect(() => { onError(error); }, [error, onError]);
+    const [accepted, setAccepted] = useState<Record<string, string>>({});
+    const [optionsOpen, setOptionsOpen] = useState(false);
+    const changing = useRef(false);
+    const mounted = useRef(true);
+    useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+    const publish = (value: Selectors) => { setSel(value); setAccepted({}); };
+    const open = (refresh = false) => {
+        if (busy || changing.current) return;
+        setError(""); if (sel && !refresh) return; setBusy(true);
+        load(scope).then(value => { if (mounted.current) publish(value); })
+            .catch(e => { if (mounted.current) setError(String(e).replace(/^Error: /, "")); })
+            .finally(() => { if (mounted.current) setBusy(false); });
     };
-    const reasoning = sel?.options?.find((o) => /reason|effort|think/i.test(o.ID + " " + (o.Category || "") + " " + o.Name));
+    const prefer = async (patch: Record<string, string>) => {
+        if (busy || changing.current || !onPrefer) return;
+        changing.current = true;
+        setBusy(true); setError("");
+        try {
+            await onPrefer(patch, scope);
+            if (!mounted.current) return;
+            setAccepted(previous => ({ ...previous, ...patch }));
+            const value = await load(scope);
+            if (mounted.current) publish(value);
+        }
+        catch (e) { if (mounted.current) setError(String(e).replace(/^Error: /, "")); }
+        finally { changing.current = false; if (mounted.current) setBusy(false); }
+    };
+    const requested = (id: string) => {
+        const acknowledgement = ownPreference(accepted, id);
+        return acknowledgement !== undefined && acknowledgement !== "" ? acknowledgement : ownPreference(sel?.preferred, id);
+    };
+    const preferenceLabel = (id: string) => ownPreference(accepted, id) === "" ? t("consoleChrome.optionResetPending") : requested(id);
+    const reasoning = sel?.options?.find(option => sessionOptionRole(option) === "reasoning");
     // ACP reserves the "mode" category for the agent's approval behaviour
     // (ask, approve for me, full access); the category is advisory, so the
     // conventional id counts too.
-    const approval = sel?.options?.find((o) => o.Category === "mode" || o.ID === "mode");
-    const modelLabel = sel?.preferred?.model || sel?.model || agent.model || t("consoleChrome.model");
+    const approval = sel?.options?.find(option => sessionOptionRole(option) === "approval");
+    const modelLabel = ownPreference(accepted, "model") === "" ? t("consoleChrome.optionResetPending") : requested("model") || sel?.model || agent.model || t("consoleChrome.model");
     const models = sel?.models ?? [];
     const choices = reasoning?.Choices ?? [];
-    const effort = reasoning ? sel?.preferred?.[reasoning.ID] || reasoning.Current : undefined;
-    const effortLabel = choices.find((c) => c.Value === effort)?.Label || effort;
+    const effort = reasoning ? requested(reasoning.ID) || reasoning.Current : undefined;
+    const effortLabel = reasoning && ownPreference(accepted, reasoning.ID) === "" ? t("consoleChrome.optionResetPending") : choices.find((c) => c.Value === effort)?.Label || effort;
     const reasoningLabel = t("consoleChrome.reasoningEffort");
     const approvalChoices = approval?.Choices ?? [];
-    const approvalMode = approval ? sel?.preferred?.[approval.ID] || approval.Current : undefined;
-    const approvalModeLabel = approvalChoices.find((c) => c.Value === approvalMode)?.Label || approvalMode;
+    const approvalMode = approval ? requested(approval.ID) || approval.Current : undefined;
+    const approvalModeLabel = approval && ownPreference(accepted, approval.ID) === "" ? t("consoleChrome.optionResetPending") : approvalChoices.find((c) => c.Value === approvalMode)?.Label || approvalMode;
     const approvalLabel = t("consoleChrome.approvalMode");
+    const options = (sel?.options || []).filter(option => sessionOptionRole(option) !== "model" && option.ID !== approval?.ID && option.ID !== reasoning?.ID);
     return (
         <>
+            <DialogTrigger isOpen={optionsOpen} onOpenChange={isOpen => { setOptionsOpen(isOpen); if (isOpen) open(); }}>
+                <AriaButton aria-label={t("consoleChrome.sessionOptions")} data-preference-scope={scope} className={`${chip} text-quaternary`}>
+                    {t("consoleChrome.sessionOptions")}<ChevronDown className="size-3" />
+                </AriaButton>
+                <Popover placement="top start" className="z-[100] w-80 max-w-[calc(100vw-24px)] rounded-lg bg-primary shadow-lg ring-1 ring-secondary">
+                    <Dialog aria-label={t("consoleChrome.sessionOptions")} className="max-h-[min(560px,70dvh)] space-y-4 overflow-y-auto overscroll-contain p-3 outline-hidden" aria-busy={busy}>
+                        <h3 className="text-sm font-semibold text-primary">{t("consoleChrome.sessionOptions")}</h3>
+                        <p className="text-xs text-tertiary">{t("consoleChrome.optionPreferenceHint")}</p>
+                        {!sel ? <p role="status" className="text-xs text-tertiary">{t("consoleChrome.loadingChoices")}</p> : options.length > 0 && <LazyRegion resetKey={scope} onClose={() => setOptionsOpen(false)}>
+                            {options.map(raw => <SessionOptionControl key={raw.ID}
+                                option={sessionOption(raw)} requested={requested(raw.ID)} acceptedRequest={ownPreference(accepted, raw.ID)} disabled={busy || !onPrefer}
+                                onChange={value => void prefer({ [raw.ID]: value ?? "" })} />)}
+                        </LazyRegion>}
+                        {sel && options.length === 0 && <p className="text-xs text-tertiary">{t("consoleChrome.noSessionOptions")}</p>}
+                        <Button size="sm" color="link-gray" isDisabled={busy} onClick={() => open(true)}>{t("consoleChrome.optionReload")}</Button>
+                        {error && <p role="alert" className="break-words text-xs text-error-primary">{error}</p>}
+                    </Dialog>
+                </Popover>
+            </DialogTrigger>
             <Dropdown.Root onOpenChange={(isOpen) => { if (isOpen) open(); }}>
                 <AriaButton isDisabled={busy} aria-label={t("consoleChrome.model")} className={`${chip} text-quaternary`}>
                     <span className="max-w-40 truncate">{modelLabel}</span>
@@ -318,7 +373,7 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
                     {error && !sel ? <div className="px-3 py-2 text-xs text-error-primary">{error}</div> : !sel ? <div className="px-3 py-2 text-xs text-quaternary">{t("consoleChrome.loadingChoices")}</div> : (
                         <Dropdown.Menu onAction={(k) => void prefer({ model: String(k) })}>
                             <Dropdown.Section>
-                                <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">{t("consoleChrome.currentModel", { model: sel.model || t("common.unknown") })}{sel.preferred?.model ? ` · ${t("consoleChrome.preferred", { model: sel.preferred.model })}` : ""}</Dropdown.SectionHeader>
+                                <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">{t("consoleChrome.currentModel", { model: sel.model || t("common.unknown") })}{preferenceLabel("model") ? ` · ${t("consoleChrome.preferred", { model: preferenceLabel("model")! })}` : ""}{ownPreference(accepted, "model") !== undefined ? ` · ${t("consoleChrome.optionReadbackPending")}` : ""}</Dropdown.SectionHeader>
                                 {models.length === 0 && <Dropdown.Item id="__none" label={t("consoleChrome.noModelSelector")} isDisabled />}
                                 {models.map((c) => <Dropdown.Item key={c.Value} id={c.Value} label={c.Detail ? `${c.Label || c.Value} · ${c.Detail}` : (c.Label || c.Value)} />)}
                             </Dropdown.Section>
@@ -326,7 +381,6 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
                     )}
                 </Dropdown.Popover>
             </Dropdown.Root>
-            {error && <span role="alert" className="text-xs text-error-primary">{error}</span>}
             <Dropdown.Root onOpenChange={(isOpen) => { if (isOpen) open(); }}>
                 <AriaButton isDisabled={busy} aria-label={approvalLabel} className={`${chip} text-quaternary`}>
                     <span className="max-w-40 truncate">{approvalModeLabel ? `${approvalLabel} · ${approvalModeLabel}` : approvalLabel}</span>
@@ -336,7 +390,7 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
                     {error && !sel ? <div className="px-3 py-2 text-xs text-error-primary">{error}</div> : !sel ? <div className="px-3 py-2 text-xs text-quaternary">{t("consoleChrome.loadingChoices")}</div> : (
                         <Dropdown.Menu onAction={(k) => { if (approval) void prefer({ [approval.ID]: String(k) }); }}>
                             <Dropdown.Section>
-                                <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">{t("consoleChrome.currentOption", { name: approvalLabel, value: approvalModeLabel || t("common.unknown") })}</Dropdown.SectionHeader>
+                                <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">{t("consoleChrome.currentOption", { name: approvalLabel, value: approvalChoices.find(c => c.Value === approval?.Current)?.Label || approval?.Current || t("common.unknown") })}{approval && preferenceLabel(approval.ID) ? ` · ${t("consoleChrome.preferred", { model: approvalModeLabel || "" })}` : ""}{approval && ownPreference(accepted, approval.ID) !== undefined ? ` · ${t("consoleChrome.optionReadbackPending")}` : ""}</Dropdown.SectionHeader>
                                 {approvalChoices.length === 0 && <Dropdown.Item id="__none" label={t("consoleChrome.noApprovalSelector")} isDisabled />}
                                 {approvalChoices.map((c) => <Dropdown.Item key={c.Value} id={c.Value} label={c.Detail ? `${c.Label || c.Value} · ${c.Detail}` : (c.Label || c.Value)} />)}
                             </Dropdown.Section>
@@ -353,7 +407,7 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
                     {error && !sel ? <div className="px-3 py-2 text-xs text-error-primary">{error}</div> : !sel ? <div className="px-3 py-2 text-xs text-quaternary">{t("consoleChrome.loadingChoices")}</div> : (
                         <Dropdown.Menu onAction={(k) => { if (reasoning) void prefer({ [reasoning.ID]: String(k) }); }}>
                             <Dropdown.Section>
-                                <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">{t("consoleChrome.currentOption", { name: reasoningLabel, value: effortLabel || t("common.unknown") })}</Dropdown.SectionHeader>
+                                <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">{t("consoleChrome.currentOption", { name: reasoningLabel, value: choices.find(c => c.Value === reasoning?.Current)?.Label || reasoning?.Current || t("common.unknown") })}{reasoning && preferenceLabel(reasoning.ID) ? ` · ${t("consoleChrome.preferred", { model: effortLabel || "" })}` : ""}{reasoning && ownPreference(accepted, reasoning.ID) !== undefined ? ` · ${t("consoleChrome.optionReadbackPending")}` : ""}</Dropdown.SectionHeader>
                                 {choices.length === 0 && <Dropdown.Item id="__none" label={t("consoleChrome.noReasoningSelector")} isDisabled />}
                                 {choices.map((c) => <Dropdown.Item key={c.Value} id={c.Value} label={c.Detail ? `${c.Label || c.Value} · ${c.Detail}` : (c.Label || c.Value)} />)}
                             </Dropdown.Section>

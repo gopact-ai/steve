@@ -21,11 +21,11 @@ const idleTaskAge = 24 * time.Hour
 // sweepIdleTasks closes chat tasks that have gone quiet, at start and
 // then hourly, and puts each closing in the history. book is the ledger
 // tasks are kept in.
-func sweepIdleTasks(ctx context.Context, book *ledger.Ledger, tasks *task.Store, attempts *attempt.Service, view *readmodel.Model) {
+func sweepIdleTasks(ctx context.Context, book *ledger.Ledger, tasks *task.Store, attempts *attempt.Service, view *readmodel.Model, reserve func(context.Context, string) (func(), error)) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	for {
-		closeIdleTasks(ctx, book, tasks, attempts, view, idleTaskAge)
+		closeIdleTasks(ctx, book, tasks, attempts, view, idleTaskAge, reserve)
 		select {
 		case <-ctx.Done():
 			return
@@ -35,8 +35,27 @@ func sweepIdleTasks(ctx context.Context, book *ledger.Ledger, tasks *task.Store,
 }
 
 // closeIdleTasks is one pass of the sweep.
-func closeIdleTasks(ctx context.Context, book *ledger.Ledger, tasks *task.Store, attempts *attempt.Service, view *readmodel.Model, age time.Duration) {
+func closeIdleTasks(ctx context.Context, book *ledger.Ledger, tasks *task.Store, attempts *attempt.Service, view *readmodel.Model, age time.Duration, reserve func(context.Context, string) (func(), error)) {
+	held := map[string]func(){}
+	defer func() {
+		for _, release := range held {
+			release()
+		}
+	}()
 	live := func(id string) (bool, error) {
+		if reserve != nil {
+			tracked, exists := tasks.Get(id)
+			if !exists {
+				return true, nil
+			}
+			if _, exists := held[tracked.Channel]; !exists {
+				release, err := reserve(ctx, tracked.Channel)
+				if err != nil {
+					return true, nil
+				}
+				held[tracked.Channel] = release
+			}
+		}
 		_, ok, err := attempts.LiveAttemptOf(ctx, id)
 		return ok, err
 	}

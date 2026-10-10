@@ -30,6 +30,7 @@ type Image struct {
 }
 
 var ErrResumeUnsupported = errors.New("agent does not support session resume")
+var ErrLoadUnsupported = errors.New("agent does not support session history replay")
 var ErrSessionBusy = errors.New("session already has a running turn")
 var ErrClosed = errors.New("host is closed")
 var ErrListUnsupported = errors.New("agent does not support session listing")
@@ -47,7 +48,7 @@ var ErrStopUnconfirmed = errors.New("agent stop was not confirmed")
 // PromptSettled recognizes an explicit ACP response (including an error
 // response), not transport EOF or a local cancellation of the pending RPC.
 func PromptSettled(err error) bool {
-	if errors.Is(err, ErrStopUnconfirmed) {
+	if errors.Is(err, ErrStopUnconfirmed) || errors.Is(err, ErrSessionOperationUnconfirmed) {
 		return false
 	}
 	if err == nil || errors.Is(err, ErrTurnCanceled) {
@@ -90,6 +91,12 @@ type Config struct {
 	ProcessDir string
 	Env        []string
 	Permission *permission.Broker
+	// WorkspaceFiles enables callbacks on this hosts own authorized workspace.
+	// Remote raw transports must leave this false.
+	WorkspaceFiles bool
+	// TerminalOwner is supplied only by an original, durably owned execution.
+	// A raw remote transport or unnegotiated parent must leave this nil.
+	TerminalOwner TerminalOwner
 	// Started learns the identity of each local agent process group; see
 	// LocalTransport.Started.
 	Started func(procgroup.Identity)
@@ -101,6 +108,10 @@ type Config struct {
 type SessionConfig struct {
 	Workdir    string
 	MCPServers []acp.MCPServer
+	// ReplayHistory requests session/load and its history notifications.
+	// Without a history consumer it does not rebuild a transcript.
+	// Otherwise an existing session prefers resume, which does not replay it.
+	ReplayHistory bool
 }
 
 // Host owns the agent subprocess and its ACP connection. It restarts the
@@ -126,16 +137,35 @@ type Host struct {
 	sessions     map[acp.SessionID]*sessionState
 	opening      map[acp.SessionID]uint64
 	active       map[acp.SessionID]uint64
-	generation   uint64
+	// Lifecycle outcomes survive process/session map resets until the original
+	// request settles or its exact owned process has confirmed stop evidence.
+	newOpening        *newOpening
+	sessionOperations map[acp.SessionID]*sessionOperation
+	generation        uint64
 	// adapter is the ACP agent's name and version as it introduced itself.
-	adapter string
+	adapter             string
+	fileCalls           map[*workspaceFileCall]struct{}
+	fileRoots           map[*workspaceFiles]uint64
+	nextFileCall        uint64
+	terminals           map[string]*hostTerminal
+	nextTerminal        uint64
+	terminalOutputBytes map[*collector]int
+	// Only tests override the trusted self-executable helper arguments.
+	terminalHelperArgs []string
 }
 
 func New(cfg Config) *Host {
 	if cfg.Permission == nil {
 		cfg.Permission, _ = permission.New("deny")
 	}
+	if local, ok := cfg.Transport.(LocalTransport); ok && cfg.TerminalOwner != nil && TerminalsSupported && local.Started == nil {
+		local.Started = func(procgroup.Identity) {}
+		cfg.Transport = local
+	}
 	if cfg.Transport == nil {
+		if cfg.TerminalOwner != nil && TerminalsSupported && cfg.Started == nil {
+			cfg.Started = func(procgroup.Identity) {}
+		}
 		cfg.Transport = LocalTransport{
 			Command: cfg.Command, Args: cfg.Args, ProcessDir: cfg.ProcessDir, Env: cfg.Env, Started: cfg.Started,
 		}
@@ -149,26 +179,33 @@ func New(cfg Config) *Host {
 
 // collector accumulates streamed session updates for one in-flight prompt.
 type collector struct {
-	mu           sync.Mutex
-	text         strings.Builder
-	thought      string
-	thoughtHead  string
-	thoughtBytes int
-	activity     []string
-	tools        []view.Tool
-	toolIndex    map[string]int
-	timeline     []collectedSpan
-	toolSpans    map[string]bool
-	usage        view.Usage
-	plan         []view.Step
-	progress     func(view.Progress)
-	settings     func() view.Settings
-	generation   uint64
-	overflow     bool
-	ask          permission.AskFunc
-	askUser      AskUserFunc
-	ctx          context.Context
-	cancelAsk    context.CancelFunc
+	mu               sync.Mutex
+	text             strings.Builder
+	thought          string
+	thoughtHead      string
+	thoughtBytes     int
+	activity         []string
+	tools            []view.Tool
+	toolIndex        map[string]int
+	timeline         []collectedSpan
+	toolSpans        map[string]bool
+	usage            view.Usage
+	plan             []view.Step
+	progress         func(view.Progress)
+	settings         func() view.Settings
+	generation       uint64
+	overflow         bool
+	ask              permission.AskFunc
+	askUser          AskUserFunc
+	ctx              context.Context
+	cancelAsk        context.CancelFunc
+	filesClosing     bool
+	fileCount        int
+	filesDone        chan struct{}
+	terminalTools    map[string][]string
+	terminalToolBase map[string]string
+	terminalTexts    map[string]string
+	terminalReleased map[string]bool
 }
 
 // maxCollectBytes caps the aggregated assistant text so a runaway agent
@@ -180,6 +217,12 @@ const maxCollectBytes = 1 << 20 // 1 MiB
 const truncationMarker = "\n…(output truncated)"
 
 func (c *collector) handle(u acp.SessionUpdate) {
+	c.handleWithTerminals(u, nil)
+}
+
+// Register terminal content under the same lock as tool upsert, before any
+// progress callback can observe the notification or race its release.
+func (c *collector) handleWithTerminals(u acp.SessionUpdate, terminalContent func()) {
 	c.mu.Lock()
 	switch u.SessionUpdate {
 	case acp.SessionUpdateTypeAgentMessageChunk:
@@ -192,6 +235,9 @@ func (c *collector) handle(u acp.SessionUpdate) {
 		}
 	case acp.SessionUpdateTypeToolCall, acp.SessionUpdateTypeToolCallUpdate:
 		c.upsertTool(u)
+		if terminalContent != nil {
+			terminalContent()
+		}
 	case acp.SessionUpdateTypeUsageUpdate:
 		c.usage.ContextTokens = u.Used
 		c.usage.ContextWindow = u.Size
@@ -557,15 +603,53 @@ func (c *collector) result() (string, []string) {
 type clientHandler struct {
 	h          *Host
 	generation uint64
+	ready      atomic.Bool
 }
 
-func (ch *clientHandler) Update(_ context.Context, n *acp.SessionNotification) error {
-	ch.h.applySettings(n.SessionID, n.Update)
+func (ch *clientHandler) Update(ctx context.Context, n *acp.SessionNotification) error {
+	sequence, ok := acp.NotificationSequence(ctx)
+	if !ok {
+		return fmt.Errorf("session/update: missing inbound notification sequence")
+	}
 	ch.h.mu.Lock()
+	if ch.h.generation != ch.generation {
+		ch.h.mu.Unlock()
+		return nil
+	}
+	if op := ch.h.sessionOperations[n.SessionID]; op != nil {
+		if op.method == "new" && op.generation == ch.generation && op.state != nil {
+			err := ch.h.stageBoundNewSettingsLocked(n.SessionID, op, n.Update, sequence)
+			ch.h.mu.Unlock()
+			return err
+		}
+		if op.generation == ch.generation && op.state != nil {
+			applySessionSettingsAt(op.state, n.Update, sequence)
+			if op.method == "configure" && op.original != nil && ch.h.sessions[n.SessionID] == op.original {
+				// An independent configuration notification is already an Actual
+				// observation for the still-running original prompt/context.
+				applySessionSettingsAt(op.original, n.Update, sequence)
+			}
+		}
+		// Config can run mid-turn. Continue delivering the original prompt's
+		// output/callbacks while keeping lifecycle restore history isolated.
+		col := ch.h.collectors[n.SessionID]
+		forward := op.method == "configure" && op.generation == ch.generation && col != nil && col.generation == ch.generation
+		ch.h.mu.Unlock()
+		if forward {
+			ch.h.handleUpdate(col, n.Update)
+		}
+		return nil
+	}
+	if ch.h.sessions[n.SessionID] == nil {
+		err := ch.h.stageNewSettingsLocked(n.SessionID, n.Update, sequence)
+		ch.h.mu.Unlock()
+		return err
+	}
+	applySessionSettingsAt(ch.h.sessions[n.SessionID], n.Update, sequence)
 	col := ch.h.collectors[n.SessionID]
 	ch.h.mu.Unlock()
 	if col != nil && col.generation == ch.generation {
-		col.handle(n.Update)
+		ch.h.handleUpdate(col, n.Update)
 	}
 	return nil
 }
@@ -746,8 +830,19 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	if h.isClosed {
 		return ErrClosed
 	}
+	if !h.terminalsConfirmedLocked(0) && !h.alive {
+		return ErrStopUnconfirmed
+	}
 	if h.alive {
+		for call := range h.fileCalls {
+			if call.col.filesClosing || call.generation != h.generation {
+				return ErrStopUnconfirmed
+			}
+		}
 		return nil
+	}
+	if len(h.fileCalls) != 0 {
+		return ErrStopUnconfirmed
 	}
 	if h.cfg.NoRestart && h.generation != 0 {
 		return ErrClosed
@@ -758,9 +853,21 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	}
 	stdin := proc.Stdin()
 	generation := h.generation + 1
+	var handler *clientHandler
 	conn, err := acp.NewClient(proc.Stdout(), stdin, func(caller *acp.AgentCaller) acp.ClientHandler {
 		h.caller = caller
-		return &clientHandler{h: h, generation: generation}
+		handler = &clientHandler{h: h, generation: generation}
+		if h.terminalEnabled(proc) {
+			terminal := &terminalHandler{handler}
+			if h.cfg.WorkspaceFiles && workspaceFilesSupported {
+				return &workspaceTerminalHandler{terminal}
+			}
+			return terminal
+		}
+		if h.cfg.WorkspaceFiles && workspaceFilesSupported {
+			return &workspaceFileHandler{handler}
+		}
+		return handler
 	})
 	if err != nil {
 		proc.Kill()
@@ -800,8 +907,17 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		return fmt.Errorf("identify agent process group: %w", local.unidentified)
 	}
 
+	return h.initializeLocked(ctx, proc, handler)
+}
+
+// initializeLocked completes the handshake while ensureStarted holds h.mu.
+func (h *Host) initializeLocked(ctx context.Context, proc Process, handler *clientHandler) error {
 	initCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
+	var files *acp.FileSystemCapabilities
+	if h.cfg.WorkspaceFiles && workspaceFilesSupported {
+		files = &acp.FileSystemCapabilities{ReadTextFile: true, WriteTextFile: true}
+	}
 	resp, err := h.caller.Initialize(initCtx, &acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionV1,
 		ClientInfo:      &acp.Implementation{Name: "steve", Version: "0.1.0"},
@@ -809,6 +925,9 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		// that is not told the client can ask the user anything will never
 		// try, so leaving this empty silently disabled every agent question.
 		ClientCapabilities: &acp.ClientCapabilities{
+			Fs:          files,
+			Terminal:    h.terminalEnabled(proc),
+			Session:     &acp.ClientSessionCapabilities{ConfigOptions: &acp.SessionConfigOptionsCapabilities{Boolean: &acp.BooleanConfigOptionCapabilities{}}},
 			Elicitation: &acp.ElicitationCapabilities{Form: &acp.ElicitationFormCapabilities{}},
 		},
 	})
@@ -816,12 +935,18 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		h.shutdownLocked()
 		return fmt.Errorf("initialize: %w", err)
 	}
+	if resp.ProtocolVersion != acp.ProtocolVersionV1 {
+		proc.Kill()
+		h.shutdownLocked()
+		return fmt.Errorf("initialize: unsupported protocol version %d (client supports %d)", resp.ProtocolVersion, acp.ProtocolVersionV1)
+	}
 	name := "unknown"
 	if resp.AgentInfo != nil {
 		name = fmt.Sprintf("%s %s", resp.AgentInfo.Name, resp.AgentInfo.Version)
 	}
 	// The lock is already held here: this runs inside ensureStarted.
 	h.capabilities = resp.AgentCapabilities
+	handler.ready.Store(true)
 	h.adapter = name
 	slog.Info(fmt.Sprintf("acphost: connected to agent %s (protocol v%d)", name, resp.ProtocolVersion))
 	return nil
@@ -852,7 +977,13 @@ func (h *Host) watch(generation uint64, proc Process, conn *acp.Conn, exited, se
 	close(exited)
 	h.mu.Lock()
 	if h.proc == proc {
+		if opening := h.newOpening; opening != nil && opening.process == proc && opening.generation == generation {
+			closeNewScratch(opening)
+		}
 		h.alive = false
+		h.cancelFileCallsLocked(generation)
+		h.retireFileRootsLocked(generation)
+		h.cleanupTerminalsLocked(generation, nil)
 		h.collectors = map[acp.SessionID]*collector{}
 		h.sessions = map[acp.SessionID]*sessionState{}
 		h.opening = map[acp.SessionID]uint64{}
@@ -867,7 +998,7 @@ func (h *Host) watch(generation uint64, proc Process, conn *acp.Conn, exited, se
 	}
 	<-waited
 	h.mu.Lock()
-	if proc.Stopped() {
+	if proc.Stopped() && h.terminalsConfirmedLocked(generation) {
 		delete(h.processes, generation)
 	}
 	delete(h.settling, generation)
@@ -904,92 +1035,206 @@ func endConnection(conn *acp.Conn, proc Process) {
 }
 
 func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg SessionConfig) (acp.SessionID, uint64, error) {
+	var candidate *workspaceFiles
+	defer func() {
+		if candidate == nil {
+			return
+		}
+		h.mu.Lock()
+		_, retained := h.fileRoots[candidate]
+		h.mu.Unlock()
+		if !retained {
+			candidate.root.Close()
+		}
+	}()
+	var workspace *workspaceFiles
+	if (h.cfg.WorkspaceFiles && workspaceFilesSupported) || (h.cfg.TerminalOwner != nil && TerminalsSupported) {
+		var err error
+		workspace, err = prepareWorkspaceFiles(cfg.Workdir)
+		candidate = workspace
+		if err != nil {
+			return "", 0, err
+		}
+	}
+	if cfg.ReplayHistory && sessionID == "" {
+		return "", 0, fmt.Errorf("history replay requires an existing session id")
+	}
+	h.mu.Lock()
+	if sessionID == "" {
+		if err := h.newOpeningBlockedLocked(); err != nil {
+			h.mu.Unlock()
+			return "", 0, err
+		}
+	}
+	blocked := h.SessionBlockedLocked(sessionID)
+	h.mu.Unlock()
+	if blocked != nil {
+		return "", 0, blocked
+	}
 	if err := h.ensureStarted(ctx); err != nil {
 		return "", 0, err
 	}
 	h.mu.Lock()
+	if err := h.SessionBlockedLocked(sessionID); err != nil {
+		h.mu.Unlock()
+		return "", 0, err
+	}
 	generation := h.generation
-	if h.sessions[sessionID] != nil {
+	if original := h.sessions[sessionID]; original != nil && original.workspace != nil {
+		if !original.workspace.matches(workspace) {
+			h.mu.Unlock()
+			return "", 0, errors.New("original filesystem workspace changed")
+		}
+		workspace = original.workspace
+	}
+	if sessionID != "" && h.opening[sessionID] != 0 {
+		h.mu.Unlock()
+		return "", 0, fmt.Errorf("session %q is already being opened", sessionID)
+	}
+	if h.sessions[sessionID] != nil && !cfg.ReplayHistory {
 		h.mu.Unlock()
 		return sessionID, generation, nil
 	}
 	caller, capabilities := h.caller, h.capabilities
-	if sessionID != "" {
-		if h.opening[sessionID] != 0 {
-			h.mu.Unlock()
-			return "", 0, fmt.Errorf("session %q is already being opened", sessionID)
-		}
-		h.opening[sessionID] = generation
-		defer func() {
-			h.mu.Lock()
-			if h.opening[sessionID] == generation {
-				delete(h.opening, sessionID)
-			}
-			h.mu.Unlock()
-		}()
-	}
-	h.mu.Unlock()
 	if err := validateMCPServers(capabilities, cfg.MCPServers); err != nil {
+		h.mu.Unlock()
 		return "", 0, err
 	}
 	if sessionID != "" {
-		request := acp.LoadSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers}
-		var state *sessionState
+		method := ""
 		switch {
+		case !cfg.ReplayHistory && capabilities != nil && capabilities.SessionCapabilities != nil && capabilities.SessionCapabilities.Resume != nil:
+			method = "resume"
 		case capabilities != nil && capabilities.LoadSession:
-			resp, err := caller.LoadSession(ctx, &request)
-			if err != nil {
-				return "", 0, fmt.Errorf("session/load: %w", err)
-			}
-			state = newSessionState(resp.Modes, resp.ConfigOptions)
-			state.setMode(h.applyMode(ctx, caller, sessionID, resp.Modes))
-		case capabilities != nil && capabilities.SessionCapabilities != nil && capabilities.SessionCapabilities.Resume != nil:
-			resp, err := caller.ResumeSession(ctx, &acp.ResumeSessionRequest{
-				SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers,
-			})
-			if err != nil {
-				return "", 0, fmt.Errorf("session/resume: %w", err)
-			}
-			state = newSessionState(resp.Modes, resp.ConfigOptions)
-			state.setMode(h.applyMode(ctx, caller, sessionID, resp.Modes))
+			method = "load"
+		case cfg.ReplayHistory:
+			h.mu.Unlock()
+			return "", 0, ErrLoadUnsupported
 		default:
+			h.mu.Unlock()
 			return "", 0, ErrResumeUnsupported
 		}
-		h.mu.Lock()
-		if !h.alive || h.generation != generation {
-			h.mu.Unlock()
-			return "", 0, fmt.Errorf("agent process changed while opening session")
+		op, err := h.beginSessionOperationLocked(ctx, sessionID, method)
+		if err == nil {
+			op.state.workspace = workspace
+			if workspace != nil {
+				if h.fileRoots == nil {
+					h.fileRoots = map[*workspaceFiles]uint64{}
+				}
+				h.fileRoots[workspace] = generation
+			}
 		}
-		h.sessions[sessionID] = state
 		h.mu.Unlock()
-		return sessionID, generation, nil
+		if err != nil {
+			return "", 0, err
+		}
+		return h.completeSessionRestore(ctx, caller, sessionID, cfg, generation, workspace, op)
 	}
-	resp, err := caller.NewSession(ctx, &acp.NewSessionRequest{
-		Cwd:        cfg.Workdir,
-		MCPServers: cfg.MCPServers,
-	})
-	if err != nil {
-		return "", 0, fmt.Errorf("session/new: %w", err)
-	}
-	state := newSessionState(resp.Modes, resp.ConfigOptions)
-	state.setMode(h.applyMode(ctx, caller, resp.SessionID, resp.Modes))
-	h.mu.Lock()
-	if !h.alive || h.generation != generation {
-		h.mu.Unlock()
-		return "", 0, fmt.Errorf("agent process changed while opening session")
-	}
-	h.sessions[resp.SessionID] = state
+	opening, err := h.beginNewOpeningLocked(ctx)
 	h.mu.Unlock()
+	if err != nil {
+		return "", 0, err
+	}
+	return h.completeSessionCreation(ctx, caller, cfg, generation, workspace, opening)
+}
+
+// completeSessionRestore consumes the admitted load/resume result without
+// changing the outer workspace candidate's lifetime or unknown reservation.
+func (h *Host) completeSessionRestore(ctx context.Context, caller *acp.AgentCaller, sessionID acp.SessionID, cfg SessionConfig, generation uint64, workspace *workspaceFiles, op *sessionOperation) (acp.SessionID, uint64, error) {
+	method := op.method
+	var err error
+	var modes *acp.SessionModeState
+	var options *[]acp.SessionConfigOption
+	var receipt acp.ResponseReceipt
+	if method == "load" {
+		var resp *acp.LoadSessionResponse
+		resp, receipt, err = caller.LoadSessionWithReceipt(ctx, &acp.LoadSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
+		if err == nil {
+			modes, options = resp.Modes, resp.ConfigOptions
+		}
+	} else {
+		var resp *acp.ResumeSessionResponse
+		resp, receipt, err = caller.ResumeSessionWithReceipt(ctx, &acp.ResumeSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
+		if err == nil {
+			modes, options = resp.Modes, resp.ConfigOptions
+		}
+	}
+	if err == nil && receipt.Sequence == 0 {
+		err = fmt.Errorf("session/%s: successful result lacks inbound receipt", method)
+	}
+	if err == nil {
+		h.mu.Lock()
+		applyOpenResponseAt(op.state, modes, options, receipt.Sequence)
+		h.mu.Unlock()
+		h.applyMode(ctx, caller, sessionID, generation, op.state, modes)
+	}
+	h.mu.Lock()
+	err = h.finishSessionOperationLocked(ctx, sessionID, op, err)
+	if err != nil && op.original == nil {
+		h.retireWorkspaceLocked(workspace)
+	}
+	h.mu.Unlock()
+	if err != nil {
+		return "", 0, err
+	}
+	return sessionID, generation, nil
+}
+
+// completeSessionCreation binds the matched creation before publishing it.
+// Failed local publication still retains the original native lifecycle debt.
+func (h *Host) completeSessionCreation(ctx context.Context, caller *acp.AgentCaller, cfg SessionConfig, generation uint64, workspace *workspaceFiles, opening *newOpening) (acp.SessionID, uint64, error) {
+	resp, receipt, err := caller.NewSessionWithReceipt(ctx, &acp.NewSessionRequest{Cwd: cfg.Workdir, MCPServers: cfg.MCPServers})
+	h.mu.Lock()
+	if err != nil {
+		err = h.failNewOpeningLocked(ctx, opening, err, "", false)
+		h.mu.Unlock()
+		return "", 0, err
+	}
+	op, err := h.bindNewOpeningLocked(ctx, opening, resp, receipt)
+	if err == nil {
+		op.state.workspace = workspace
+		if workspace != nil {
+			if h.fileRoots == nil {
+				h.fileRoots = map[*workspaceFiles]uint64{}
+			}
+			h.fileRoots[workspace] = generation
+		}
+	}
+	h.mu.Unlock()
+	if err != nil {
+		return "", 0, err
+	}
+	h.applyMode(ctx, caller, resp.SessionID, generation, op.state, resp.Modes)
+	h.mu.Lock()
+	if opening.cause == nil {
+		if size, sizeErr := scratchStateBytes(op.state); sizeErr != nil || size > maxNewScratchPerSID {
+			opening.cause = errNewScratchLimit
+		}
+	}
+	err = h.finishSessionOperationLocked(ctx, resp.SessionID, op, opening.cause)
+	if err != nil {
+		// A matched creation that fails local publication retains its native
+		// lifecycle obligation, but its unpublished passive root grants nothing.
+		h.retireWorkspaceLocked(workspace)
+		err = h.failNewOpeningLocked(ctx, opening, err, resp.SessionID, true)
+	} else if h.newOpening == opening {
+		h.newOpening = nil
+	}
+	h.mu.Unlock()
+	if err != nil {
+		return "", 0, err
+	}
 	return resp.SessionID, generation, nil
 }
 
 // applyMode moves the session into the mode its permission policy implies.
 // Agents default to approving their own writes, so without this the policy
-// is never consulted. It returns the mode actually in force afterwards, so
-// the caller can record what the session is really running under.
-func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.SessionID, modes *acp.SessionModeState) acp.SessionModeID {
+// is never consulted. The selector policy is unchanged; a matched successful
+// standard set_mode response confirms its available target at the real receipt
+// sequence, while later independent mode notifications remain authoritative.
+func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.SessionID, generation uint64, state *sessionState, modes *acp.SessionModeState) {
 	if modes == nil || caller == nil {
-		return ""
+		return
 	}
 	ids := make([]string, 0, len(modes.AvailableModes))
 	for _, mode := range modes.AvailableModes {
@@ -998,16 +1243,36 @@ func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.S
 	slog.Info(fmt.Sprintf("acphost: session modes current=%s available=%s", modes.CurrentModeID, strings.Join(ids, ",")))
 	wanted := h.cfg.Permission.SessionMode(ids)
 	if wanted == "" || wanted == string(modes.CurrentModeID) {
-		return modes.CurrentModeID
+		return
 	}
-	if _, err := caller.SetSessionMode(ctx, &acp.SetSessionModeRequest{
-		SessionID: sid, ModeID: acp.SessionModeID(wanted),
-	}); err != nil {
+	_, receipt, err := caller.SetSessionModeWithReceipt(ctx, &acp.SetSessionModeRequest{SessionID: sid, ModeID: acp.SessionModeID(wanted)})
+	if err != nil {
 		slog.Error(fmt.Sprintf("acphost: set session mode %q: %v", wanted, err))
-		return modes.CurrentModeID
+		return
 	}
-	slog.Info(fmt.Sprintf("acphost: session mode set to %q", wanted))
-	return acp.SessionModeID(wanted)
+	if receipt.Sequence == 0 {
+		slog.Error("acphost: set session mode succeeded without inbound receipt")
+		return
+	}
+	// Consume only a successful matched set_mode response; receipt metadata
+	// orders frames but is not an Actual value or execution/cleanup proof.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.alive || h.generation != generation || h.caller != caller {
+		return
+	}
+	valid := h.sessions[sid] == state
+	if op := h.sessionOperations[sid]; op != nil {
+		valid = op.generation == generation && op.state == state
+	}
+	if !valid {
+		return
+	}
+	// This is method-specific success confirmation, not optimistic request
+	// echo or arbitrary nonzero-receipt success. The typed standard {} ACK
+	// confirms the validated available target; a higher mode clock still wins.
+	state.setModeAt(acp.SessionModeID(wanted), receipt.Sequence)
+	slog.Info(fmt.Sprintf("acphost: session mode %q confirmed at inbound sequence %d", wanted, receipt.Sequence))
 }
 
 // Prompt sends one user turn and blocks until the agent finishes it,
@@ -1026,15 +1291,56 @@ func (h *Host) PromptTurn(
 	askUser AskUserFunc,
 	progress func(view.Progress),
 ) (string, []string, error) {
+	return h.promptTurn(ctx, sid, generation, text, images, ask, askUser, progress, nil)
+}
+
+// PromptTurnWithAdmission observes the original collector/active admission.
+// Its one callback runs outside the Host lock, before protocol submission;
+// it is not native execution, completion or process-stop evidence.
+func (h *Host) PromptTurnWithAdmission(
+	ctx context.Context,
+	sid acp.SessionID,
+	generation uint64,
+	text string,
+	images []Image,
+	ask permission.AskFunc,
+	askUser AskUserFunc,
+	progress func(view.Progress),
+	onAdmitted func(),
+) (string, []string, error) {
+	return h.promptTurn(ctx, sid, generation, text, images, ask, askUser, progress, onAdmitted)
+}
+
+func (h *Host) promptTurn(
+	ctx context.Context,
+	sid acp.SessionID,
+	generation uint64,
+	text string,
+	images []Image,
+	ask permission.AskFunc,
+	askUser AskUserFunc,
+	progress func(view.Progress),
+	onAdmitted func(),
+) (output string, activity []string, resultErr error) {
+	h.mu.Lock()
+	blocked := h.SessionBlockedLocked(sid)
+	h.mu.Unlock()
+	if blocked != nil {
+		return "", nil, blocked
+	}
 	if err := h.ensureStarted(ctx); err != nil {
 		return "", nil, err
 	}
 	h.mu.Lock()
+	if err := h.SessionBlockedLocked(sid); err != nil {
+		h.mu.Unlock()
+		return "", nil, err
+	}
 	if h.generation != generation {
 		h.mu.Unlock()
 		return "", nil, fmt.Errorf("agent process changed before prompt")
 	}
-	if h.active[sid] != 0 {
+	if h.active[sid] != 0 || h.opening[sid] != 0 {
 		h.mu.Unlock()
 		return "", nil, ErrSessionBusy
 	}
@@ -1059,16 +1365,14 @@ func (h *Host) PromptTurn(
 	h.active[sid] = generation
 	h.mu.Unlock()
 	defer func() {
-		cancelAsk()
-		h.mu.Lock()
-		if h.collectors[sid] == col {
-			delete(h.collectors, sid)
+		if err := h.retireCollector(sid, col); err != nil {
+			resultErr = errors.Join(ErrStopUnconfirmed, resultErr, err)
 		}
-		if h.active[sid] == generation {
-			delete(h.active, sid)
-		}
-		h.mu.Unlock()
 	}()
+
+	if onAdmitted != nil {
+		onAdmitted()
+	}
 
 	// A cancelled turn has to be cancelled *through* the agent rather than
 	// by dropping the RPC. ACP ends a cancelled prompt by answering it with
@@ -1082,28 +1386,7 @@ func (h *Host) PromptTurn(
 	defer close(settled)
 	promptCtx, abandon := context.WithCancel(context.WithoutCancel(ctx))
 	defer abandon()
-	go func() {
-		select {
-		case <-settled:
-			return
-		case <-ctx.Done():
-		}
-		notifyCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), cancelNotifyTimeout)
-		err := caller.Cancel(notifyCtx, &acp.CancelNotification{SessionID: sid})
-		stop()
-		if err != nil {
-			slog.Error(fmt.Sprintf("acphost: cancel notify: %v", err))
-		}
-		select {
-		case <-settled:
-		case <-time.After(cancelSettleTimeout):
-			// The agent did not end the turn. Give up on a clean stop; the
-			// distinct error tells the caller it cannot prove writer quiescence.
-			slog.Warn(fmt.Sprintf("acphost: agent did not settle a cancelled turn in %s", cancelSettleTimeout))
-			abandoned.Store(true)
-			abandon()
-		}
-	}()
+	go cancelPromptOnContext(ctx, caller, sid, settled, &abandoned, abandon)
 
 	resp, err := caller.Prompt(promptCtx, &acp.PromptRequest{
 		SessionID: sid,
@@ -1130,6 +1413,31 @@ func (h *Host) PromptTurn(
 		activity = append(activity, fmt.Sprintf("(stopReason: %s)", resp.StopReason))
 	}
 	return out, activity, nil
+}
+
+// cancelPromptOnContext requests a protocol stop before abandoning the RPC.
+// The outer prompt owns settlement and cancellation defer ordering.
+func cancelPromptOnContext(ctx context.Context, caller *acp.AgentCaller, sid acp.SessionID, settled <-chan struct{}, abandoned *atomic.Bool, abandon context.CancelFunc) {
+	select {
+	case <-settled:
+		return
+	case <-ctx.Done():
+	}
+	notifyCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), cancelNotifyTimeout)
+	err := caller.Cancel(notifyCtx, &acp.CancelNotification{SessionID: sid})
+	stop()
+	if err != nil {
+		slog.Error(fmt.Sprintf("acphost: cancel notify: %v", err))
+	}
+	select {
+	case <-settled:
+	case <-time.After(cancelSettleTimeout):
+		// The agent did not end the turn. Give up on a clean stop; the
+		// distinct error tells the caller it cannot prove writer quiescence.
+		slog.Warn(fmt.Sprintf("acphost: agent did not settle a cancelled turn in %s", cancelSettleTimeout))
+		abandoned.Store(true)
+		abandon()
+	}
 }
 
 // failedPrompt is the error, carrying cause, of a prompt that did not end
@@ -1177,6 +1485,9 @@ func (h *Host) Cancel(ctx context.Context, sid acp.SessionID, generation uint64)
 	caller, alive := h.caller, h.alive && h.generation == generation
 	if col := h.collectors[sid]; alive && col != nil && col.generation == generation && col.cancelAsk != nil {
 		col.cancelAsk()
+		// Node cancel may hold its owner lock. Start cleanup without awaiting a
+		// Stopped callback here; turn retirement/NativeStop retains its obligation.
+		h.cleanupTerminalsLocked(generation, col)
 	}
 	h.mu.Unlock()
 	if !alive || caller == nil {
@@ -1198,6 +1509,18 @@ func (h *Host) Abort(generation uint64) {
 func (h *Host) ProcessStopped(generation uint64) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.processStoppedLocked(generation)
+}
+
+func (h *Host) processStoppedLocked(generation uint64) bool {
+	if !h.terminalsConfirmedLocked(generation) {
+		return false
+	}
+	for call := range h.fileCalls {
+		if call.generation == generation {
+			return false
+		}
+	}
 	if generation == 0 || generation > h.generation {
 		return false
 	}
@@ -1210,32 +1533,6 @@ func (h *Host) ProcessStopped(generation uint64) bool {
 		return true
 	}
 	return false
-}
-
-func (h *Host) CloseSession(ctx context.Context, sid acp.SessionID) error {
-	h.mu.Lock()
-	if h.active[sid] != 0 {
-		h.mu.Unlock()
-		return ErrSessionBusy
-	}
-	if h.sessions[sid] == nil {
-		h.mu.Unlock()
-		return nil
-	}
-	caller, capabilities, alive := h.caller, h.capabilities, h.alive
-	if !alive || caller == nil || capabilities == nil || capabilities.SessionCapabilities == nil || capabilities.SessionCapabilities.Close == nil {
-		delete(h.sessions, sid)
-		h.mu.Unlock()
-		return nil
-	}
-	h.mu.Unlock()
-	if _, err := caller.CloseSession(ctx, &acp.CloseSessionRequest{SessionID: sid}); err != nil {
-		return fmt.Errorf("session/close: %w", err)
-	}
-	h.mu.Lock()
-	delete(h.sessions, sid)
-	h.mu.Unlock()
-	return nil
 }
 
 func promptBlocks(text string, images []Image, caps *acp.AgentCapabilities) []acp.ContentBlock {
@@ -1323,6 +1620,9 @@ func (h *Host) Close() {
 func (h *Host) AllProcessesStopped() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if len(h.fileCalls) != 0 || !h.terminalsConfirmedLocked(0) {
+		return false
+	}
 	for generation, proc := range h.processes {
 		if !proc.Stopped() {
 			return false
@@ -1343,9 +1643,17 @@ func (h *Host) AllProcessesStopped() bool {
 // nothing to ask to leave or to kill, so it waits only exitedGroupWait for
 // the groups of the agents that exited.
 func (h *Host) shutdownLocked() {
+	terminalDone := h.cleanupTerminalsLocked(0, nil)
+	h.cancelFileCallsLocked(0)
+	h.retireFileRootsLocked(0)
 	alive := h.alive
 	h.alive = false
 	conn, stdin, exited, proc := h.conn, h.stdin, h.exited, h.proc
+	for _, process := range h.processes {
+		if local, ok := process.(*localProcess); ok {
+			local.closeTerminalAdmission()
+		}
+	}
 	// Shutdown: the closes tell the agent to leave, and the monitor
 	// goroutine reports how it went.
 	if alive && conn != nil {
@@ -1359,11 +1667,19 @@ func (h *Host) shutdownLocked() {
 		settling = append(settling, settled)
 	}
 	running := alive && exited != nil
-	if !running && len(settling) == 0 {
+	if !running && len(settling) == 0 && h.terminalsConfirmedLocked(0) {
 		return
 	}
 	h.mu.Unlock()
 	defer h.mu.Lock()
+	terminalTimer := time.NewTimer(terminalCleanupWait)
+	defer terminalTimer.Stop()
+	defer func() {
+		select {
+		case <-terminalDone:
+		case <-terminalTimer.C:
+		}
+	}()
 	if !running {
 		awaitSettled(settling)
 		return
@@ -1429,18 +1745,27 @@ func awaitSettled(settling []chan struct{}) {
 // rather than on the collector.
 func (h *Host) applySettings(sid acp.SessionID, u acp.SessionUpdate) {
 	h.mu.Lock()
-	state := h.sessions[sid]
-	h.mu.Unlock()
+	defer h.mu.Unlock()
+	applySessionSettings(h.sessions[sid], u)
+}
+func applySessionSettings(state *sessionState, u acp.SessionUpdate) {
+	applySessionSettingsAt(state, u, 0)
+}
+func applySessionSettingsAt(state *sessionState, u acp.SessionUpdate, sequence uint64) {
 	if state == nil {
 		return
 	}
 	switch u.SessionUpdate {
 	case acp.SessionUpdateTypeConfigOptionUpdate:
-		state.setOptions(u.ConfigOptions)
+		values := u.ConfigOptions
+		if values == nil {
+			values = []acp.SessionConfigOption{}
+		}
+		state.setOptionsAt(values, sequence)
 	case acp.SessionUpdateTypeCurrentModeUpdate:
-		state.setMode(u.CurrentModeID)
+		state.setModeAt(u.CurrentModeID, sequence)
 	case acp.SessionUpdateTypeAvailableCommandsUpdate:
-		state.setCommands(u.AvailableCommands)
+		state.setCommandsAt(u.AvailableCommands, sequence)
 	}
 }
 
@@ -1487,7 +1812,7 @@ func (h *Host) SettingsForGeneration(sid acp.SessionID, generation uint64) (view
 func (h *Host) CloseIdle() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.active) > 0 {
+	if len(h.active) > 0 || len(h.sessionOperations) > 0 || h.newOpening != nil || len(h.fileCalls) > 0 {
 		return ErrSessionBusy
 	}
 	h.isClosed = true

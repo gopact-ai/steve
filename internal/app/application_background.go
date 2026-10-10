@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
-	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/node"
 )
 
@@ -43,17 +42,6 @@ func (b *applicationBackground) Close() {
 func newLocalObservation(ctx context.Context, store *adminsvc.ConfigStore) (*adminsvc.LocalObservation, func()) {
 	observation := adminsvc.NewLocalObservation(node.NewLaunchProbe())
 	background := newApplicationBackground(ctx)
-	background.Go(func(ctx context.Context) {
-		observation.Launch.Run(ctx, func() (out []string) {
-			store.Read(func(cfg *config.Config) {
-				out = make([]string, 0, len(cfg.Harnesses)+len(cfg.Gateway.Tools))
-				for _, h := range cfg.Harnesses {
-					out = append(out, h.Command)
-				}
-				out = append(out, cfg.Gateway.Tools...)
-			})
-			return out
-		})
-	})
+	background.Go(func(ctx context.Context) { observation.RunLaunchProbe(ctx, store) })
 	return observation, background.Close
 }

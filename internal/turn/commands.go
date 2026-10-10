@@ -83,12 +83,11 @@ func (c commands) dispatch(ctx context.Context, req Request, selected agent.Agen
 
 func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) (Result, error) {
 	conversationID := req.ConversationID
-	c.mu.Lock()
-	busy := c.cancels[sessionKey(conversationID, selected.ID)] != nil
-	c.mu.Unlock()
-	if busy {
-		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
+	release, admissionErr := c.beginSessionRetirement(ctx, conversationID, selected.ID)
+	if admissionErr != nil {
+		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel), Cause: admissionErr}
 	}
+	defer release()
 	// The tasks go first: one still unsettled refuses the reset while the
 	// session is intact, instead of leaving it archived under a task that
 	// cannot end.
@@ -99,14 +98,6 @@ func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) 
 	owed, err := c.closeSession(ctx, session)
 	if err != nil {
 		return Result{}, err
-	}
-	c.mu.Lock()
-	busy = c.cancels[sessionKey(conversationID, selected.ID)] != nil
-	c.mu.Unlock()
-	if busy {
-		// A turn started while the session was being closed; its error path
-		// owns the state cleanup, so leave the record alone.
-		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
 	// Archive rather than delete. The agent session was closed, not deleted,
 	// so the record is all that stands between the user and their own

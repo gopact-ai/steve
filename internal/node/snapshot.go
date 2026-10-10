@@ -30,17 +30,62 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 		Source: "node",
 	}
 
+	o = o.withToolLaunchEvidence()
 	ids := make([]string, 0, len(o.Harnesses))
 	for id := range o.Harnesses {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	o.appendExecutableOffers(s, now, ids)
+	o.appendMCPOffers(s, now, ids)
+	s.Offers = append(s.Offers, hardware(now)...)
+	o.appendSkillOffers(s, now, ids)
+	o.appendDeclaredOffers(s)
+	if err := ability.Validate(s); err != nil {
+		// A snapshot this machine cannot even validate is not reported; the
+		// hub sees an old-style advert and treats coverage as partial.
+		slog.Error(fmt.Sprintf("steve-node: snapshot invalid, not reported: %v", err))
+		return nil
+	}
+	return s
+}
+
+func (o Observe) withToolLaunchEvidence() Observe {
+	// Bare-executable launch cache entries belong only to current host tools.
+	// Ignore old agent/MCP launch evidence, including programs now shared with
+	// an agent; PATH presence remains a separate, side-effect-free fact.
+	if o.Launch != nil {
+		agents := make([]string, 0, len(o.Harnesses))
+		for _, h := range o.Harnesses {
+			agents = append(agents, h.Command)
+		}
+		allowed := make(map[string]bool)
+		for _, command := range BackgroundToolCommands(o.Tools, agents) {
+			if path, err := exec.LookPath(command); err == nil {
+				allowed[path] = true
+			}
+		}
+		lookup := o.Launch
+		o.Launch = func(path string) (LaunchResult, bool) {
+			if !allowed[path] {
+				return LaunchResult{}, false
+			}
+			return lookup(path)
+		}
+	}
+	return o
+}
+
+func (o Observe) appendExecutableOffers(s *ability.Snapshot, now time.Time, ids []string) {
 	for _, id := range ids {
 		s.Offers = append(s.Offers, o.commandCapability(now, ability.Harness, id, o.Harnesses[id].Command))
 	}
 	for _, tool := range o.Tools {
 		s.Offers = append(s.Offers, o.commandCapability(now, ability.Tool, tool, tool))
 	}
+}
+
+func (o Observe) appendMCPOffers(s *ability.Snapshot, now time.Time, ids []string) {
 	if o.MCPError != "" {
 		s.Coverage[ability.MCP] = ability.Errored
 	}
@@ -87,7 +132,9 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 			s.Offers = append(s.Offers, c)
 		}
 	}
-	s.Offers = append(s.Offers, hardware(now)...)
+}
+
+func (o Observe) appendSkillOffers(s *ability.Snapshot, now time.Time, ids []string) {
 	// Skills are what this machine materialized into its harness homes:
 	// present for every harness, addressed by content. A machine that
 	// isolates its homes knows the whole list, so the kind is covered.
@@ -101,6 +148,9 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 			}
 		}
 	}
+}
+
+func (o Observe) appendDeclaredOffers(s *ability.Snapshot) {
 	for _, d := range o.Declares {
 		atom, err := ability.ParseAtom(d)
 		if err != nil || atom.ID == "" {
@@ -111,13 +161,6 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 	for _, tag := range o.Tags {
 		s.Offers = append(s.Offers, ability.Capability{Kind: ability.Tag, ID: tag, Evidence: []ability.Evidence{{Kind: ability.Declared, Method: "config", OK: true}}})
 	}
-	if err := ability.Validate(s); err != nil {
-		// A snapshot this machine cannot even validate is not reported; the
-		// hub sees an old-style advert and treats coverage as partial.
-		slog.Error(fmt.Sprintf("steve-node: snapshot invalid, not reported: %v", err))
-		return nil
-	}
-	return s
 }
 
 func (o Observe) commandCapability(now time.Time, kind ability.Kind, id, cmd string) ability.Capability {
@@ -132,7 +175,7 @@ func (o Observe) commandCapability(now time.Time, kind ability.Kind, id, cmd str
 	// Being on PATH is existence; having started is launchable. The
 	// launch check ran on its own clock, so it carries its own time,
 	// and a binary that would not start makes the entry unavailable.
-	if o.Launch != nil {
+	if kind == ability.Tool && o.Launch != nil {
 		if r, ok := o.Launch(path); ok {
 			c.Evidence = append(c.Evidence, ability.Evidence{Kind: ability.Observed, Method: "launch", OK: r.OK, Result: r.Result, At: r.At})
 			if r.OK {

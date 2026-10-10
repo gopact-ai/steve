@@ -82,7 +82,8 @@ func (p *Prober) Probe(ctx context.Context, ep Endpoint) (Observation, error) {
 	obs := Observation{
 		Node: ep.Node, Harness: ep.Harness,
 		Current: settings.Model, Available: settings.Models, Version: settings.Adapter,
-		Source: "probe", At: time.Now().UTC(),
+		Selectors: SelectorsOf(settings.Options),
+		Source:    "probe", At: time.Now().UTC(),
 	}
 	p.book.Observe(obs)
 	return obs, nil

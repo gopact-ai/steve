@@ -37,7 +37,7 @@ export interface Agent {
     preferred?: string; observed?: string; conditions?: Condition[]; mcp_servers?: string[]; default?: boolean;
     options?: Record<string, string>; approval?: string; selectors?: Selector[]; about?: string;
 }
-export interface Selector { id: string; name: string; category?: string; current?: string; choices?: string[]; values?: string[] }
+export interface Selector { id: string; name: string; category?: string; type?: string; current?: string; choices?: string[]; values?: string[] }
 export interface Tokens { input?: number; output?: number; cached_read?: number; cached_write?: number; total?: number; context?: number }
 export interface AttemptRow { day: string; agent: string; node?: string; model?: string; outcome?: string; started: string; seconds: number; tokens: Tokens; reported: boolean }
 export interface ResultDelivery { state: "pending" | "queued" | "delivered" | "suppressed" | "uncertain"; key?: string; at: string; attempts?: number; error?: string; next_attempt_at?: string }
@@ -172,7 +172,7 @@ export interface Exchange {
 }
 export interface QuoteRef { conversation: string; reply_id: string; title?: string; excerpt?: string }
 export interface SelectorChoice { Value: string; Label: string; Detail?: string }
-export interface SelectorOption { ID: string; Name: string; Category?: string; Current?: string; Choices?: SelectorChoice[] | null }
+export interface SelectorOption { ID: string; Name: string; Category?: string; Type?: string; Current?: string; Choices?: SelectorChoice[] | null }
 export interface Selectors { model?: string; models?: SelectorChoice[]; options?: SelectorOption[]; preferred?: Record<string, string> }
 export interface StepProcess extends StepInfo, Progress { id: string }
 export interface Process { reasoning?: string; tools?: ToolCall[]; timeline?: Span[]; steps?: StepProcess[] }

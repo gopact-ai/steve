@@ -19,7 +19,7 @@ func TestCommandStoppedBeforeDispatchCarriesAnErrorCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(one.service.closeRecords)
-	one.run(nodewire.SessionRequest{CommandID: "input"})
+	one.run(nodewire.SessionRequest{CommandID: "input"}, nil)
 	one.mu.Lock()
 	command := one.record.Commands["input"]
 	one.mu.Unlock()

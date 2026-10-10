@@ -54,6 +54,8 @@ jobs:
         run: go test -race -count=1 ./internal/procgroup/
       - name: Agent process group stops
         run: go test -race -count=1 -run '^(TestKillProcessGroupReapsDescendants|TestHostConfirmsStopOnlyAfterTheAgentsGroupIsGone|TestHostDoesNotConfirmAStopWhileAHiddenMemberRuns|TestHostRestartsWhileAnExitedAgentsGroupCannotBeEnded|TestHostCloseKillsAnAgentWhoseExitCannotBeWatched|TestLocalTransportDoesNotPassOnAnInheritedMark|TestHostStopWaitsOnlyBrieflyForAnExitedAgentsGroup|TestHostEndsAnExitedAgentsGroupWhileAMemberHoldsItsOutput|TestHostEndsAnAgentWhoseProcessGroupCannotBeIdentified|TestLocalProcessReapsAnAgentWhoseExitCannotBeWatchedOnlyBetweenKills|TestLocalProcessTellsTheExitCodeOfAnAgentWhoseExitCannotBeWatched)$' ./internal/acphost/
+      - name: Owned ACP terminals and recovery
+        run: TMPDIR=/tmp go test -race -count=1 -run '^(TestTerminal|TestHostTerminal|TestStandaloneTerminal|TestWarmRuntime)' ./internal/acphost/ ./internal/node/
   fleet:
     runs-on: ubuntu-latest
     steps:
@@ -63,3 +65,5 @@ jobs:
           go-version-file: go.mod
       - name: Disposable hub gates and cleanup
         run: STEVE_HUBLAB_E2E=1 TMPDIR=/tmp go test -race -count=1 -timeout 12m ./e2e/fleetlab/...
+      - name: Disposable fleet acceptance
+        run: make e2e-fleet

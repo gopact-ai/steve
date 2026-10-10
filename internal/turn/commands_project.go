@@ -41,12 +41,12 @@ func (c commands) projectCmd(ctx context.Context, req Request, rest string) (Res
 	if err := c.require(ctx, p.ID, req.SenderOpenID, project.RoleRead); err != nil {
 		return Result{}, err
 	}
-	conversation := c.store.Conversation(req.ConversationID)
-	for agentID := range conversation.Sessions {
-		if c.isActive(req.ConversationID, agentID) {
-			return Result{Title: title, Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}, nil
-		}
+	release, admissionErr := c.beginConversationRetirement(ctx, req.ConversationID)
+	if admissionErr != nil {
+		return Result{Title: title, Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}, nil
 	}
+	defer release()
+	conversation := c.store.Conversation(req.ConversationID)
 	// A task belongs to the project it was opened in; the next turn here
 	// runs in another. What this conversation still held is closed, so it is
 	// not silently continued under a different directory and a different

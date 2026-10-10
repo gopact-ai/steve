@@ -597,7 +597,7 @@ const checks = {
             if (empty) return route.fulfill({ json: {} }); // Go omits empty option arrays.
             const conversation = new URL(route.request().url()).searchParams.get("conversation");
             const preferred = preferences.get(conversation) || {};
-            return route.fulfill({ json: { model: preferred.model || "gpt-6-astra", preferred, models: [{ Value: "no-effort", Label: "Model without effort" }], options: preferred.model === "no-effort" ? [] : [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Current: preferred.reasoning_effort || selected, Choices: [{ Value: "low", Label: "Low" }, { Value: "medium", Label: "Medium" }, { Value: "high", Label: "High" }] }] } });
+            return route.fulfill({ json: { model: preferred.model || "gpt-6-astra", preferred, models: [{ Value: "no-effort", Label: "Model without effort" }], options: preferred.model === "no-effort" ? [] : [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Type: "select", Current: preferred.reasoning_effort || selected, Choices: [{ Value: "low", Label: "Low" }, { Value: "medium", Label: "Medium" }, { Value: "high", Label: "High" }] }] } });
         });
         await f.page.route("**/console/preferences", (route) => {
             const input = route.request().postDataJSON();
@@ -609,58 +609,79 @@ const checks = {
         await f.page.reload();
         const chip = f.page.getByRole("button", { name: "思考强度", exact: true });
         await chip.waitFor();
+        const choose = async (name) => {
+            await chip.click();
+            const menu = f.page.getByRole("menu");
+            await menu.waitFor();
+            await f.page.clock.runFor(200);
+            await menu.getByRole("menuitem", { name, exact: true }).click();
+            await f.page.clock.runFor(200);
+            await menu.waitFor({ state: "hidden" });
+        };
         assert.equal(reads, 0, "Rendering the effort chip must not open a harness session");
         await f.page.setViewportSize({ width: 560, height: 900 });
+        await f.page.locator(".app-mobile-bar").waitFor({ state: "attached" });
         await f.page.clock.runFor(350);
         await visibleControl(chip, "Reasoning chip in a narrow window");
         await noHorizontalOverflow(f.page);
         await f.page.setViewportSize({ width: 1600, height: 1000 });
+        await f.page.locator(".app-mobile-bar").waitFor({ state: "detached" });
+        await f.page.clock.runFor(350);
         await chip.focus(); await f.page.keyboard.press("Enter");
         await f.page.getByText("读取可选项…", { exact: true }).waitFor();
         discovery.release();
         await f.page.getByRole("alert").getByText("Choices unavailable", { exact: true }).waitFor();
         await f.page.keyboard.press("Escape");
+        await f.page.clock.runFor(200);
         rejectRead = false;
-        await chip.click();
-        await f.page.getByRole("menuitem", { name: "High", exact: true }).click();
+        await choose("High");
         await eventually(async () => (await chip.innerText()).includes("High"), "Saved effort must appear on the chip");
         const write = f.calls.find((c) => c.path === "/console/preferences");
         assert.deepEqual(write.patch, { reasoning_effort: "high" });
         assert.equal(write.conversation, A); assert.equal(write.agent, "test-agent");
         rejectSave = true;
-        await chip.click(); await f.page.getByRole("menuitem", { name: "Low", exact: true }).click();
+        await choose("Low");
         await f.page.getByRole("alert").getByText("Preferences unavailable", { exact: true }).waitFor();
         assert.ok((await chip.innerText()).includes("High"), "Rejected save must preserve the previous effort");
         rejectSave = false; rejectRead = true;
-        await chip.click(); await f.page.getByRole("menuitem", { name: "Low", exact: true }).click();
+        await choose("Low");
         await f.page.getByRole("alert").getByText("Choices unavailable", { exact: true }).waitFor();
         rejectRead = false;
         await chip.click(); await f.page.getByRole("menuitem", { name: "Low", exact: true }).waitFor();
         assert.ok((await chip.innerText()).includes("Low"), "Reopening after a failed refresh must recover the saved effort");
         await f.page.keyboard.press("Escape");
+        await f.page.clock.runFor(200);
         await f.pick("B");
         assert.equal(await chip.innerText(), "思考强度", "A different conversation must not inherit cached choices");
         await chip.click(); await f.page.getByRole("menuitem", { name: "Medium", exact: true }).waitFor();
         assert.ok((await chip.innerText()).includes("Medium"));
         await f.page.keyboard.press("Escape");
+        await f.page.clock.runFor(200);
         await f.pick("A");
         await chip.click(); await f.page.getByRole("menuitem", { name: "Low", exact: true }).waitFor();
         assert.ok((await chip.innerText()).includes("Low"), "Returning must reload the conversation's saved effort");
+        assert.deepEqual(f.calls.filter(c => c.path === "/console/preferences").map(c => c.patch), [
+            { reasoning_effort: "high" }, { reasoning_effort: "low" }, { reasoning_effort: "low" },
+        ], "Clearing a save error while reopening must not select another option under the pointer");
         await f.page.keyboard.press("Escape");
+        await f.page.clock.runFor(200);
         await f.page.getByRole("button", { name: "模型", exact: true }).click();
         await f.page.getByRole("menuitem", { name: "Model without effort", exact: true }).click();
         await eventually(async () => await chip.innerText() === "思考强度", "Model change must discard the previous model's effort choices");
         await chip.click();
         await f.page.getByText("当前工具或模型不支持选择思考强度", { exact: true }).waitFor();
         await f.page.keyboard.press("Escape");
+        await f.page.clock.runFor(200);
         empty = true;
         await f.page.reload();
         await chip.click();
         await f.page.getByText("当前工具或模型不支持选择思考强度", { exact: true }).waitFor();
         await f.page.keyboard.press("Escape");
+        await f.page.clock.runFor(200);
         await f.page.getByRole("button", { name: "模型", exact: true }).click();
         await f.page.getByText("这个 AI 工具没有暴露模型选择", { exact: true }).waitFor();
         await f.page.keyboard.press("Escape");
+        await f.page.clock.runFor(200);
 
     },
     async "approval-mode-preference"(f) {
@@ -676,8 +697,8 @@ const checks = {
         await f.page.route("**/console/selectors?*", (route) => {
             const conversation = new URL(route.request().url()).searchParams.get("conversation");
             const preferred = preferences.get(conversation) || {};
-            const options = [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Current: "high", Choices: [{ Value: "low", Label: "Low" }, { Value: "high", Label: "High" }] }];
-            if (modes) options.unshift({ ID: "mode", Name: "Mode", Category: "mode", Current: preferred.mode || "read-only", Choices: [{ Value: "read-only", Label: "Ask for approval" }, { Value: "agent", Label: "Approve for me" }, { Value: "agent-full-access", Label: "Full access" }] });
+            const options = [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Type: "select", Current: "high", Choices: [{ Value: "low", Label: "Low" }, { Value: "high", Label: "High" }] }];
+            if (modes) options.unshift({ ID: "mode", Name: "Mode", Category: "mode", Type: "select", Current: preferred.mode || "read-only", Choices: [{ Value: "read-only", Label: "Ask for approval" }, { Value: "agent", Label: "Approve for me" }, { Value: "agent-full-access", Label: "Full access" }] });
             return route.fulfill({ json: { model: "gpt-6-astra", preferred, models: [{ Value: "gpt-6-astra", Label: "gpt-6-astra" }], options } });
         });
         await f.page.route("**/console/preferences", (route) => {
@@ -2161,25 +2182,28 @@ checks["composer-columns"] = async (f) => {
     // The control row answers two questions. Where the message goes reads
     // from the left; how the turn will run reads from the right and ends at
     // the send button. Too narrow for two groups and the row closes ranks,
-    // so no control is stranded in the middle of an empty row.
+    // so no control is stranded in the middle of an empty row. Session
+    // options now lead the run group; the model follows that real control.
     await f.page.route("**/console/context?*", (route) => route.fulfill({ json: { enabled: true, context: { conversation: A, project: { ...project("scratch"), bound: true }, agents: [], agent: { id: "test-agent", node: "test-node", harness: "codex", model: "gpt-6-astra", ready: true, usable: true } } } }));
-    await f.page.route("**/console/selectors?*", (route) => route.fulfill({ json: { model: "gpt-6-astra", preferred: {}, models: [{ Value: "gpt-6-astra", Label: "gpt-6-astra" }], options: [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Current: "high", Choices: [{ Value: "high", Label: "High" }] }] } }));
+    await f.page.route("**/console/selectors?*", (route) => route.fulfill({ json: { model: "gpt-6-astra", preferred: {}, models: [{ Value: "gpt-6-astra", Label: "gpt-6-astra" }], options: [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Type: "select", Current: "high", Choices: [{ Value: "high", Label: "High" }] }] } }));
     await f.page.setViewportSize({ width: 1280, height: 900 });
     await f.page.reload();
     const project_ = f.page.getByRole("button", { name: "项目", exact: true });
     const agent = f.page.getByRole("button", { name: "Agent", exact: true });
-    const model = f.page.getByRole("button", { name: "模型", exact: true });
+    const firstRun = f.page.getByRole("button", { name: "会话选项", exact: true });
     const queue = f.page.getByRole("button", { name: "排队", exact: true }).first();
     const send = f.page.locator('button[aria-label="发送"]');
-    await model.waitFor();
+    await firstRun.waitFor();
     const box = async (locator) => await locator.boundingBox();
-    const [left, right, tail, button] = [await box(agent), await box(model), await box(queue), await box(send)];
+    const [left, right, tail, button] = [await box(agent), await box(firstRun), await box(queue), await box(send)];
     assert.ok(right.x - (left.x + left.width) > 80, `The run controls must sit apart from the message controls: ${JSON.stringify({ left, right })}`);
     assert.ok(button.x - (tail.x + tail.width) < 24, `The last run control must meet the send button: ${JSON.stringify({ tail, button })}`);
     assert.ok((await box(project_)).x < right.x, "The project stays on the left of the row");
     await f.page.setViewportSize({ width: 520, height: 900 });
+    await f.page.locator(".app-mobile-bar").waitFor({ state: "attached" });
+    await f.page.clock.runFor(350);
     await eventually(async () => {
-        const [near, far] = [await box(agent), await box(model)];
+        const [near, far] = [await box(agent), await box(firstRun)];
         return far.y > near.y + 4 || far.x - (near.x + near.width) < 40;
     }, "A composer too narrow for two groups must close the gap instead of stranding controls");
     await noHorizontalOverflow(f.page);
@@ -3684,7 +3708,7 @@ checks["preferences-during-a-turn"] = async (f) => {
         return route.fulfill({ json: { enabled: true, context: { conversation, project: { ...project("scratch"), bound: true }, agents: [], agent: { id: "test-agent", node: "test-node", harness: "codex", model: "gpt-6-astra", ready: true, usable: true } } } });
     });
     await f.page.route("**/console/selectors?*", (route) => route.fulfill({
-        json: { model: "gpt-6-astra", models: [{ Value: "gpt-6-astra", Label: "Astra" }], options: [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Current: "medium", Choices: [{ Value: "medium", Label: "Medium" }, { Value: "high", Label: "High" }] }] },
+        json: { model: "gpt-6-astra", models: [{ Value: "gpt-6-astra", Label: "Astra" }], options: [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Type: "select", Current: "medium", Choices: [{ Value: "medium", Label: "Medium" }, { Value: "high", Label: "High" }] }] },
     }));
     await f.page.route("**/console/preferences", (route) => {
         f.calls.push({ path: "/console/preferences", ...route.request().postDataJSON() });

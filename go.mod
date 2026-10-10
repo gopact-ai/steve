@@ -6,7 +6,7 @@ go 1.27
 replace github.com/hashicorp/raft v1.7.3 => ./third_party/raft
 
 require (
-	github.com/gopact-ai/acp v0.2.0
+	github.com/gopact-ai/acp v0.2.1-0.20261006231213-90583dcdd1cd
 	github.com/gopact-ai/gopact v0.3.2
 	github.com/gopact-ai/gopact-ext/stores v0.2.1-0.20260901080022-8fc158112202
 	github.com/hashicorp/raft v1.7.3

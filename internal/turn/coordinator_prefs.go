@@ -127,6 +127,19 @@ func (c *Coordinator) applyLive(ctx context.Context, conversationID, agentID str
 			slog.Info(fmt.Sprintf("turn: %s did not take %s=%s mid-turn: %v", agentID, id, value, err), "conversation", conversationID, "agent", agentID, "option", id)
 			return false
 		}
+		actual := configurable.Settings()
+		confirmed := id == "model" && actual.Model == value
+		if id != "model" {
+			for _, option := range actual.Options {
+				if option.ID == id && option.Current == value {
+					confirmed = true
+				}
+			}
+		}
+		if !confirmed {
+			return false
+		}
+
 	}
 	if reobserver, ok := runner.(harness.Reobserver); ok {
 		reobserver.Reobserve()

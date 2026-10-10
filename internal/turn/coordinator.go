@@ -258,9 +258,9 @@ type coordinatorState struct {
 	preferenceLocks sync.Map // conversation/agent -> *sync.Mutex
 	lastSeen        map[string]time.Time
 	active          map[string]harness.Runner
-	cancels         map[string]*turnEntry
-	cancelPending   map[string]time.Time
-	skillsLock      int
+	sessionAdmissionState
+	cancelPending map[string]time.Time
+	skillsLock    int
 }
 
 // Deps is everything a Coordinator is built with. New refuses a Deps
@@ -385,8 +385,9 @@ func New(deps Deps) (*Coordinator, error) {
 			offlineAfter: deps.OfflineAfter, consoleCompletionGuard: deps.ConsoleCompletionGuard,
 			nodes: deps.Nodes, planRecoveryOwner: deps.PlanRecoveryOwner,
 			plans: deps.Plans, fleet: deps.Fleet, prober: deps.Prober,
-			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
-			cancelPending: map[string]time.Time{},
+			active:                map[string]harness.Runner{},
+			sessionAdmissionState: sessionAdmissionState{cancels: map[string]*turnEntry{}},
+			cancelPending:         map[string]time.Time{},
 		},
 	}, nil
 }
@@ -495,6 +496,12 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 }
 
 func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
+	c.mu.Lock()
+	retiring := c.retiring[req.ConversationID]
+	c.mu.Unlock()
+	if retiring {
+		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel), Cause: ErrConversationBusy}
+	}
 	// Every arriving message is evidence that someone is present. The
 	// offline reminder reads exactly this: nothing arrived while the turn
 	// ran, so the person who asked is no longer watching.

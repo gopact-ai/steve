@@ -14,7 +14,7 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 1000
 const page = await context.newPage(); page.setDefaultTimeout(6000);
 const at = "2026-09-07T01:00:00Z";
 const candidates = () => [
-    { id: "codex", name: "Codex", harness: "codex", executable: "/remote/bin/codex", adapter: "codex-acp", installed: true, requires: [], configured: false, registered: false, model: "gpt-5-codex", models: ["gpt-5-codex", "gpt-5-codex-mini"], selectors: [{ id: "effort", name: "Reasoning effort", category: "effort", current: "medium", choices: ["Medium", "High"], values: ["medium", "high"] }] },
+    { id: "codex", name: "Codex", harness: "codex", executable: "/remote/bin/codex", adapter: "codex-acp", installed: true, requires: [], configured: false, registered: false, model: "gpt-5-codex", models: ["gpt-5-codex", "gpt-5-codex-mini"], selectors: [{ id: "effort", name: "Reasoning effort", category: "effort", type: "select", current: "medium", choices: ["Medium", "High"], values: ["medium", "high"] }] },
     { id: "gemini", name: "Gemini CLI", harness: "gemini", executable: "/remote/bin/gemini", adapter: "gemini-acp", installed: true, requires: [], configured: false, registered: false },
     { id: "claude", name: "Claude Code", harness: "claude-code", executable: "/remote/bin/claude", adapter: "claude-agent-acp", installed: true, requires: ["npm"], configured: false, registered: false },
     { id: "kimi", name: "Kimi Code", harness: "kimi", installed: false, requires: [], configured: false, registered: false },
@@ -73,7 +73,7 @@ try {
     await codex.getByRole("textbox", { name: "What it is for", exact: true }).fill("runs tests");
     await codex.getByRole("button", { name: /Model$/ }).click();
     await page.getByRole("option", { name: "gpt-5-codex-mini", exact: true }).click();
-    await codex.getByRole("button", { name: /Reasoning effort$/ }).click();
+    await codex.getByRole("group", { name: "Reasoning effort", exact: true }).getByRole("button", { name: /Requested preference$/ }).click();
     await page.getByRole("option", { name: "High", exact: true }).click();
     await dialog.getByText("remote-codex", { exact: true }).click();
     console.log("PASS multiple tools, per-agent naming, model and effort selection");

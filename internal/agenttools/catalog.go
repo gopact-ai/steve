@@ -41,6 +41,7 @@ type Candidate struct {
 type CandidateSelector struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
+	Type     string   `json:"type,omitempty"`
 	Category string   `json:"category,omitempty"`
 	Current  string   `json:"current,omitempty"`
 	Choices  []string `json:"choices,omitempty"`

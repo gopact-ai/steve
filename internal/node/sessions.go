@@ -53,6 +53,10 @@ type SessionService struct {
 	records             *sessionRecords
 	recordsErr          error
 
+	// admissionHooks only controls test scheduling; nil leaves dispatch alone.
+	// Hooks run without owner/Host locks and never replace native operations.
+	admissionHooks *sessionAdmissionHooks
+
 	// unverifiedProcesses names, under mu, the records a previous node
 	// process left without a confirmed stop whose process group this one
 	// has not ended yet; a stop of one of them tries again. place is where
@@ -117,6 +121,11 @@ func (s *SessionService) forgetCapabilities(harnessID string) {
 	delete(s.capabilities, harnessID)
 }
 
+type sessionAdmissionHooks struct {
+	beforePrompt  func(context.Context)
+	optionWaiting func()
+}
+
 type ownedSession struct {
 	pluginInstructions string
 	service            *SessionService
@@ -131,6 +140,13 @@ type ownedSession struct {
 	failure            error
 	pendingProgress    *view.Progress
 	progressTimer      *time.Timer
+
+	// promptAdmitted belongs only to CurrentCommand. It observes Host
+	// collector admission, not native dispatch, completion or process exit.
+	promptAdmitted    chan struct{}
+	terminalStarts    map[string]*readyTerminalStart
+	terminalResults   map[string]terminalAdmissionResult
+	terminalAdmission bool
 
 	// recording counts identities of started process groups not yet
 	// committed; an open publishes its agent only after they are.
@@ -164,7 +180,8 @@ type sessionRecord struct {
 	Consumed       *nodewire.SessionReceipt           `json:"consumed,omitzero"`
 	// Process is the native process group the open started, recorded once
 	// it runs, so a later node process can end it and confirm the stop.
-	Process sessionProcess `json:"process,omitzero"`
+	Process   sessionProcess             `json:"process,omitzero"`
+	Terminals map[string]sessionTerminal `json:"terminals,omitempty"`
 	// Rebinding fixes the consumed-input floor for the new execution. Missing
 	// receipts after that execution accepted input cannot become new inputs.
 	BindingInputStart uint64 `json:"binding_input_start,omitempty"`
@@ -246,14 +263,20 @@ func (s *SessionService) Close() {
 				next.Commands[id] = command
 			}
 		}
-		if next.State.ProcessStopped && next.State.Plugin != nil {
-			if err := s.server.pluginStore().EndRuntimeUse(context.Background(), *next.State.Plugin, "session/"+next.State.ID); err != nil {
+		// A commit that fails is latched in one.failure and answers the
+		// next request for this session; there is no one else to tell.
+		if next.Format == 1 && len(next.Terminals) == 0 && !next.State.TerminalAdmission {
+			if next.State.ProcessStopped && next.State.Plugin != nil {
+				if err := s.server.pluginStore().EndRuntimeUse(context.Background(), *next.State.Plugin, "session/"+next.State.ID); err != nil {
+					slog.Error("steve-node: plugin shutdown receipt failed", "error", err)
+				}
+			}
+			_ = one.commitLocked(next)
+		} else if err := one.commitLocked(next); err == nil {
+			if err := s.endStoppedRuntime(one.record); err != nil {
 				slog.Error("steve-node: plugin shutdown receipt failed", "error", err)
 			}
 		}
-		// A commit that fails is latched in one.failure and answers the
-		// next request for this session; there is no one else to tell.
-		_ = one.commitLocked(next)
 		one.mu.Unlock()
 	}
 	s.closeRecords()
@@ -278,6 +301,11 @@ func (s *SessionService) authorize(ctx context.Context, principal string, req no
 }
 
 func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.SessionRequest) (nodewire.SessionState, error) {
+	if req.Action == nodewire.SessionActionTerminalAdmit {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, nodewire.TerminalAdmissionWindow)
+		defer cancel()
+	}
 	if err := s.authorize(ctx, principal, req); err != nil {
 		return nodewire.SessionState{}, err
 	}
@@ -349,7 +377,9 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 	case nodewire.SessionActionAnswer:
 		return one.answer(req)
 	case nodewire.SessionActionOption:
-		return one.option(ctx, req)
+		return one.option(ctx, principal, req)
+	case nodewire.SessionActionTerminalAdmit:
+		return one.admitTerminal(ctx, principal, req)
 	case nodewire.SessionActionCancel:
 		return one.cancel(ctx, req)
 	case nodewire.SessionActionKill:

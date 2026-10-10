@@ -86,7 +86,7 @@ func (s *sessionRecords) acknowledge(ctx context.Context, request nodewire.Sessi
 	}
 	defer tx.Rollback()
 	fail := func(err error) (sessionRecord, bool, error) { return header, false, err }
-	receipt, authority := request.Receipt, request.Authority
+	receipt := request.Receipt
 	var sequence uint64
 	var raw []byte
 	if err := tx.QueryRow(`SELECT sequence,header FROM sessions WHERE id=?`, receipt.SessionID).Scan(&sequence, &raw); err != nil {
@@ -95,12 +95,8 @@ func (s *sessionRecords) acknowledge(ctx context.Context, request nodewire.Sessi
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return fail(err)
 	}
-	if header.Format != 1 || header.State.ID != receipt.SessionID || header.State.ContextID != receipt.ContextID ||
-		header.State.Sequence != sequence || header.State.InputAccepted < receipt.InputSequence ||
-		header.ClusterID != authority.ClusterID || header.Authority.CoordinatorEpoch > authority.CoordinatorEpoch ||
-		header.Authority.WriterGeneration > authority.WriterGeneration ||
-		header.Authority.CoordinatorEpoch == authority.CoordinatorEpoch && header.Authority.CoordinatorNodeID != authority.CoordinatorNodeID {
-		return fail(errors.New("receipt acknowledgement differs from native session ownership"))
+	if err := validateReceiptOwner(header, sequence, request); err != nil {
+		return fail(err)
 	}
 	var inputSequence uint64
 	var binding, progress []byte
@@ -134,9 +130,50 @@ func (s *sessionRecords) acknowledge(ctx context.Context, request nodewire.Sessi
 		return fail(errors.New("receipt acknowledgement differs from original durable command"))
 	}
 	state := nodewire.SessionState{ID: receipt.SessionID, ContextID: receipt.ContextID, Binding: original, Command: &command, Progress: frozen}
-	rows, err := tx.Query(`SELECT settled,question FROM session_questions WHERE session_id=? AND command_id=?`, receipt.SessionID, receipt.CommandID)
+	state.Questions, err = readReceiptQuestions(tx, receipt.SessionID, receipt.CommandID)
 	if err != nil {
 		return fail(err)
+	}
+	frozenReceipt, err := nodewire.NewSessionReceipt(state)
+	if err != nil {
+		return fail(err)
+	}
+	if frozenReceipt != receipt {
+		return fail(errors.New("terminal command or question evidence changed after receipt"))
+	}
+	if err := deleteReceiptEvidence(tx, &header, frozenReceipt); err != nil {
+		return fail(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fail(err)
+	}
+	return header, true, nil
+}
+
+func validateReceiptOwner(header sessionRecord, sequence uint64, request nodewire.SessionReceiptRequest) error {
+	receipt, authority := request.Receipt, request.Authority
+	if err := validateSessionTerminals(header); err != nil {
+		return err
+	}
+	if header.Format == 2 && !sessionTerminalsStopped(header) {
+		return errors.New("receipt acknowledgement has outstanding terminal cleanup")
+	}
+	if (header.Format != 1 && header.Format != 2) || header.State.ID != receipt.SessionID || header.State.ContextID != receipt.ContextID ||
+		header.State.Sequence != sequence || header.State.InputAccepted < receipt.InputSequence ||
+		header.ClusterID != authority.ClusterID || header.Authority.CoordinatorEpoch > authority.CoordinatorEpoch ||
+		header.Authority.WriterGeneration > authority.WriterGeneration ||
+		header.Authority.CoordinatorEpoch == authority.CoordinatorEpoch && header.Authority.CoordinatorNodeID != authority.CoordinatorNodeID {
+		return errors.New("receipt acknowledgement differs from native session ownership")
+	}
+	return nil
+}
+
+func readReceiptQuestions(tx *sql.Tx, sessionID, commandID string) ([]nodewire.SessionQuestion, error) {
+	var questions []nodewire.SessionQuestion
+	var raw []byte
+	rows, err := tx.Query(`SELECT settled,question FROM session_questions WHERE session_id=? AND command_id=?`, sessionID, commandID)
+	if err != nil {
+		return nil, err
 	}
 	for rows.Next() {
 		var question nodewire.SessionQuestion
@@ -149,48 +186,41 @@ func (s *sessionRecords) acknowledge(ctx context.Context, request nodewire.Sessi
 		}
 		if err != nil {
 			rows.Close()
-			return fail(err)
+			return nil, err
 		}
-		state.Questions = append(state.Questions, question)
+		questions = append(questions, question)
 	}
 	err = errors.Join(rows.Err(), rows.Close())
-	if err != nil {
-		return fail(err)
-	}
-	frozenReceipt, err := nodewire.NewSessionReceipt(state)
-	if err != nil {
-		return fail(err)
-	}
-	if frozenReceipt != receipt {
-		return fail(errors.New("terminal command or question evidence changed after receipt"))
-	}
+	return questions, err
+}
+
+// deleteReceiptEvidence uses only the acknowledgement transaction. Its caller
+// commits before publishing any change to the live session.
+func deleteReceiptEvidence(tx *sql.Tx, header *sessionRecord, receipt nodewire.SessionReceipt) error {
 	if receipt.Binding == header.State.Binding && receipt.ContextID == header.State.ContextID && receipt.InputSequence == header.State.InputAccepted {
-		copy := frozenReceipt
+		copy := receipt
 		header.Consumed = &copy
 	}
 	if _, err := tx.Exec(`DELETE FROM session_questions WHERE session_id=? AND command_id=?`, receipt.SessionID, receipt.CommandID); err != nil {
-		return fail(err)
+		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM session_commands WHERE session_id=? AND id=?`, receipt.SessionID, receipt.CommandID); err != nil {
-		return fail(err)
+		return err
 	}
 	if header.CurrentCommand == receipt.CommandID {
 		header.CurrentCommand = ""
 		progress, _ := json.Marshal(view.Progress{})
 		if _, err := tx.Exec(`UPDATE session_progress SET progress=? WHERE session_id=?`, progress, receipt.SessionID); err != nil {
-			return fail(err)
+			return err
 		}
 	}
 	header.State.Sequence++
-	raw, err = sessionRecordJSON(header)
+	raw, err := sessionRecordJSON(*header)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	if _, err := tx.Exec(`UPDATE sessions SET sequence=?,header=? WHERE id=?`, header.State.Sequence, raw, receipt.SessionID); err != nil {
-		return fail(err)
+		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return fail(err)
-	}
-	return header, true, nil
+	return nil
 }

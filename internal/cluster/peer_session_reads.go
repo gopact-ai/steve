@@ -19,7 +19,7 @@ func sessionActionMode(action nodewire.SessionAction) (observation, stopping boo
 		return true, false, nil
 	case nodewire.SessionActionCancel, nodewire.SessionActionAbort, nodewire.SessionActionKill, nodewire.SessionActionClose, nodewire.SessionActionCancelOpen:
 		return false, true, nil
-	case nodewire.SessionActionStart, nodewire.SessionActionPrompt, nodewire.SessionActionAnswer, nodewire.SessionActionOption, nodewire.SessionActionCapabilities:
+	case nodewire.SessionActionStart, nodewire.SessionActionTerminalAdmit, nodewire.SessionActionPrompt, nodewire.SessionActionAnswer, nodewire.SessionActionOption, nodewire.SessionActionCapabilities:
 		return false, false, nil
 	default:
 		return false, false, errors.New("unsupported node session action")
@@ -91,7 +91,7 @@ func readSessionExecution(ctx context.Context, book *ledger.Ledger, binding node
 		if record.State.Terminal() || record.Unsettled {
 			return fmt.Errorf("execution %s cannot start more work", record.ID)
 		}
-		if action == nodewire.SessionActionPrompt && record.State != attempt.Running {
+		if (action == nodewire.SessionActionPrompt || action == nodewire.SessionActionTerminalAdmit) && record.State != attempt.Running {
 			return errors.New("native input requires a committed running attempt")
 		}
 		if action == nodewire.SessionActionStart && record.State != attempt.Leased && record.State != attempt.Prepared && record.State != attempt.Running {
@@ -105,7 +105,11 @@ func readSessionExecution(ctx context.Context, book *ledger.Ledger, binding node
 			if err != nil {
 				return err
 			}
-			if !exists || current.Incarnation != granted.Incarnation || current.Epoch != granted.Epoch || current.Holder != granted.Holder || !current.ExpiresAt.After(time.Now()) {
+			until := time.Now()
+			if action == nodewire.SessionActionTerminalAdmit {
+				until = until.Add(nodewire.TerminalAdmissionWindow)
+			}
+			if !exists || current.Incarnation != granted.Incarnation || current.Epoch != granted.Epoch || current.Holder != granted.Holder || !current.ExpiresAt.After(until) {
 				return ledger.ErrStale
 			}
 		}

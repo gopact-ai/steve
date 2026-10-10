@@ -1,6 +1,9 @@
 import { DialogSurface, DialogBody, DialogHeader, DialogFooter } from "@/components/steve/dialog-surface";
 import { AgentApproval, isApprovalSelector } from "@/components/steve/agent-approval";
+import { SessionOptionControl } from "@/components/steve/session-option";
+import { sessionOption, withOptionPreference } from "@/lib/session-options";
 import { IconButton } from "@/components/steve/icon-button";
+import { FleetAgentCreate } from "@/components/steve/fleet-agent-create";
 import { NodeAgentEnrollment } from "@/components/steve/node-agent-enrollment";
 import { CoordinationPanel } from "@/components/steve/coordination-panel";
 import { ExecutionDataLevel, SSHConnect } from "@/components/steve/ssh-connect";
@@ -24,7 +27,7 @@ import { removeNode } from "@/lib/api/fleet";
 import { renameMachine } from "@/lib/machines";
 import { nodeLabel, nodeLabelIn } from "@/lib/node-name";
 import { bytes, number, relative, when } from "@/lib/format";
-import { addAgent, addNode, fetchNodeSettings, removeAgent, saveNodeSettings, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
+import { addNode, fetchNodeSettings, removeAgent, saveNodeSettings, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
 import { conditionWords, missingTags, troubleWords } from "@/lib/agent-trouble";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
 import { useCoordination } from "@/lib/coordination";
@@ -152,7 +155,8 @@ function AgentDrawer({ a: observed, live, onClose, onChanged }: { a: Agent; live
     const a = { ...observed, ...baseline, node: baseline.node || snap.hub.node, preferred: baseline.model };
     const [spec, setSpec] = useState<AgentSpec>(remoteSpec);
     const beginEdit = () => { setSpec(baseline); setError(""); setEditing(true); };
-    const extras = (a.selectors || []).filter((sel) => sel.category !== "model" && !isApprovalSelector(sel) && (sel.choices || []).length > 0);
+    const extras = (a.selectors || []).filter((sel) => !(sel.type === "select" && sel.category === "model") && !isApprovalSelector(sel));
+    const optionContextChanged = spec.harness !== observed.harness || (spec.node || snap.hub.node) !== (observed.node || snap.hub.node);
     const harnesses = Array.from(new Set([...snap.agents.map((x) => x.harness), a.harness])).filter(Boolean).sort();
     const canTake = levelOrder.slice(0, levelOrder.indexOf(a.level || "internal") + 1).map((l) => levelName(l, locale)).join("、");
     async function save() {
@@ -182,11 +186,14 @@ function AgentDrawer({ a: observed, live, onClose, onChanged }: { a: Agent; live
                             { k: tr("fleet.preferredModel"), v: a.preferred || <span className="text-quaternary">{tr("fleet.defaultModel")}</span>, hint: tr("fleet.modelHint") },
                             { k: tr("fleet.lastModel"), v: a.observed || <span className="text-quaternary">{tr("fleet.noSessions")}</span>, hint: tr("fleet.observedModelHint") },
                             { k: tr("fleet.availableModels"), v: a.models?.length ? <span className="text-secondary">{a.models.length} {tr("fleet.items")}</span> : <span className="text-quaternary">{tr("common.unknown")}</span> },
-                            ...extras.map((sel) => ({ k: sel.name || sel.id, v: a.options?.[sel.id] ? <span className="text-primary">{a.options[sel.id]}</span> : <span className="text-quaternary">{tr("fleet.unpinned")}{sel.current ? tr("fleet.previousOption", { value: sel.current }) : ""}</span>, hint: tr("fleet.optionHint") })),
                             { k: tr("fleet.eligibleProjects"), v: tr("fleet.projectLevels", { levels: canTake }), hint: tr("fleet.classificationHint") },
                             { k: tr("fleet.mcpServers"), v: a.mcp_servers?.length ? <Chips items={a.mcp_servers.map((m) => ({ id: m }))} /> : <span className="text-quaternary">{tr("fleet.none")}</span>, hint: tr("fleet.mcpHint") },
                             { k: tr("fleet.requirements"), v: <Conditions a={a} />, hint: tr("fleet.requirementsHint") },
                         ]} />
+                        {extras.length > 0 && <DrawerSection title={tr("consoleChrome.sessionOptions")}>
+                            <div className="space-y-4">{extras.map(sel => <SessionOptionControl key={sel.id} option={sessionOption(sel)} editable={false}
+                                requested={a.options && Object.hasOwn(a.options, sel.id) ? a.options[sel.id] : undefined} />)}</div>
+                        </DrawerSection>}
                         {a.models?.length ? (
                             <details className="text-xs">
                                 <summary className="cursor-pointer text-tertiary">{tr("fleet.modelList")}</summary>
@@ -215,13 +222,10 @@ function AgentDrawer({ a: observed, live, onClose, onChanged }: { a: Agent; live
                         <Select size="sm" label={tr("fleet.model")} hint={tr("fleet.pinModelHint")} selectedKey={spec.model || "__none"} onSelectionChange={(k) => setSpec({ ...spec, model: !k || String(k) === "__none" ? "" : String(k) })} items={modelItems}>
                             {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                         </Select>
-                        {extras.map((sel) => (
-                            <Select key={sel.id} size="sm" label={sel.name || sel.id} hint={tr("fleet.sessionOptionHint", { previous: sel.current ? tr("fleet.previousWas", { value: sel.current }) : "" })} selectedKey={spec.options?.[sel.id] || "__none"}
-                                onSelectionChange={(k) => { const next = { ...(spec.options || {}) }; if (!k || String(k) === "__none") delete next[sel.id]; else next[sel.id] = String(k); setSpec({ ...spec, options: next }); }}
-                                items={[{ id: "__none", label: tr("fleet.toolDefault") }, ...(sel.choices || []).map((c) => ({ id: c, label: c }))]}>
-                                {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
-                            </Select>
-                        ))}
+                        {extras.map(sel => <SessionOptionControl key={sel.id} option={sessionOption(sel)}
+                            requested={spec.options && Object.hasOwn(spec.options, sel.id) ? spec.options[sel.id] : undefined}
+                            disabled={busy || optionContextChanged}
+                            onChange={value => setSpec({ ...spec, options: withOptionPreference(spec.options, sel.id, value) })} />)}
                         {extras.length === 0 && <div className="text-xs text-quaternary">{tr("fleet.noOptionsHint")}</div>}
                         <TextArea label={tr("fleet.purpose")} rows={3} placeholder={tr("fleet.purposePlaceholder")} value={spec.about || ""} onChange={(v) => setSpec({ ...spec, about: v })} />
                         <div className="flex flex-col gap-1.5">
@@ -248,42 +252,33 @@ function AgentDrawer({ a: observed, live, onClose, onChanged }: { a: Agent; live
 // AddMachine is a dialog, not a snippet: the hub registers the machine
 // and writes its own config; what comes back is the one command to run
 // on that machine. An agent can be added the same way.
-function AddMachine({ machines, harnesses, executor, onClose, onDone }: { machines: { id: string; label: string; supportingText?: string }[]; harnesses: string[]; executor?: { name: string; addr: string; level: string }; onClose: () => void; onDone: () => void }) {
+function AddMachine({ hub, machines, initialNode, executor, onClose, onDone }: { hub: string; machines: { id: string; label: string; supportingText?: string }[]; initialNode?: string; executor?: { name: string; addr: string; level: string }; onClose: () => void; onDone: () => void }) {
     const { t: tr, locale } = useI18n();
-    const [mode, setMode] = useState<"machine" | "agent">("machine");
+    const [mode, setMode] = useState<"machine" | "agent">(initialNode ? "agent" : "machine");
     const [name, setName] = useState(executor?.name || "");
     const [addr, setAddr] = useState(executor?.addr || "");
     const [level, setLevel] = useState(executor?.level || "internal");
-    const [agent, setAgent] = useState("");
-    const [harness, setHarness] = useState(harnesses[0] || "codex");
-    const [node, setNode] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const [result, setResult] = useState<AddNodeResult | null>(null);
-    const [done, setDone] = useState(false);
     async function submit() {
         setBusy(true); setError("");
         try {
-            if (mode === "machine") {
-                setResult(await addNode({ name: name.trim(), addr: addr.trim(), level }));
-            } else {
-                await addAgent({ id: agent.trim(), harness, node: node || undefined });
-                setDone(true);
-            }
+            setResult(await addNode({ name: name.trim(), addr: addr.trim(), level }));
             onDone();
         } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
     }
     return (
-        <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
+        <ModalOverlay isOpen onOpenChange={(open) => { if (!open && !busy) onClose(); }} isDismissable={!busy} isKeyboardDismissDisabled={busy} className="z-[100] motion-reduce:animate-none motion-reduce:duration-0">
             <Modal className="max-w-xl">
                 <Dialog aria-label={mode === "machine" ? tr("fleet.addMachine") : tr("fleet.addAgent")}>
                     <DialogSurface><DialogBody className="max-h-[85dvh] overflow-y-auto overscroll-contain">
                         <DialogHeader title={tr(mode === "machine" ? "fleet.addMachine" : "fleet.addAgent")}
-                            description={mode === "machine" ? tr(executor ? "ssh.manualExecutorHint" : "fleet.addMachineHint") : tr("fleet.addAgentHint")}
-                            aside={<IconButton icon={X} onClick={onClose} label={tr("common.close")} />} />
-                        {!result && !done && (
-                            <Tabs selectedKey={mode} onSelectionChange={(k) => setMode(k as "machine" | "agent")}>
-                                <TabList type="button-border" size="sm" items={[{ id: "machine", label: tr("fleet.machine") }, { id: "agent", label: "Agent" }]}>{(item) => <Tab {...item} />}</TabList>
+                            description={mode === "machine" ? tr(executor ? "ssh.manualExecutorHint" : "fleet.addMachineHint") : tr("fleet.commandAddHint")}
+                            aside={<IconButton icon={X} isDisabled={busy} onClick={onClose} label={tr("common.close")} />} />
+                        {!result && (
+                            <Tabs selectedKey={mode} onSelectionChange={(k) => { if (!busy) setMode(k as "machine" | "agent"); }}>
+                                <TabList type="button-border" size="sm" items={[{ id: "machine", label: tr("fleet.machine") }, { id: "agent", label: "Agent" }]}>{(item) => <Tab {...item} isDisabled={busy} />}</TabList>
                             </Tabs>
                         )}
                         {mode === "machine" && !result && (
@@ -305,22 +300,11 @@ function AddMachine({ machines, harnesses, executor, onClose, onDone }: { machin
                                 <p className="text-xs text-tertiary">{tr("fleet.bootstrapHint")}{result.note ? " " + result.note : ""}</p>
                             </div>
                         )}
-                        {mode === "agent" && !done && (
-                            <div className="grid grid-cols-1 gap-4">
-                                <Input size="sm" label={tr("fleet.name")} placeholder="reviewer" value={agent} onChange={setAgent} autoFocus hint={tr("fleet.agentNameHint")} />
-                                <Select size="sm" label={tr("fleet.aiTool")} hint={tr("fleet.harnessHint")} selectedKey={harness} onSelectionChange={(k) => k && setHarness(String(k))} items={harnesses.map((h) => ({ id: h, label: h }))}>
-                                    {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
-                                </Select>
-                                <Select size="sm" label={tr("fleet.machine")} hint={tr("fleet.chooseMachineHint")} selectedKey={node || "__hub"} onSelectionChange={(k) => setNode(!k || String(k) === "__hub" ? "" : String(k))} items={machines}>
-                                    {(item) => <Select.Item id={item.id} supportingText={item.supportingText}>{item.label}</Select.Item>}
-                                </Select>
-                            </div>
-                        )}
-                        {mode === "agent" && done && <div className="text-sm text-primary">{tr("fleet.agentAdded", { agent: agent.trim(), harness, node: machines.find((m) => m.id === (node || "__hub"))?.label || node })}</div>}
+                        {mode === "agent" && <FleetAgentCreate hub={hub} machines={machines} initialNode={initialNode} onChanged={onDone} onBusyChange={setBusy} />}
                         {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
                         <DialogFooter>
-                            <Button size="sm" color="secondary" onClick={onClose}>{result || done ? tr("fleet.done") : tr("common.cancel")}</Button>
-                            {!result && !done && <Button size="sm" color="primary" isLoading={busy} isDisabled={mode === "machine" ? !name.trim() || !addr.trim() : !agent.trim()} onClick={() => void submit()}>{mode === "machine" ? tr("fleet.registerMachine") : tr("fleet.registerAgent")}</Button>}
+                            <Button size="sm" color="secondary" isDisabled={busy} onClick={onClose}>{result || mode === "agent" ? tr("fleet.done") : tr("common.cancel")}</Button>
+                            {mode === "machine" && !result && <Button size="sm" color="primary" isLoading={busy} isDisabled={!name.trim() || !addr.trim()} onClick={() => void submit()}>{tr("fleet.registerMachine")}</Button>}
                         </DialogFooter>
                     </DialogBody></DialogSurface>
                 </Dialog>
@@ -400,7 +384,7 @@ function protocolNote(n: NodeT, hubVersion: string, tr: Translator): string | un
         : tr("fleet.protocolAhead", { node: `v${m.node}`, hub });
 }
 
-function MachineDrawer({ n, hubVersion, onUpgrade, onClose, onChanged }: { n: NodeT; hubVersion?: string; onUpgrade: (n: NodeT) => void; onClose: () => void; onChanged: () => void }) {
+function MachineDrawer({ n, hubVersion, onUpgrade, onAddAgent, onClose, onChanged }: { n: NodeT; hubVersion?: string; onUpgrade: (n: NodeT) => void; onAddAgent: (n: NodeT) => void; onClose: () => void; onChanged: () => void }) {
     const { t: tr, locale } = useI18n();
     const note = protocolNote(n, hubVersion || "—", tr);
     const upgradable = n.role !== "hub" && !!hubVersion && ((n.up && !!n.version && n.version !== hubVersion) || protocolBehind(n));
@@ -454,7 +438,7 @@ function MachineDrawer({ n, hubVersion, onUpgrade, onClose, onChanged }: { n: No
                 ]} />
                 <MachineRestart n={n} onChanged={onChanged} />
                 {enrolling && <NodeAgentEnrollment node={n.name} onClose={() => setEnrolling(false)} onRegistered={onChanged} />}
-                <section className="rounded-lg border border-secondary p-3">{n.role === "hub" ? <Button size="sm" color="secondary" href="/console?setup=agents" onClick={onClose}>{tr("nodeAgents.entry")}</Button> : <Button size="sm" color="secondary" isDisabled={!n.up} onClick={() => setEnrolling(true)}>{tr("nodeAgents.entry")}</Button>}</section>
+                <section className="flex flex-wrap gap-2 rounded-lg border border-secondary p-3"><Button size="sm" color="secondary" isDisabled={!n.up} onClick={() => onAddAgent(n)}>{tr("fleet.addAgent")}</Button>{n.role === "hub" ? <Button size="sm" color="secondary" href="/console?setup=agents" onClick={onClose}>{tr("nodeAgents.entry")}</Button> : <Button size="sm" color="secondary" isDisabled={!n.up} onClick={() => setEnrolling(true)}>{tr("nodeAgents.entry")}</Button>}</section>
                 {editing ? (
                     <SettingsEditor node={n.name} onClose={() => setEditing(false)} onSaved={onChanged} />
                 ) : (
@@ -544,6 +528,7 @@ export function FleetPage() {
     const versionDrift = snap.nodes.filter((n) => n.up && n.version && snap.hub.version && n.version !== snap.hub.version);
     const refusedBehind = snap.nodes.filter(protocolBehind);
     const [adding, setAdding] = useState(false);
+    const [agentNode, setAgentNode] = useState<string>();
     const [upgrading, setUpgrading] = useState<NodeT[] | null>(null);
     const [sshOpen, setSSHOpen] = useState(false);
     const [executor, setExecutor] = useState<{ name: string; addr: string; level: string }>();
@@ -556,11 +541,10 @@ export function FleetPage() {
     }, [sshOpen, focusMachines, tab]);
     const machineRows = useRowDrawer(snap.nodes.map((n) => n.name));
     const agentRows = useRowDrawer(snap.agents.map((a) => a.id));
-    const hubHarnesses = Array.from(new Set(snap.agents.map((a) => a.harness).filter(Boolean))) as string[];
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title={tr("fleet.title")} description={tr("fleet.description")}
-                actions={<>{coordination?.enabled && tab !== "coordination" && <Button size="sm" color="secondary" onClick={() => setTab("coordination")}>{tr("coord.manage")}</Button>}<Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => { setExecutor(undefined); setAdding(true); }}>{tr("fleet.addResource")}</Button></>}>
+                actions={<>{coordination?.enabled && tab !== "coordination" && <Button size="sm" color="secondary" onClick={() => setTab("coordination")}>{tr("coord.manage")}</Button>}<Button size="sm" color="secondary" onClick={() => { setAgentNode(snap.hub.node); setExecutor(undefined); setAdding(true); }}>{tr("fleet.addAgent")}</Button><Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => { setAgentNode(undefined); setExecutor(undefined); setAdding(true); }}>{tr("fleet.addResource")}</Button></>}>
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as FleetTab)}>
                     <TabList type="button-border" size="sm" items={[{ id: "coordination", label: tr("coord.title") }, { id: "machines", label: tr("fleet.tabMachines"), badge: snap.nodes.length || undefined }, { id: "agents", label: "Agent", badge: snap.agents.length || undefined }]}>
                         {(item) => <Tab {...item} />}
@@ -569,8 +553,8 @@ export function FleetPage() {
             </PageHeader>
             <PageBody>
             {upgrading && <MachineUpgrade nodes={upgrading} version={snap.hub.version || "—"} onClose={() => setUpgrading(null)} onChanged={refresh} />}
-            {sshOpen && <SSHConnect onClose={() => setSSHOpen(false)} onChanged={refresh} onViewMachines={() => { setSSHOpen(false); setTab("machines"); setFocusMachines(true); }} onAddExecutor={(request) => { setExecutor(request); setSSHOpen(false); setAdding(true); }} />}
-            {adding && <AddMachine executor={executor} machines={machineOptions(snap, tr)} harnesses={hubHarnesses.length ? hubHarnesses : ["codex", "claude-code", "grok", "kimi"]} onClose={() => setAdding(false)} onDone={() => refresh()} />}
+            {sshOpen && <SSHConnect onClose={() => setSSHOpen(false)} onChanged={refresh} onViewMachines={() => { setSSHOpen(false); setTab("machines"); setFocusMachines(true); }} onAddExecutor={(request) => { setAgentNode(undefined); setExecutor(request); setSSHOpen(false); setAdding(true); }} />}
+            {adding && <AddMachine hub={snap.hub.node} initialNode={agentNode} executor={executor} machines={machineOptions(snap, tr)} onClose={() => setAdding(false)} onDone={() => refresh()} />}
             {tab === "coordination" && <><CoordinationPanel />{!coordination?.enabled && <p className="text-sm text-tertiary">{tr("coord.unavailable")}</p>}</>}
             {tab === "machines" && <>
             {versionDrift.length > 0 && <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-warning-primary px-3 py-2 text-sm text-warning-primary"><span className="min-w-0 flex-1">{(versionDrift.length === 1 ? tr("fleet.versionDriftHintOne", { version: snap.hub.version || "—" }) : tr("fleet.versionDriftHint", { count: versionDrift.length, version: snap.hub.version || "—" }))}</span><Button size="sm" color="secondary" onClick={() => setUpgrading(versionDrift.filter((n) => n.role !== "hub"))}>{tr("fleet.upgradeAll")}</Button></div>}
@@ -619,7 +603,7 @@ export function FleetPage() {
                     </Table>
                 )}
             </TableCard.Root></div>
-            {machineRows.opened && snap.nodes.find((n) => n.name === machineRows.opened) && <MachineDrawer n={snap.nodes.find((n) => n.name === machineRows.opened)!} hubVersion={snap.hub.version} onUpgrade={(n) => setUpgrading([n])} onClose={machineRows.close} onChanged={() => refresh()} />}
+            {machineRows.opened && snap.nodes.find((n) => n.name === machineRows.opened) && <MachineDrawer n={snap.nodes.find((n) => n.name === machineRows.opened)!} hubVersion={snap.hub.version} onUpgrade={(n) => setUpgrading([n])} onAddAgent={(n) => { setAgentNode(n.name); setExecutor(undefined); setAdding(true); }} onClose={machineRows.close} onChanged={() => refresh()} />}
             </>}
             {tab === "agents" && <>
             <TableCard.Root size="sm" className="workbench-table min-w-0">

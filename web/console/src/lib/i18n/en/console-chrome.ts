@@ -1,6 +1,21 @@
 import type { domainZh } from "../zh/console-chrome.ts";
 
 export const domainEn = {
+    "consoleChrome.sessionOptions": "Session options",
+    "consoleChrome.noSessionOptions": "The Agent has not reported other session options.",
+    "consoleChrome.optionRequested": "Requested preference",
+    "consoleChrome.optionRequestedValue": "Requested preference: {value}",
+    "consoleChrome.optionUnfixed": "Unfixed (Agent default)",
+    "consoleChrome.optionReported": "Agent reported: {value}",
+    "consoleChrome.optionNotReported": "Not reported",
+    "consoleChrome.optionUnsupported": "Unknown, missing or invalid option type; shown read-only.",
+    "consoleChrome.optionInvalidSaved": "The saved preference is not a canonical boolean. Choose true, false or Unfixed.",
+    "consoleChrome.optionPreferenceHint": "A preference is a request, not the Agent's Actual. Saving does not change the reported value; clearing may be refused if no default is declared.",
+    "consoleChrome.optionReload": "Reload Agent report",
+    "consoleChrome.optionReadbackPending": "Preference readback pending",
+    "consoleChrome.optionResetPending": "Reset accepted (preference readback pending)",
+    "consoleChrome.optionScopeChanged": "The Agent or workspace context changed. Reopen options for the current context.",
+    "consoleChrome.optionPreferenceUnconfirmed": "The preference write was not acknowledged. Keep the last reported state and check the preference again.",
     "channel.executionUnknown": "Execution status unknown",
     "channel.listError": "Conversation directory refresh failed; the list may be stale.",
     "channel.readOnly": "Feishu · Read-only",

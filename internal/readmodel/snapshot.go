@@ -647,10 +647,10 @@ func (m *Model) observedModels(n *Node) {
 			h.Version = seen.Version
 			h.Selectors = nil
 			for _, selector := range seen.Selectors {
-				if selector.Category == "model" || len(selector.Values) == 0 {
+				if selector.Category == "model" {
 					continue
 				}
-				h.Selectors = append(h.Selectors, HarnessSelector{ID: selector.ID, Name: selector.Name, Category: selector.Category, Current: selector.Current, Choices: selector.Choices, Values: selector.Values})
+				h.Selectors = append(h.Selectors, HarnessSelector{ID: selector.ID, Name: selector.Name, Category: selector.Category, Type: selector.Type, Current: selector.Current, Choices: selector.Choices, Values: selector.Values})
 			}
 		}
 	}

@@ -119,7 +119,7 @@ func (a *Service) DesktopDiscover(ctx context.Context) (consoleapi.DesktopDiscov
 		if offered, ok := offers[item.Harness]; ok {
 			candidate.Model, candidate.Models = offered.Model, offered.Models
 			for _, selector := range offered.Selectors {
-				candidate.Selectors = append(candidate.Selectors, consoleapi.DesktopAgentSelector{ID: selector.ID, Name: selector.Name, Category: selector.Category, Current: selector.Current, Choices: selector.Choices, Values: selector.Values})
+				candidate.Selectors = append(candidate.Selectors, consoleapi.DesktopAgentSelector{ID: selector.ID, Name: selector.Name, Type: selector.Type, Category: selector.Category, Current: selector.Current, Choices: selector.Choices, Values: selector.Values})
 			}
 		}
 		result.Agents = append(result.Agents, candidate)

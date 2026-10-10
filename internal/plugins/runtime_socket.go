@@ -3,8 +3,10 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -30,7 +32,10 @@ func (s *Store) RuntimeSocket(ctx context.Context, ref RuntimeRef) (string, erro
 		if err := json.Unmarshal(raw, &location); err != nil {
 			return "", ErrIntegrity
 		}
-		if !filepath.IsAbs(location) || filepath.Base(location) != "mcp.sock" || !strings.HasPrefix(filepath.Base(filepath.Dir(location)), "steve-plugin-socket-") {
+		if !validRuntimeSocketPath(location, runtime.GOOS) {
+			if limit := runtimeSocketPathLimit(runtime.GOOS); limit > 0 && len(location) >= limit {
+				return "", fmt.Errorf("%w: cached runtime socket address is too long (%d bytes; maximum %d); saved address unchanged; coordinate existing consumers before repairing the cached address", ErrIntegrity, len(location), runtimeSocketPathLimit(runtime.GOOS)-1)
+			}
 			return "", ErrIntegrity
 		}
 		if err := ensureSocketDirectory(filepath.Dir(location)); err != nil {
@@ -41,19 +46,37 @@ func (s *Store) RuntimeSocket(ctx context.Context, ref RuntimeRef) (string, erro
 	if !os.IsNotExist(err) {
 		return "", err
 	}
-	dir, err := os.MkdirTemp("", "steve-plugin-socket-")
+	// TMPDIR can be as long as the state directory; keep only sockets here.
+	dir, err := os.MkdirTemp(runtimeSocketTempBase(runtime.GOOS), "steve-plugin-socket-")
 	if err != nil {
 		return "", err
 	}
-	socket := filepath.Join(dir, "mcp.sock")
-	raw, err = json.Marshal(socket)
-	if err != nil {
-		return "", err
+	return s.publishRuntimeSocket(root, ref.ID, dir)
+}
+
+func validRuntimeSocketPath(location, goos string) bool {
+	limit := runtimeSocketPathLimit(goos)
+	return (limit == 0 || len(location) < limit) && filepath.IsAbs(location) &&
+		filepath.Base(location) == "mcp.sock" &&
+		strings.HasPrefix(filepath.Base(filepath.Dir(location)), "steve-plugin-socket-")
+}
+
+func runtimeSocketPathLimit(goos string) int {
+	if goos == "windows" {
+		return 0
 	}
-	if err := s.writeRecord(filepath.Join(s.RuntimeDir(ref.ID), "socket.json"), raw); err != nil {
-		return "", err
+	// Filesystem Unix addresses need a trailing NUL; Darwin has 104 bytes.
+	if goos == "linux" {
+		return 108
 	}
-	return socket, nil
+	return 104
+}
+
+func runtimeSocketTempBase(goos string) string {
+	if goos == "windows" {
+		return ""
+	}
+	return "/tmp"
 }
 
 func ensureSocketDirectory(dir string) error {

@@ -321,6 +321,7 @@ type HarnessSelector struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
 	Category string   `json:"category,omitempty"`
+	Type     string   `json:"type,omitempty"`
 	Current  string   `json:"current,omitempty"`
 	Choices  []string `json:"choices,omitempty"`
 	Values   []string `json:"values,omitempty"`

@@ -3,6 +3,7 @@ package acphost
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/gopact-ai/acp"
@@ -14,11 +15,16 @@ import (
 // with config_option_update / current_mode_update notifications, so this
 // outlives any single collector and is read back on every progress snapshot.
 type sessionState struct {
-	mu       sync.Mutex
-	options  []acp.SessionConfigOption
-	modes    []acp.SessionMode
-	modeID   acp.SessionModeID
-	commands []acp.AvailableCommand
+	workspace        *workspaceFiles
+	mu               sync.Mutex
+	options          []acp.SessionConfigOption
+	modes            []acp.SessionMode
+	modeID           acp.SessionModeID
+	commands         []acp.AvailableCommand
+	optionsSequence  uint64
+	modeSequence     uint64
+	modesSequence    uint64
+	commandsSequence uint64
 }
 
 // newSessionState files away what the agent reported when the session opened:
@@ -35,47 +41,82 @@ func newSessionState(modes *acp.SessionModeState, options *[]acp.SessionConfigOp
 
 // setOptions replaces the reported selectors. config_option_update carries
 // the whole list rather than a delta, so replacing is the correct merge.
+// Unsequenced helpers seed local decoded fixtures only; once a field has
+// actual ingress metadata, a zero sequence cannot overwrite its observation.
 func (s *sessionState) setOptions(options []acp.SessionConfigOption) {
-	if len(options) == 0 {
+	s.setOptionsAt(options, 0)
+}
+func sequenceApplies(sequence, current uint64) bool {
+	if sequence == 0 {
+		return current == 0
+	}
+	return sequence >= current
+}
+func (s *sessionState) setOptionsAt(options []acp.SessionConfigOption, sequence uint64) {
+	if options == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.options = append(s.options[:0:0], options...)
-	// The mode arrives on two channels; keep modeID the single answer to
-	// "which mode" so current_mode_update and config_option_update agree.
-	if opt, ok := findOption(s.options, acp.SessionConfigOptionCategoryMode); ok {
-		if value, ok := selectValue(opt); ok {
+	if sequenceApplies(sequence, s.optionsSequence) {
+		s.options = append(s.options[:0:0], options...)
+		s.optionsSequence = sequence
+	}
+	// Full-list and current-mode are distinct fields: one may be newer than
+	// the other. A mode-only notice must not discard a valid full-list reply.
+	if opt, ok := findOption(options, acp.SessionConfigOptionCategoryMode); ok {
+		if value, ok := selectValue(opt); ok && sequenceApplies(sequence, s.modeSequence) {
 			s.modeID = acp.SessionModeID(value)
+			s.modeSequence = sequence
 		}
 	}
 }
-
-func (s *sessionState) setModes(modes *acp.SessionModeState) {
+func (s *sessionState) setModes(modes *acp.SessionModeState) { s.setModesAt(modes, 0) }
+func (s *sessionState) setModesAt(modes *acp.SessionModeState, sequence uint64) {
 	if modes == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.modes = append(s.modes[:0:0], modes.AvailableModes...)
-	if modes.CurrentModeID != "" {
+	if sequenceApplies(sequence, s.modesSequence) {
+		s.modes = append(s.modes[:0:0], modes.AvailableModes...)
+		s.modesSequence = sequence
+	}
+	if sequenceApplies(sequence, s.modeSequence) {
 		s.modeID = modes.CurrentModeID
+		s.modeSequence = sequence
 	}
 }
-
-func (s *sessionState) setMode(id acp.SessionModeID) {
+func (s *sessionState) setMode(id acp.SessionModeID) { s.setModeAt(id, 0) }
+func (s *sessionState) setModeAt(id acp.SessionModeID, sequence uint64) {
 	if id == "" {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.modeID = id
+	if sequenceApplies(sequence, s.modeSequence) {
+		s.modeID = id
+		s.modeSequence = sequence
+	}
 }
-
-func (s *sessionState) setCommands(commands []acp.AvailableCommand) {
+func (s *sessionState) setCommands(commands []acp.AvailableCommand) { s.setCommandsAt(commands, 0) }
+func (s *sessionState) setCommandsAt(commands []acp.AvailableCommand, sequence uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.commands = append(s.commands[:0:0], commands...)
+	if sequenceApplies(sequence, s.commandsSequence) {
+		s.commands = append(s.commands[:0:0], commands...)
+		s.commandsSequence = sequence
+	}
+}
+func newSessionStateAt(modes *acp.SessionModeState, options *[]acp.SessionConfigOption, sequence uint64) *sessionState {
+	state := &sessionState{}
+	// Keep the existing cold-constructor tie rule. Wire sequence comparison
+	// protects later notifications independently of same-frame precedence.
+	state.setModesAt(modes, sequence)
+	if options != nil {
+		state.setOptionsAt(*options, sequence)
+	}
+	return state
 }
 
 func (s *sessionState) settings() view.Settings {
@@ -161,12 +202,12 @@ func (s *sessionState) modeLabel() string {
 // the reserved category names double as the conventional IDs.
 func findOption(options []acp.SessionConfigOption, category acp.SessionConfigOptionCategory) (acp.SessionConfigOption, bool) {
 	for _, opt := range options {
-		if opt.Category != nil && *opt.Category == category {
+		if opt.Type == acp.SessionConfigOptionTypeSelect && opt.Category != nil && *opt.Category == category {
 			return opt, true
 		}
 	}
 	for _, opt := range options {
-		if string(opt.ID) == string(category) {
+		if opt.Type == acp.SessionConfigOptionTypeSelect && string(opt.ID) == string(category) {
 			return opt, true
 		}
 	}
@@ -177,6 +218,9 @@ func findOption(options []acp.SessionConfigOption, category acp.SessionConfigOpt
 // bool instead; neither model nor mode is ever boolean, so anything but a
 // string simply means "not a selector we can label".
 func selectValue(opt acp.SessionConfigOption) (string, bool) {
+	if opt.Type != acp.SessionConfigOptionTypeSelect {
+		return "", false
+	}
 	switch value := opt.CurrentValue.(type) {
 	case acp.SessionConfigValueID:
 		return string(value), value != ""
@@ -265,7 +309,7 @@ func (s *sessionState) currentOptionsLocked() []acp.SessionConfigOption {
 	}
 	for i := range out {
 		isMode := (out[i].Category != nil && *out[i].Category == acp.SessionConfigOptionCategoryMode) || string(out[i].ID) == string(acp.SessionConfigOptionCategoryMode)
-		if isMode {
+		if isMode && out[i].Type == acp.SessionConfigOptionTypeSelect {
 			out[i].CurrentValue = acp.SessionConfigValueID(s.modeID)
 			break
 		}
@@ -297,16 +341,25 @@ func (h *Host) ModelChoices(sid acp.SessionID) (acp.SessionConfigID, []view.Choi
 	return opt.ID, out
 }
 
-// optionsView renders every select-type option the agent exposes.
+// optionsView renders every supported option, including opaque categories.
+// Its string current values preserve the preference contract; Type carries
+// the distinction between a select ID "false" and the boolean false.
 func optionsView(options []acp.SessionConfigOption) []view.Option {
 	var out []view.Option
 	for _, opt := range options {
-		if opt.Type != "" && opt.Type != acp.SessionConfigOptionTypeSelect {
+		if opt.Type != acp.SessionConfigOptionTypeSelect && opt.Type != acp.SessionConfigOptionTypeBoolean {
 			continue
 		}
-		o := view.Option{ID: string(opt.ID), Name: opt.Name}
+		o := view.Option{ID: string(opt.ID), Name: opt.Name, Type: string(opt.Type)}
 		if opt.Category != nil {
 			o.Category = string(*opt.Category)
+		}
+		if opt.Type == acp.SessionConfigOptionTypeBoolean {
+			if value, ok := opt.CurrentValue.(bool); ok {
+				o.Current = strconv.FormatBool(value)
+			}
+			out = append(out, o)
+			continue
 		}
 		if value, ok := selectValue(opt); ok {
 			o.Current = value
@@ -328,44 +381,95 @@ func optionsView(options []acp.SessionConfigOption) []view.Option {
 	return out
 }
 
-// SetOption changes one of the agent's selectors. The agent confirms with a
-// config_option_update, which is what actually moves Steve's own record, so
-// this does not write the new value locally: an agent that refuses or
-// substitutes a value stays the authority on what it is running.
+// SetOption proposes a value using the reported descriptor's wire type.
+// Only the agent's full response or config_option_update changes Actual.
 func (h *Host) SetOption(ctx context.Context, sid acp.SessionID, generation uint64, id acp.SessionConfigID, value string) error {
 	h.mu.Lock()
+	if err := h.SessionBlockedLocked(sid); err != nil {
+		h.mu.Unlock()
+		return err
+	}
 	if h.generation != generation {
 		h.mu.Unlock()
 		return fmt.Errorf("agent process changed before set option")
 	}
-	caller := h.caller
-	known := h.sessions[sid] != nil
-	h.mu.Unlock()
-	if caller == nil || !known {
+	state := h.sessions[sid]
+	if h.caller == nil || state == nil || !h.alive {
+		h.mu.Unlock()
 		return fmt.Errorf("session %q is not open", sid)
 	}
-	req := acp.ValueIDSetSessionConfigOptionRequest(sid, id, acp.SessionConfigValueID(value))
-	resp, err := caller.SetSessionConfigOption(ctx, &req)
+	// Validate and reserve against the same original state. A lifecycle RPC
+	// must not slip between descriptor lookup and configuration dispatch.
+	req, err := configOptionRequest(sid, state.currentOptions(), id, value)
 	if err != nil {
+		h.mu.Unlock()
+		return err
+	}
+	op, err := h.beginConfigOperationLocked(ctx, sid, generation)
+	caller := h.caller
+	h.mu.Unlock()
+	if err != nil {
+		return err
+	}
+
+	// Do not hold the Host lock across I/O: an existing prompt and reverse
+	// callbacks must continue while this SID is reserved against new sources.
+	resp, receipt, err := caller.SetSessionConfigOptionWithReceipt(ctx, &req)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("session/set_config_option: %w", h.finishConfigOperationLocked(ctx, sid, op, err))
+	}
+	if receipt.Sequence == 0 {
+		err := fmt.Errorf("session/set_config_option: successful result lacks inbound receipt")
+		return h.finishConfigOperationLocked(ctx, sid, op, err)
+	}
+	var confirmationErr error
+	if resp == nil || resp.ConfigOptions == nil {
+		confirmationErr = fmt.Errorf("session/set_config_option: agent omitted the required configOptions confirmation")
+	} else {
+		op.state.setOptionsAt(resp.ConfigOptions, receipt.Sequence)
+	}
+	// A matched response with missing confirmation is a local validation
+	// error, not an unanswered RPC. Settle the reservation without inventing
+	// Actual or reclassifying that response as a transport-unknown outcome.
+	if err := h.finishConfigOperationLocked(ctx, sid, op, nil); err != nil {
 		return fmt.Errorf("session/set_config_option: %w", err)
 	}
-	// Some agents answer with the full revised list instead of notifying.
-	if resp != nil && len(resp.ConfigOptions) > 0 {
-		h.mu.Lock()
-		state := h.sessions[sid]
-		sameGeneration := h.generation == generation && h.alive
-		h.mu.Unlock()
-		if state == nil || !sameGeneration {
-			return fmt.Errorf("agent session ended before confirming settings")
+	return confirmationErr
+}
+
+func configOptionRequest(sid acp.SessionID, options []acp.SessionConfigOption, id acp.SessionConfigID, value string) (acp.SetSessionConfigOptionRequest, error) {
+	var descriptor *acp.SessionConfigOption
+	for i := range options {
+		if options[i].ID == id {
+			descriptor = &options[i]
+			break
 		}
-		state.setOptions(resp.ConfigOptions)
 	}
-	return nil
+	if descriptor == nil {
+		return acp.SetSessionConfigOptionRequest{}, fmt.Errorf("session %q exposes no config option %q", sid, id)
+	}
+	switch descriptor.Type {
+	case acp.SessionConfigOptionTypeSelect:
+		return acp.ValueIDSetSessionConfigOptionRequest(sid, id, acp.SessionConfigValueID(value)), nil
+	case acp.SessionConfigOptionTypeBoolean:
+		if string(id) == "model" || string(id) == "mode" ||
+			descriptor.Category != nil && (*descriptor.Category == acp.SessionConfigOptionCategoryModel || *descriptor.Category == acp.SessionConfigOptionCategoryMode) {
+			return acp.SetSessionConfigOptionRequest{}, fmt.Errorf("config option %q: model and mode require a select descriptor", id)
+		}
+		if value != "true" && value != "false" {
+			return acp.SetSessionConfigOptionRequest{}, fmt.Errorf("config option %q: boolean value must be \"true\" or \"false\"", id)
+		}
+		return acp.BooleanSetSessionConfigOptionRequest(sid, id, value == "true"), nil
+	default:
+		return acp.SetSessionConfigOptionRequest{}, fmt.Errorf("config option %q has unsupported type %q", id, descriptor.Type)
+	}
 }
 
 // ListSessions asks the agent which sessions it still holds. Steve's own
-// record can outlive the agent's, so this is how a stored session id is
-// checked before trying to resume it.
+// record can outlive the agent's. Listing is discovery, not proof that an
+// unlisted session cannot be resumed.
 func (h *Host) ListSessions(ctx context.Context) ([]acp.SessionInfo, error) {
 	if err := h.ensureStarted(ctx); err != nil {
 		return nil, err
@@ -381,42 +485,27 @@ func (h *Host) ListSessions(ctx context.Context) ([]acp.SessionInfo, error) {
 	}
 	var out []acp.SessionInfo
 	var cursor *string
+	seen := map[string]bool{}
 	for {
 		resp, err := caller.ListSessions(ctx, &acp.ListSessionsRequest{Cursor: cursor})
 		if err != nil {
 			return nil, fmt.Errorf("session/list: %w", err)
 		}
 		out = append(out, resp.Sessions...)
-		if resp.NextCursor == nil || *resp.NextCursor == "" || len(resp.Sessions) == 0 {
+		if resp.NextCursor == nil || *resp.NextCursor == "" {
 			return out, nil
 		}
+		if seen[*resp.NextCursor] {
+			return nil, fmt.Errorf("session/list: repeated pagination cursor")
+		}
+		seen[*resp.NextCursor] = true
 		cursor = resp.NextCursor
 	}
 }
 
-// DeleteSession asks the agent to forget a session for good, where
-// CloseSession only releases it. Steve closes rather than deletes when a
-// conversation ends, because a closed session can still be resumed; delete
-// is for the case where Steve has dropped its own pointer and the session
-// would otherwise sit in the agent's store forever with nothing able to
-// reach it.
+// DeleteSession asks the agent to remove a session from its list. This does
+// not confirm data erasure or native resource cleanup. Unsupported deletion
+// is explicit and never removes Steve's session bookkeeping.
 func (h *Host) DeleteSession(ctx context.Context, sid acp.SessionID) error {
-	h.mu.Lock()
-	if h.active[sid] != 0 {
-		h.mu.Unlock()
-		return ErrSessionBusy
-	}
-	caller, capabilities, alive := h.caller, h.capabilities, h.alive
-	h.mu.Unlock()
-	if !alive || caller == nil || capabilities == nil ||
-		capabilities.SessionCapabilities == nil || capabilities.SessionCapabilities.Delete == nil {
-		return ErrDeleteUnsupported
-	}
-	if _, err := caller.DeleteSession(ctx, &acp.DeleteSessionRequest{SessionID: sid}); err != nil {
-		return fmt.Errorf("session/delete: %w", err)
-	}
-	h.mu.Lock()
-	delete(h.sessions, sid)
-	h.mu.Unlock()
-	return nil
+	return h.deleteSession(ctx, sid)
 }

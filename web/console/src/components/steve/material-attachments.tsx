@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { File02, FileAttachment03, FileCode01, Image01 } from "@untitledui/icons";
 import { materialBlob, refKey } from "@/lib/api/material";
 import { bytes } from "@/lib/format";
-import type { FrozenMaterial, MaterialRef, MaterialSelector } from "@/lib/types";
+import type { DraftMaterial, FrozenMaterial, MaterialRef, MaterialSelector } from "@/lib/types";
 import { useI18n } from "@/providers/locale-provider";
 import { MaterialPreview } from "./material-shelf";
 
@@ -11,31 +11,65 @@ import { MaterialPreview } from "./material-shelf";
 // lines that were cut, and anything the page cannot draw is still a
 // thing with a name, a kind and a size rather than a bare title.
 
-// One fetch per material for the page. The same picture is drawn on the
-// line that sent it and on the reply that read it, and a long thread
-// scrolls past it again and again; the URL outlives the components that
-// use it on purpose, so scrolling back does not refetch.
-const loading = new Map<string, Promise<string>>();
-function objectURL(project: string, id: string): Promise<string> {
-    const key = `${project}:${id}`;
-    let pending = loading.get(key);
-    if (!pending) {
-        pending = materialBlob(project, id).then((blob) => URL.createObjectURL(blob));
-        pending.catch(() => loading.delete(key));
-        loading.set(key, pending);
+// Concurrent copies share a content read. Once the last copy leaves the
+// page, its request and blob URL are retired rather than accumulating across
+// conversations. Returning to that image deliberately fetches it again.
+interface ThumbnailResource {
+    controller: AbortController;
+    promise: Promise<string>;
+    users: number;
+    url: string;
+}
+const thumbnails = new Map<string, ThumbnailResource>();
+function acquireThumbnail(project: string, id: string) {
+    const key = JSON.stringify([project, id]);
+    let resource = thumbnails.get(key);
+    if (!resource) {
+        const current: ThumbnailResource = {
+            controller: new AbortController(), promise: Promise.resolve(""), users: 0, url: "",
+        };
+        current.promise = materialBlob(project, id, current.controller.signal).then(blob => {
+            // Some transports finish despite abort. An old completion cannot
+            // allocate a URL or replace a new reader for the same identity.
+            if (!current.users || current.controller.signal.aborted || thumbnails.get(key) !== current) return "";
+            current.url = URL.createObjectURL(blob);
+            return current.url;
+        }).catch(error => {
+            // A later consumer can retry a failed read even while an older
+            // copy shows its fallback. Stale failures cannot evict new leases.
+            if (thumbnails.get(key) === current) thumbnails.delete(key);
+            throw error;
+        });
+        thumbnails.set(key, current);
+        resource = current;
     }
-    return pending;
+    resource.users++;
+    const owned = resource;
+    let released = false;
+    return {
+        promise: owned.promise,
+        release() {
+            if (released) return;
+            released = true;
+            if (--owned.users) return;
+            if (thumbnails.get(key) === owned) thumbnails.delete(key);
+            owned.controller.abort();
+            if (owned.url) URL.revokeObjectURL(owned.url);
+        },
+    };
 }
 
-function useThumbnail(project: string, id: string) {
+function useThumbnail(project: string, id: string, enabled = true) {
     const [url, setURL] = useState("");
     const [failed, setFailed] = useState(false);
     useEffect(() => {
         let live = true;
         setURL(""); setFailed(false);
-        void objectURL(project, id).then((value) => { if (live) setURL(value); }).catch(() => { if (live) setFailed(true); });
-        return () => { live = false; };
-    }, [project, id]);
+        if (!enabled) return;
+        const lease = acquireThumbnail(project, id);
+        void lease.promise.then(value => { if (live) setURL(value); }).catch(() => { if (live) setFailed(true); });
+        return () => { live = false; lease.release(); };
+    }, [project, id, enabled]);
     return { url, failed };
 }
 
@@ -69,6 +103,25 @@ export function MaterialAttachments({ items, refs, label, align }: { items?: Fro
         {missing.map((ref) => <span key={refKey(ref)} className="rounded-md border border-secondary px-2.5 py-1.5 text-xs text-quaternary" title={ref.id}>{t("materials.unresolved")}</span>)}
         {opened && <MaterialPreview key={refKey(opened.ref)} project={opened.material.project} anchor={opened.ref} onClose={() => setOpened(null)} />}
     </div>;
+}
+
+export function DraftAttachment({ item, onOpen, onRemove }: { item: DraftMaterial; onOpen: () => void; onRemove: () => void }) {
+    const { t, locale } = useI18n();
+    const { url, failed } = useThumbnail(item.project, item.id, item.kind === "image");
+    const Icon = item.kind === "image" ? Image01 : item.kind === "text" ? File02 : FileAttachment03;
+    const part = partOf(item.selector, t);
+    return <li className="flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-secondary bg-secondary p-1">
+        <button type="button" onClick={onOpen} title={`${item.title} · ${item.mime}`} aria-label={t("materials.openAttachment", { title: item.title })}
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs text-secondary hover:bg-primary">
+            {item.kind === "image" && url && !failed
+                ? <img src={url} alt={item.title} width={32} height={32} className="size-8 shrink-0 rounded object-contain" />
+                : <Icon aria-hidden="true" className="size-4 shrink-0 text-fg-quaternary" />}
+            <span className="min-w-0 truncate">{item.title}{part ? ` · ${part}` : ""}</span>
+            <span className="shrink-0 tabular-nums text-quaternary">{t(`materials.${item.kind}`)} · {bytes(item.size, locale)}</span>
+        </button>
+        <button type="button" aria-label={t("materials.remove", { title: item.title })} onClick={onRemove}
+            className="min-h-8 min-w-8 rounded-md px-1 text-quaternary hover:bg-primary hover:text-primary">×</button>
+    </li>;
 }
 
 function Attachment({ item, onOpen }: { item: FrozenMaterial; onOpen: () => void }) {

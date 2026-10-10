@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -18,6 +19,14 @@ import (
 )
 
 func main() {
+	// Trusted terminal helpers run before provider/config initialization.
+	if handled, err := app.RunTerminalChild(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "terminal child failed")
+			os.Exit(1)
+		}
+		return
+	}
 	if err := agenttools.InitializePath(); err != nil {
 		log.Fatal(err)
 	}

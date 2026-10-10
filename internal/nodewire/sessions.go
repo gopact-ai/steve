@@ -30,6 +30,13 @@ func IsManagedSession(id string) bool { return strings.HasPrefix(id, managedSess
 
 const FeatureNativeHistory = "native_history.v1"
 
+// FeatureTerminalAdmission requires both node ownership and parent admission.
+const FeatureTerminalAdmission = "terminal_admission.v1"
+
+// TerminalAdmissionWindow bounds a fresh terminal authority request through
+// payload-gate consumption. The coordinator requires leases beyond this window.
+const TerminalAdmissionWindow = 3 * time.Second
+
 const StreamNodeSessions = "node_sessions"
 const NodeSessionMaxBytes = 16 << 20
 
@@ -81,30 +88,33 @@ const (
 	SessionActionAbort        SessionAction = "abort"
 	SessionActionKill         SessionAction = "kill"
 	// Start is an authorization challenge inside open, not a client operation.
-	SessionActionStart SessionAction = "start"
+	SessionActionStart         SessionAction = "start"
+	SessionActionTerminalAdmit SessionAction = "terminal-admit"
 )
 
 type SessionRequest struct {
-	NativeImport  *nativehistory.Reference `json:"native_import,omitempty"`
-	Plugin        *plugins.RuntimeRef      `json:"plugin,omitempty"`
-	Action        SessionAction            `json:"action"`
-	Authority     SessionAuthority         `json:"authority"`
-	Binding       SessionBinding           `json:"binding"`
-	ID            string                   `json:"id,omitempty"`
-	Harness       string                   `json:"harness,omitempty"`
-	Workdir       string                   `json:"workdir,omitempty"`
-	MCPServers    []acp.MCPServer          `json:"mcp_servers,omitempty"`
-	Permission    string                   `json:"permission,omitempty"`
-	CommandID     string                   `json:"command_id,omitempty"`
-	InputSequence uint64                   `json:"input_sequence,omitempty"`
-	Text          string                   `json:"text,omitempty"`
-	Media         []SessionMedia           `json:"media,omitempty"`
-	After         uint64                   `json:"after,omitempty"`
-	WaitMS        int                      `json:"wait_ms,omitempty"`
-	QuestionID    string                   `json:"question_id,omitempty"`
-	Answer        *SessionAnswer           `json:"answer,omitempty"`
-	OptionID      string                   `json:"option_id,omitempty"`
-	OptionValue   string                   `json:"option_value,omitempty"`
+	NativeImport      *nativehistory.Reference `json:"native_import,omitempty"`
+	Plugin            *plugins.RuntimeRef      `json:"plugin,omitempty"`
+	Action            SessionAction            `json:"action"`
+	Authority         SessionAuthority         `json:"authority"`
+	Binding           SessionBinding           `json:"binding"`
+	ID                string                   `json:"id,omitempty"`
+	Harness           string                   `json:"harness,omitempty"`
+	Workdir           string                   `json:"workdir,omitempty"`
+	MCPServers        []acp.MCPServer          `json:"mcp_servers,omitempty"`
+	Permission        string                   `json:"permission,omitempty"`
+	CommandID         string                   `json:"command_id,omitempty"`
+	InputSequence     uint64                   `json:"input_sequence,omitempty"`
+	Text              string                   `json:"text,omitempty"`
+	Media             []SessionMedia           `json:"media,omitempty"`
+	After             uint64                   `json:"after,omitempty"`
+	WaitMS            int                      `json:"wait_ms,omitempty"`
+	QuestionID        string                   `json:"question_id,omitempty"`
+	Answer            *SessionAnswer           `json:"answer,omitempty"`
+	OptionID          string                   `json:"option_id,omitempty"`
+	OptionValue       string                   `json:"option_value,omitempty"`
+	TerminalAdmission bool                     `json:"terminal_admission,omitempty"`
+	TerminalStart     *TerminalStart           `json:"terminal_start,omitempty"`
 
 	// Only cold open may carry a proof; subsequent operations omit it.
 	MCPAuthorizationRefresh *MCPAuthorizationRefresh `json:"mcp_authorization_refresh,omitempty"`
@@ -188,15 +198,26 @@ type SessionState struct {
 	InputAccepted uint64                   `json:"input_accepted"`
 	// NextInputSequence is a node hint for the requested, not-yet-accepted
 	// command under Binding. It is neither execution authority nor an ack proof.
-	NextInputSequence uint64            `json:"next_input_sequence,omitempty"`
-	Settings          view.Settings     `json:"settings"`
-	ModelOption       string            `json:"model_option,omitempty"`
-	ModelChoices      []view.Choice     `json:"model_choices,omitempty"`
-	SupportsHTTPMCP   bool              `json:"supports_http_mcp"`
-	Progress          view.Progress     `json:"progress"`
-	Command           *SessionCommand   `json:"command,omitempty"`
-	Questions         []SessionQuestion `json:"questions"`
-	ProcessStopped    bool              `json:"process_stopped"`
+	NextInputSequence     uint64            `json:"next_input_sequence,omitempty"`
+	Settings              view.Settings     `json:"settings"`
+	ModelOption           string            `json:"model_option,omitempty"`
+	ModelChoices          []view.Choice     `json:"model_choices,omitempty"`
+	SupportsHTTPMCP       bool              `json:"supports_http_mcp"`
+	Progress              view.Progress     `json:"progress"`
+	Command               *SessionCommand   `json:"command,omitempty"`
+	Questions             []SessionQuestion `json:"questions"`
+	ProcessStopped        bool              `json:"process_stopped"`
+	TerminalAdmission     bool              `json:"terminal_admission,omitempty"`
+	PendingTerminalStarts []TerminalStart   `json:"pending_terminal_starts,omitempty"`
+}
+
+// TerminalStart identifies a ready original terminal payload, never its command
+// environment or a transferable execution permit.
+type TerminalStart struct {
+	ID            string `json:"id"`
+	CommandID     string `json:"command_id"`
+	InputSequence uint64 `json:"input_sequence"`
+	Generation    uint64 `json:"generation"`
 }
 
 // SessionOpenReceipt binds a fresh inspect/cancel result to the original open.

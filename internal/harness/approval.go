@@ -50,7 +50,7 @@ func applyApproval(ctx context.Context, configurable Configurable, agentID, inte
 // that predates the category still names the selector "mode".
 func modeOption(options []view.Option) (view.Option, bool) {
 	for _, option := range options {
-		if option.Category == "mode" || option.ID == "mode" {
+		if (option.Type == "" || option.Type == "select") && (option.Category == "mode" || option.ID == "mode") {
 			return option, true
 		}
 	}
