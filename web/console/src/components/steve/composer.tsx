@@ -2,7 +2,7 @@ import { Button } from "@/components/base/buttons/button";
 import { IconButton } from "@/components/steve/icon-button";
 import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
-import { lazy, memo, useEffect, useRef, useState, type RefObject } from "react";
+import { lazy, memo, useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { ArrowUp, ChevronDown, CornerDownRight, DotsHorizontal, Edit05, Folder, MessageChatSquare, Plus, Square, Trash01 } from "@untitledui/icons";
 import { Button as AriaButton, Dialog, DialogTrigger, Popover } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
@@ -76,6 +76,11 @@ export const Composer = memo(function Composer(p: ComposerProps) {
     const { t } = useI18n();
     const nodeLabelOf = useNodeLabel();
     const inputDisabled = !!p.disabled || (p.busy && p.queueing === false);
+    const preferenceScope = p.preferenceKey || p.agent?.id || "";
+    const [preferenceError, setPreferenceError] = useState({ scope: "", message: "" });
+    const reportPreferenceError = useCallback((message: string) => {
+        setPreferenceError({ scope: preferenceScope, message });
+    }, [preferenceScope]);
     return (
         <div className="composer" onDragOver={(event) => {
             if (!p.onDropFiles || !Array.from(event.dataTransfer.types).includes("Files")) return;
@@ -117,6 +122,11 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                     <span className="min-w-0 flex-1 text-secondary">{p.rewind.following > 0 ? t("console.rewindNotice", { count: number(p.rewind.following) }) : t("console.rewindNoticeLast")}</span>
                     <button type="button" onClick={p.onCancelRewind} className="shrink-0 rounded-md px-1.5 py-0.5 text-tertiary hover:bg-primary hover:text-primary">{t("console.rewindCancel")}</button>
                 </div>
+            )}
+            {/* Keep errors outside the control row: clearing an error while
+                opening a menu must not move its trigger under the pointer. */}
+            {preferenceError.scope === preferenceScope && preferenceError.message && (
+                <div role="alert" className="mb-1 break-words text-xs text-error-primary">{preferenceError.message}</div>
             )}
             <div className="composer-input">
                 {p.quotes && p.quotes.length > 0 && (
@@ -195,7 +205,7 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                         </Dropdown.Popover>
                     </Dropdown.Root>
                     </div><div className="composer-run">
-                    {p.agent && p.onSelectors && <PreferenceChips key={p.preferenceKey || p.agent.id} scope={p.preferenceKey || p.agent.id} agent={p.agent} load={p.onSelectors} onPrefer={p.onPrefer} />}
+                    {p.agent && p.onSelectors && <PreferenceChips key={p.preferenceKey || p.agent.id} scope={p.preferenceKey || p.agent.id} agent={p.agent} load={p.onSelectors} onPrefer={p.onPrefer} onError={reportPreferenceError} />}
                     <button type="button" onClick={p.onToggleQueueing} aria-pressed={p.queueing !== false} className={`${chip} shrink-0 whitespace-nowrap text-quaternary`} title={p.queueing === false ? t("consoleChrome.enableQueue") : t("consoleChrome.disableQueue")}>
                         <CornerDownRight className="size-3.5" aria-hidden="true" /><span>{p.queueing === false ? t("consoleChrome.noQueue") : t("consoleChrome.queue")}</span>
                     </button>
@@ -279,11 +289,12 @@ function QueuedLine({ q, p }: { q: Queued; p: ComposerProps }) {
 
 // PreferenceChips expose the Agent's typed options. Choices are requests for
 // this thread, not evidence of the settings a running session has accepted.
-function PreferenceChips({ agent, scope, load, onPrefer }: { agent: NonNullable<ConversationContext["agent"]>; scope: string; load: (scope?: string) => Promise<Selectors>; onPrefer?: (patch: Record<string, string>, scope?: string) => Promise<void> }) {
+function PreferenceChips({ agent, scope, load, onPrefer, onError }: { agent: NonNullable<ConversationContext["agent"]>; scope: string; load: (scope?: string) => Promise<Selectors>; onPrefer?: (patch: Record<string, string>, scope?: string) => Promise<void>; onError: (error: string) => void }) {
     const { t } = useI18n();
     const [sel, setSel] = useState<Selectors | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
+    useEffect(() => { onError(error); }, [error, onError]);
     const [accepted, setAccepted] = useState<Record<string, string>>({});
     const [optionsOpen, setOptionsOpen] = useState(false);
     const changing = useRef(false);
@@ -370,7 +381,6 @@ function PreferenceChips({ agent, scope, load, onPrefer }: { agent: NonNullable<
                     )}
                 </Dropdown.Popover>
             </Dropdown.Root>
-            {error && <span role="alert" className="text-xs text-error-primary">{error}</span>}
             <Dropdown.Root onOpenChange={(isOpen) => { if (isOpen) open(); }}>
                 <AriaButton isDisabled={busy} aria-label={approvalLabel} className={`${chip} text-quaternary`}>
                     <span className="max-w-40 truncate">{approvalModeLabel ? `${approvalLabel} · ${approvalModeLabel}` : approvalLabel}</span>

@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -71,16 +70,7 @@ func (p *localProcess) prepareTerminal(ctx context.Context, cwd *os.File, config
 		gate.Close()
 		return nil, err
 	}
-	self, err := os.Open("/proc/self/exe")
-	path := "/proc/self/fd/6"
-	if runtime.GOOS == "darwin" {
-		var executable string
-		executable, err = os.Executable()
-		if err == nil {
-			self, err = os.Open(executable)
-		}
-		path = "/dev/fd/6"
-	}
+	self, path, releaseExecutable, err := openTerminalExecutable()
 	if err != nil {
 		control.Close()
 		gate.Close()
@@ -89,6 +79,7 @@ func (p *localProcess) prepareTerminal(ctx context.Context, cwd *os.File, config
 		return nil, err
 	}
 	defer self.Close()
+	defer releaseExecutable()
 	cmd := exec.Command(path, helperArgs...)
 	cmd.ExtraFiles = []*os.File{control, cwd, notice, self}
 	cmd.Stdout, cmd.Stderr = output, output
