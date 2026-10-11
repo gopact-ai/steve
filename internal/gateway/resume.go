@@ -153,7 +153,7 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 		return FireReceipt{}, fmt.Errorf("channel cannot post schedule notice for #%s", f.ScheduleID)
 	}
 	if f.Channel != g.name || strings.HasPrefix(f.ConversationID, "console:") || f.ChatID == "console" {
-		return FireReceipt{}, fmt.Errorf("schedule %s does not target the Feishu channel", f.ScheduleID)
+		return FireReceipt{}, fmt.Errorf("schedule %s does not target channel %s", f.ScheduleID, g.name)
 	}
 	if f.ConversationID == "" || f.MessageID == "" || f.Prompt == "" || f.Member == "" || f.Requester == "" || f.ProjectID == "" {
 		return FireReceipt{}, fmt.Errorf("schedule %s has incomplete execution context", f.ScheduleID)

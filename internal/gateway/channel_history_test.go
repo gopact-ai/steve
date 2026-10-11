@@ -230,7 +230,7 @@ func TestChannelHistoryIndexedLookupAndDirectory(t *testing.T) {
 	if _, err := book.DB().Exec(`WITH RECURSIVE n(seq) AS (VALUES(1) UNION ALL SELECT seq+1 FROM n WHERE seq<1000)
  INSERT INTO commands(id,kind,actor,received_at,finished_at,result,error)
  SELECT 'old-'||seq,'gateway-input','owner','bad-date','bad-date',
- json_object('message',json_object('MessageID','old-'||seq,'ActorID','owner','ConversationID','z-other','Text','unrelated')),'' FROM n`); err != nil {
+ json_object('message',json_object('MessageID','old-'||seq,'SenderOpenID','owner','ConversationID','z-other','Text','unrelated')),'' FROM n`); err != nil {
 		t.Fatal(err)
 	}
 	var path string

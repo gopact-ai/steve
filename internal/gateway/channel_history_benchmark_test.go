@@ -29,7 +29,7 @@ func BenchmarkChannelHistory(b *testing.B) {
 			if _, err := book.DB().Exec(`WITH RECURSIVE n(seq) AS (VALUES(1) UNION ALL SELECT seq+1 FROM n WHERE seq<?)
  INSERT INTO commands(id,kind,actor,received_at,finished_at,result,error)
  SELECT printf('input-%08d',seq),'gateway-input','owner','2026-09-21T00:00:00Z','2026-09-21T00:00:00Z',
- json_object('message',json_object('MessageID',printf('input-%08d',seq),'ActorID','owner','ConversationID',printf('chat-%04d',seq % ?),'Text','original prompt')),'' FROM n`, fixture.turns, fixture.conversations); err != nil {
+ json_object('message',json_object('MessageID',printf('input-%08d',seq),'SenderOpenID','owner','ConversationID',printf('chat-%04d',seq % ?),'Text','original prompt')),'' FROM n`, fixture.turns, fixture.conversations); err != nil {
 				b.Fatal(err)
 			}
 			if _, err := book.DB().Exec(`INSERT INTO commands(id,kind,actor,received_at,finished_at,result,error)

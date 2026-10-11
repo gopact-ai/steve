@@ -103,7 +103,7 @@ func (s *Service) Enroll(ctx context.Context, requested Grant) (Enrollment, erro
 	}
 	for conversation, project := range requested.Work {
 		if (conversation == "" || len(conversation) > 512) || !ValidName(project) {
-			return Enrollment{}, errors.New("work scope requires an explicit Console conversation and project")
+			return Enrollment{}, errors.New("work scope requires an explicit conversation and project")
 		}
 	}
 	for _, c := range requested.Capabilities {
