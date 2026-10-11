@@ -369,7 +369,7 @@ func TestNewWiresEveryDependency(t *testing.T) {
 		c.tasks != deps.Tasks || c.schedules != deps.Schedules {
 		t.Fatal("New dropped a store or service")
 	}
-	if _, dir := c.home.(home.Dir); !dir || c.homePath != deps.Home.(home.Dir).Path || c.ownerID != "owner" || c.node != "hub" ||
+	if _, dir := c.home.(home.Dir); !dir || c.homeDirectory() != deps.Home.(home.Dir).Path || c.ownerID != "owner" || c.node != "hub" ||
 		c.defaultProject != "p" || c.homeProject != "home" || c.text.Locale() != i18n.LocaleEN || c.offlineAfter != time.Minute {
 		t.Fatal("New dropped an identity, placement, locale or reminder setting")
 	}

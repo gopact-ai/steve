@@ -10,6 +10,12 @@ import (
 
 var ErrCapacity = errors.New("service backlog capacity reached; retry the same request after capacity becomes available")
 
+// Derived indexes must accept malformed rows so the owning typed reader can
+// report corruption. Use the identical guarded expression in indexed queries.
+const StateExpression = `CASE WHEN json_valid(data) THEN json_extract(data,'$.state') END`
+const OutcomeExpression = `CASE WHEN json_valid(data) THEN json_extract(data,'$.outcome.state') END`
+const EventIDExpression = `CASE WHEN json_valid(data) THEN json_extract(data,'$.event_id') END`
+
 type Limits struct {
 	Total     int `json:"total"`
 	PerSource int `json:"per_source"`
@@ -72,7 +78,7 @@ func CheckStateCapacityTx(tx *ledger.Tx, kind, sourcePath, source string, states
 		marks[i] = "?"
 		args = append(args, state)
 	}
-	query := `SELECT count(*) FROM bindings WHERE kind=? AND json_extract(data,'$.state') IN (` + strings.Join(marks, ",") + `)`
+	query := `SELECT count(*) FROM bindings WHERE kind=? AND (` + StateExpression + `) IN (` + strings.Join(marks, ",") + `)`
 	var total, own int
 	if err := tx.QueryRow(query, args...).Scan(&total); err != nil {
 		return err
@@ -87,7 +93,7 @@ func CheckStateCapacityTx(tx *ledger.Tx, kind, sourcePath, source string, states
 		return errors.New("invalid capacity source path")
 	}
 	args = append(args, source)
-	if err := tx.QueryRow(query+` AND json_extract(data,'`+sourcePath+`')=?`, args...).Scan(&own); err != nil {
+	if err := tx.QueryRow(query+` AND (CASE WHEN json_valid(data) THEN json_extract(data,'`+sourcePath+`') END)=?`, args...).Scan(&own); err != nil {
 		return err
 	}
 	if own+incoming > limits.PerSource {
@@ -101,11 +107,11 @@ func validSourcePath(path string) bool {
 }
 
 func init() {
-	ledger.MustRegisterReadIndex("service_state_source_v1", `CREATE INDEX IF NOT EXISTS service_state_source_v1 ON bindings(kind,json_extract(data,'$.state'),json_extract(data,'$.source'),id)`)
-	ledger.MustRegisterReadIndex("service_state_grant_v1", `CREATE INDEX IF NOT EXISTS service_state_grant_v1 ON bindings(kind,json_extract(data,'$.state'),json_extract(data,'$.grant_id'),id)`)
-	ledger.MustRegisterReadIndex("service_state_handler_v1", `CREATE INDEX IF NOT EXISTS service_state_handler_v1 ON bindings(kind,json_extract(data,'$.state'),json_extract(data,'$.rule.handler'),id)`)
-	ledger.MustRegisterReadIndex("service_state_retention_v1", `CREATE INDEX IF NOT EXISTS service_state_retention_v1 ON bindings(kind,json_extract(data,'$.state'),updated_at,id)`)
-	ledger.MustRegisterReadIndex("service_outcome_retention_v1", `CREATE INDEX IF NOT EXISTS service_outcome_retention_v1 ON bindings(kind,json_extract(data,'$.outcome.state'),updated_at,id)`)
+	ledger.MustRegisterReadIndex("service_state_source_v1", `CREATE INDEX IF NOT EXISTS service_state_source_v1 ON bindings(kind,`+StateExpression+`,CASE WHEN json_valid(data) THEN json_extract(data,'$.source') END,id)`)
+	ledger.MustRegisterReadIndex("service_state_grant_v1", `CREATE INDEX IF NOT EXISTS service_state_grant_v1 ON bindings(kind,`+StateExpression+`,CASE WHEN json_valid(data) THEN json_extract(data,'$.grant_id') END,id)`)
+	ledger.MustRegisterReadIndex("service_state_handler_v1", `CREATE INDEX IF NOT EXISTS service_state_handler_v1 ON bindings(kind,`+StateExpression+`,CASE WHEN json_valid(data) THEN json_extract(data,'$.rule.handler') END,id)`)
+	ledger.MustRegisterReadIndex("service_state_retention_v1", `CREATE INDEX IF NOT EXISTS service_state_retention_v1 ON bindings(kind,`+StateExpression+`,updated_at,id)`)
+	ledger.MustRegisterReadIndex("service_outcome_retention_v1", `CREATE INDEX IF NOT EXISTS service_outcome_retention_v1 ON bindings(kind,`+OutcomeExpression+`,updated_at,id)`)
 }
 func QueueStatsTx(r ledger.Reader, index, kind, timePath string) (out QueueStats, err error) {
 	err = r.QueryRow(`SELECT count(*),coalesce(min(json_extract(b.data,?)), '') FROM bindings AS q JOIN bindings AS b ON b.kind=? AND b.id=q.id WHERE q.kind=?`, timePath, kind, index).Scan(&out.Pending, &out.Oldest)

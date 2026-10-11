@@ -333,10 +333,56 @@ func (s *Service) ListTasks(ctx context.Context, req turnapi.Request) ([]task.Ta
 	return out, nil
 }
 func (s *Service) Settle(ctx context.Context, req turnapi.Request, id string, as task.Settlement) (task.Task, error) {
-	if _, err := s.Task(ctx, req, id, project.RoleWrite); err != nil {
+	tracked, err := s.SettlementTask(ctx, req, id)
+	if err != nil {
 		return task.Task{}, err
 	}
-	return s.Tasks.SettleChecked(ctx, id, as, s.TaskGuard(req, id, project.RoleWrite))
+	guard := s.TaskGuard(req, id, project.RoleWrite)
+	if backgroundPlan(tracked) {
+		guard = s.backgroundSettlementGuard(req, id)
+	}
+	return s.Tasks.SettleChecked(ctx, id, as, guard)
+}
+
+func backgroundPlan(tracked task.Task) bool {
+	return tracked.Channel == "" && tracked.Parent == "" && tracked.Origin == "plan"
+}
+
+// SettlementTask permits central owner reconciliation of an unaddressed
+// background plan. It does not assign the task to this chat or let a chat
+// continue its execution. Every addressed task retains its source policy.
+func (s *Service) SettlementTask(ctx context.Context, req turnapi.Request, id string) (task.Task, error) {
+	tracked, found := s.Tasks.Get(id)
+	if !found || !backgroundPlan(tracked) {
+		return s.Task(ctx, req, id, project.RoleWrite)
+	}
+	if req.Source.Channel != "console" {
+		return task.Task{}, ErrDenied
+	}
+	if book := s.book(); book != nil {
+		if err := book.Update(ctx, s.backgroundSettlementGuard(req, id)); err != nil {
+			return task.Task{}, err
+		}
+	} else if err := s.Owner(ctx, req, true); err != nil {
+		return task.Task{}, err
+	}
+	return tracked, nil
+}
+
+func (s *Service) backgroundSettlementGuard(req turnapi.Request, id string) func(*ledger.Tx) error {
+	if s.book() == nil {
+		return nil
+	}
+	return func(tx *ledger.Tx) error {
+		tracked, found, err := task.GetTx(tx, id)
+		if err != nil {
+			return err
+		}
+		if !found || !backgroundPlan(tracked) || req.Source.Channel != "console" {
+			return ErrDenied
+		}
+		return s.OwnerTx(tx, req, true)
+	}
 }
 func (s *Service) ScheduleGuard(req turnapi.Request) func(*ledger.Tx, schedule.Job) error {
 	if s.book() == nil {

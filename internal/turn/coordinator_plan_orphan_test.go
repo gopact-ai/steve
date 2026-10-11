@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -51,9 +52,9 @@ func TestARestartClosesBackgroundPlanTasksNothingElseCanReach(t *testing.T) {
 	}
 }
 
-// A resolution that cannot run still opened a task. Left open it reads as
-// work in flight for good, so the failure has to land on the record — and
-// a person has to be able to settle it even though it is nobody's chat.
+// A resolution that cannot run still opened a task. Its failure must land
+// on the record, and the authenticated Console owner can reconcile it without
+// giving an arbitrary chat the authority to adopt background work.
 func TestAFailedBackgroundPlanIsRecordedAndCanBeSettled(t *testing.T) {
 	store, err := task.OpenLedger(testLedger(t))
 	if err != nil {
@@ -67,7 +68,7 @@ func TestAFailedBackgroundPlanIsRecordedAndCanBeSettled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Tasks, d.Node = store, "hub" }))
+	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Tasks, d.Node, d.Identity.ConsoleOwner = store, "hub", "owner" }))
 	c.closePlanTask(tracked.ID, errors.New("no agent could take it"))
 
 	got, _ := store.Get(tracked.ID)
@@ -75,13 +76,25 @@ func TestAFailedBackgroundPlanIsRecordedAndCanBeSettled(t *testing.T) {
 		t.Fatalf("failed resolution left as %s", got.State)
 	}
 	cmds := c.commands()
-	if _, found := cmds.taskTarget(Request{
-		Source: Source{ConversationID: "console:someone-elses-chat"},
-	}, tracked.ID, taskIgnored); !found {
-		t.Fatal("a task that belongs to no chat cannot be settled from any chat")
+	owner := Request{Source: Source{Channel: "console", ConversationID: "console:admin", ChatType: protocol.ChatP2P}, Actor: Actor{ID: "owner"}}
+	if _, found := cmds.taskTarget(owner, tracked.ID, taskIgnored); !found {
+		t.Fatal("the Console owner cannot reconcile an unaddressed failed plan")
 	}
-	if _, err := store.Settle(tracked.ID, task.SettlementIgnored); err != nil {
+	for _, denied := range []Request{
+		{Source: Source{Channel: "console", ConversationID: "console:guest", ChatType: protocol.ChatP2P}, Actor: Actor{ID: "guest"}},
+		{Source: Source{Channel: "native", ConversationID: "console:opaque", ChatType: protocol.ChatP2P}, Actor: Actor{ID: "owner"}},
+		{Source: Source{Channel: "console", ConversationID: "console:admin", ChatType: protocol.ChatGroup}, Actor: Actor{ID: "owner"}},
+	} {
+		if _, found := cmds.taskTarget(denied, tracked.ID, taskIgnored); found {
+			t.Fatalf("unaddressed plan admitted arbitrary source: %+v", denied.Source)
+		}
+	}
+	if _, err := cmds.tasksCmd(t.Context(), owner, "ignore "+tracked.ID); err != nil {
 		t.Fatal(err)
+	}
+	got, _ = store.Get(tracked.ID)
+	if got.Settlement != task.SettlementIgnored || got.Channel != "" || got.Transport != "" {
+		t.Fatal("owner reconciliation did not settle the plan without adopting its source")
 	}
 }
 

@@ -40,7 +40,13 @@ func (c commands) tasksCmd(ctx context.Context, req Request, rest string) (Resul
 		if verb == taskShow {
 			want = project.RoleRead
 		}
-		if _, checkErr := c.controls.Task(ctx, req, tracked.ID, want); checkErr != nil {
+		var checkErr error
+		if verb == taskHandled || verb == taskIgnored || verb == taskReopen {
+			_, checkErr = c.controls.SettlementTask(ctx, req, tracked.ID)
+		} else {
+			_, checkErr = c.controls.Task(ctx, req, tracked.ID, want)
+		}
+		if checkErr != nil {
 			return Result{}, checkErr
 		}
 	}
@@ -88,6 +94,12 @@ func (c commands) tasksCmd(ctx context.Context, req Request, rest string) (Resul
 func (c commands) taskTarget(req Request, id string, verb taskVerb) (task.Task, bool) {
 	if id != "" {
 		tracked, ok := c.tasks.Get(id)
+		if ok && tracked.Channel == "" && (verb == taskHandled || verb == taskIgnored || verb == taskReopen) {
+			if managed, err := c.controls.SettlementTask(context.Background(), req, id); err == nil {
+				return managed, true
+			}
+			return task.Task{}, false
+		}
 		// Background work may have no conversation to scope. It still
 		// belongs to its recorded transport; missing transport is not
 		// permission for a console or chat adapter to claim the task.
@@ -148,7 +160,14 @@ func (c commands) taskTarget(req Request, id string, verb taskVerb) (task.Task, 
 // turn that happens to finish during the stop cannot flip the task back to
 // running, then stop the turn that is actually burning time.
 func (c commands) taskSetAside(ctx context.Context, title string, tracked task.Task, to task.State) (Result, error) {
-	result, _, err := c.setTaskAside(ctx, title, tracked, to, false)
+	result, revoked, err := c.setTaskAside(ctx, title, tracked, to, false)
+	if len(revoked) > 0 {
+		// The user's pause/cancel is committed. Its reply still reports an
+		// unconfirmed physical stop, and the writer stays quarantined. That
+		// uncertainty belongs to the original execution's recovery, rather
+		// than making this accepted control hold the conversation queue.
+		return result, nil
+	}
 	return result, err
 }
 

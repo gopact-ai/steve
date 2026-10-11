@@ -224,7 +224,10 @@ adapters behind the service ports. Native mail/calendar/IM providers and macOS/i
 capability implementations can use the versioned HTTP contract in
 [event-providers](event-providers.md). They are not installed by this change.
 Existing Skills/MCP immutable runtime bundles and user-managed harness versions
-continue unchanged. A2A adapters remain a product extension. Account/grant migration is part of the
+continue unchanged. Newly prepared Codex runtime homes explicitly disable native Apps, plugins,
+and remote plugin discovery, so shared model authentication does not import the
+operator's ChatGPT account tools. Steve supplies admitted MCP servers through ACP
+and materializes selected skills in the runtime home. A2A adapters remain a product extension. Account/grant migration is part of the
 foundation above, with explicit bindings and original execution evidence.
 
 ## Validation cadence

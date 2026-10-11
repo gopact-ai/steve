@@ -32,7 +32,7 @@ func (s *Scanner) NextStates(ctx context.Context, book *ledger.Ledger, kind stri
 			args = append(args, state)
 		}
 		args = append(args, limit+1)
-		rows, err := tx.Query(`SELECT id FROM bindings WHERE kind=? AND id>? AND json_extract(data,'$.state') IN (`+strings.Join(marks, ",")+`) ORDER BY id LIMIT ?`, args...)
+		rows, err := tx.Query(`SELECT id FROM bindings WHERE kind=? AND id>? AND (`+StateExpression+`) IN (`+strings.Join(marks, ",")+`) ORDER BY id LIMIT ?`, args...)
 		if err != nil {
 			return err
 		}

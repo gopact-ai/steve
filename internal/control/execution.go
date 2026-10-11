@@ -6,10 +6,42 @@ import (
 	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/work"
 )
+
+// ForAccounts exposes the execution policy independently of the native turn
+// executor. Application ports share the installed account authority.
+func ForAccounts(accounts *identity.Accounts) *Service {
+	owners, _ := identity.NewOwners(identity.Configuration{Accounts: accounts})
+	return &Service{Owners: owners}
+}
+
+func (s *Service) ExecutionAccessTx(tx ledger.Reader, id, conversationID string, change, delegated bool) error {
+	if s.book() == nil {
+		return nil
+	}
+	proof, tracked, err := s.ExecutionCallerTx(tx, id)
+	if err != nil {
+		return err
+	}
+	if tracked.Channel != conversationID {
+		return ErrDenied
+	}
+	if change {
+		return s.ExecutionOwnerTx(tx, id, delegated)
+	}
+	role, err := project.AccessPolicyTx(tx, tracked.ProjectID, proof.Principal, s.Owners.Configuration().Accounts.Owner)
+	if err != nil {
+		return err
+	}
+	if !role.AtLeast(project.RoleRead) {
+		return ErrDenied
+	}
+	return nil
+}
 
 // ExecutionCallerTx resolves the immutable caller of this exact execution.
 // Child attempts inherit only their recorded parent authorization; conversation

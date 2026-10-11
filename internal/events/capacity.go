@@ -15,7 +15,7 @@ func (s *Service) checkCapacityTx(tx *ledger.Tx, source string, incoming int) er
 	query := `WITH unfinished(id) AS (
 		SELECT id FROM bindings WHERE kind=?
 		UNION SELECT json_extract(i.data,'$.event_id') FROM bindings AS q JOIN bindings AS i ON i.kind=? AND i.id=q.id WHERE q.kind=?
-		UNION SELECT json_extract(data,'$.event_id') FROM bindings WHERE kind=? AND json_extract(data,'$.state') IN ('pending','claimed','accepted','unknown')
+		UNION SELECT ` + durable.EventIDExpression + ` FROM bindings WHERE kind=? AND (` + durable.StateExpression + `) IN ('pending','claimed','accepted','unknown')
 	) SELECT count(*),coalesce(sum(CASE WHEN json_extract(e.data,'$.source')=? THEN 1 ELSE 0 END),0) FROM unfinished AS u JOIN bindings AS e ON e.kind=? AND e.id=u.id`
 	var total, own int
 	if err := tx.QueryRow(query, OutboxKind, InboxKind, InboxOpenKind, DeliveryKind, source, EventKind).Scan(&total, &own); err != nil {

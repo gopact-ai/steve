@@ -60,7 +60,7 @@ func (s *Services) Stats(ctx context.Context) (out Stats, err error) {
 				marks[i] = "?"
 				args = append(args, state)
 			}
-			if err := tx.QueryRow(`SELECT count(*),coalesce(min(json_extract(data,?)),'') FROM bindings WHERE kind=? AND json_extract(data,'$.state') IN (`+strings.Join(marks, ",")+`)`, args...).Scan(&stats.Pending, &stats.Oldest); err != nil {
+			if err := tx.QueryRow(`SELECT count(*),coalesce(min(json_extract(data,?)),'') FROM bindings WHERE kind=? AND (`+durable.StateExpression+`) IN (`+strings.Join(marks, ",")+`)`, args...).Scan(&stats.Pending, &stats.Oldest); err != nil {
 				return err
 			}
 			out.Queues[queue.name] = stats

@@ -56,13 +56,13 @@ func (s *Services) Compact(ctx context.Context) (out Compaction, err error) {
 		states          []string
 	}{
 		{events.EventKind, "", nil},
-		{events.DeliveryKind, "json_extract(data,'$.state')", []string{events.StateDone, events.StateFailed, events.StateCancelled}},
+		{events.DeliveryKind, durable.StateExpression, []string{events.StateDone, events.StateFailed, events.StateCancelled}},
 		// A refusal before admission has no exchange or Outcome, but its
 		// failed receipt is just as terminal as a completed execution.
-		{work.RecordKind, "CASE WHEN json_extract(data,'$.state')='failed' THEN 'failed' ELSE json_extract(data,'$.outcome.state') END", []string{"done", "failed", "cancelled"}},
-		{work.InputKind, "json_extract(data,'$.state')", []string{work.InputDone}},
-		{interaction.RecordKind, "json_extract(data,'$.state')", []string{"answered", "interrupted"}},
-		{clientcap.CallKind, "json_extract(data,'$.state')", []string{clientcap.StateDone, clientcap.StateFailed, clientcap.StateCancelled}},
+		{work.RecordKind, "CASE WHEN (" + durable.StateExpression + ")='failed' THEN 'failed' ELSE (" + durable.OutcomeExpression + ") END", []string{"done", "failed", "cancelled"}},
+		{work.InputKind, durable.StateExpression, []string{work.InputDone}},
+		{interaction.RecordKind, durable.StateExpression, []string{"answered", "interrupted"}},
+		{clientcap.CallKind, durable.StateExpression, []string{clientcap.StateDone, clientcap.StateFailed, clientcap.StateCancelled}},
 	} {
 		var ids []string
 		err = s.Book.Read(ctx, func(tx *ledger.ReadTx) error {
@@ -148,7 +148,7 @@ func coldEventTx(tx *ledger.Tx, id string) (bool, error) {
 	if err := tx.QueryRow(`SELECT count(*) FROM bindings WHERE kind=? AND id=?`, events.OutboxKind, id).Scan(&count); err != nil || count > 0 {
 		return false, err
 	}
-	if err := tx.QueryRow(`SELECT count(*) FROM bindings WHERE kind=? AND json_extract(data,'$.event_id')=? AND json_extract(data,'$.state') IN ('pending','claimed','accepted','unknown')`, events.DeliveryKind, id).Scan(&count); err != nil || count > 0 {
+	if err := tx.QueryRow(`SELECT count(*) FROM bindings WHERE kind=? AND (`+durable.EventIDExpression+`)=? AND (`+durable.StateExpression+`) IN ('pending','claimed','accepted','unknown')`, events.DeliveryKind, id).Scan(&count); err != nil || count > 0 {
 		return false, err
 	}
 	if err := tx.QueryRow(`SELECT count(*) FROM bindings AS i JOIN bindings AS q ON q.kind=? AND q.id=i.id WHERE i.kind=? AND json_extract(i.data,'$.event_id')=?`, events.InboxOpenKind, events.InboxKind, id).Scan(&count); err != nil || count > 0 {
@@ -173,6 +173,6 @@ func (s *Services) maintain(ctx context.Context) error {
 }
 
 func init() {
-	ledger.MustRegisterReadIndex("service_event_reference_v1", `CREATE INDEX IF NOT EXISTS service_event_reference_v1 ON bindings(kind,json_extract(data,'$.event_id'),id)`)
+	ledger.MustRegisterReadIndex("service_event_reference_v1", `CREATE INDEX IF NOT EXISTS service_event_reference_v1 ON bindings(kind,`+durable.EventIDExpression+`,id)`)
 	ledger.MustRegisterReadIndex("service_retention_v1", `CREATE INDEX IF NOT EXISTS service_retention_v1 ON bindings(kind,updated_at,id)`)
 }

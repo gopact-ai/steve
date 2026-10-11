@@ -110,7 +110,6 @@ type coordinatorState struct {
 	autoResolveSource func() bool
 	owners            identity.Owners
 	home              home.Loader
-	homePath          string
 	skills            *skills.Live
 	// gate is Callbacks.AgentGate: nil when its port cannot be bound.
 	gate  AgentGate
@@ -269,10 +268,6 @@ func New(deps Deps) (*Coordinator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("turn: %w", err)
 	}
-	homePath := ""
-	if dir, ok := deps.Home.(home.Dir); ok {
-		homePath = dir.Path
-	}
 	return &Coordinator{
 		text:    deps.Text,
 		ownerID: deps.Identity.ConsoleOwner,
@@ -283,7 +278,7 @@ func New(deps Deps) (*Coordinator, error) {
 			catalog:       deps.Catalog, store: deps.Store, assembler: deps.Assembler, runtime: deps.Runtime,
 			promptClock:       promptClock{timeout: deps.Timeout, source: deps.TimeoutSource, start: idle.WithTimeout},
 			autoResolveSource: deps.AutoResolveSource,
-			owners:            owners, home: deps.Home, homePath: homePath, skills: deps.Skills,
+			owners:            owners, home: deps.Home, skills: deps.Skills,
 			projects: deps.Projects, defaultProject: deps.DefaultProject, homeProject: deps.HomeProject,
 			memory: deps.Memory, attempts: deps.Attempts, artifacts: deps.Artifacts, intents: deps.Intents,
 			executions: deps.Executions, tasks: deps.Tasks, node: deps.Node, schedules: deps.Schedules,
@@ -295,6 +290,15 @@ func New(deps Deps) (*Coordinator, error) {
 			cancelPending:         map[string]time.Time{},
 		},
 	}, nil
+}
+
+// homeDirectory is derived from the configured loader; it cannot drift from
+// the home a turn actually injects.
+func (c *coordinatorState) homeDirectory() string {
+	if dir, ok := c.home.(home.Dir); ok {
+		return dir.Path
+	}
+	return ""
 }
 
 // placement is where this agent's process belongs. It comes from the

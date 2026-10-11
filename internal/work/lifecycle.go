@@ -11,14 +11,17 @@ import (
 
 // Accepted is queue admission, not completion. Keep the original exchange's
 // final receipt before releasing backlog capacity or compressing history.
-const unfinishedPredicate = `(json_extract(data,'$.state')='pending' OR (json_extract(data,'$.state')='accepted' AND coalesce(json_extract(data,'$.outcome.state'),'') NOT IN ('done','failed','cancelled')))`
+const unfinishedPredicate = `(CASE WHEN json_valid(data) THEN (json_extract(data,'$.state')='pending' OR (json_extract(data,'$.state')='accepted' AND coalesce(json_extract(data,'$.outcome.state'),'') NOT IN ('done','failed','cancelled'))) ELSE 0 END)`
+const workSourceExpr = `(CASE WHEN json_valid(data) THEN json_extract(data,'$.grant_id') END)`
+const outcomeDone = "done"
+const outcomeCancelled = "cancelled"
 
 func init() {
 	ledger.MustRegisterReadIndex("bindings_work_unfinished", `CREATE INDEX IF NOT EXISTS bindings_work_unfinished ON bindings(id) WHERE kind='service-work' AND `+unfinishedPredicate)
-	ledger.MustRegisterReadIndex("bindings_work_unfinished_source", `CREATE INDEX IF NOT EXISTS bindings_work_unfinished_source ON bindings(json_extract(data,'$.grant_id'),id) WHERE kind='service-work' AND `+unfinishedPredicate)
+	ledger.MustRegisterReadIndex("bindings_work_unfinished_source", `CREATE INDEX IF NOT EXISTS bindings_work_unfinished_source ON bindings(`+workSourceExpr+`,id) WHERE kind='service-work' AND `+unfinishedPredicate)
 }
 func terminalResult(state string) bool {
-	return state == "done" || state == "failed" || state == "cancelled"
+	return state == outcomeDone || state == StateFailed || state == outcomeCancelled
 }
 func (s *Service) checkCapacityTx(tx *ledger.Tx, source string) error {
 	limits := s.Limits.Effective()
@@ -27,10 +30,10 @@ func (s *Service) checkCapacityTx(tx *ledger.Tx, source string) error {
 	if err := tx.QueryRow(`SELECT count(*) FROM bindings WHERE kind=? AND `+unfinishedPredicate, RecordKind).Scan(&total); err != nil {
 		return err
 	}
-	sourceQuery := `SELECT count(*) FROM bindings WHERE kind=? AND ` + unfinishedPredicate + ` AND json_extract(data,'$.grant_id')=?`
+	sourceQuery := `SELECT count(*) FROM bindings WHERE kind=? AND ` + unfinishedPredicate + ` AND ` + workSourceExpr + `=?`
 	args := []any{RecordKind, source}
 	if source == "" {
-		sourceQuery = `SELECT count(*) FROM bindings WHERE kind=? AND ` + unfinishedPredicate + ` AND json_extract(data,'$.grant_id') IS NULL`
+		sourceQuery = `SELECT count(*) FROM bindings WHERE kind=? AND ` + unfinishedPredicate + ` AND ` + workSourceExpr + ` IS NULL`
 		args = []any{RecordKind}
 	}
 	if err := tx.QueryRow(sourceQuery, args...).Scan(&own); err != nil {

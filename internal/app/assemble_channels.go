@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"time"
@@ -13,11 +12,8 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
-	"github.com/gopact-ai/steve/internal/control"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/intent"
-	"github.com/gopact-ai/steve/internal/ledger"
-	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
@@ -42,43 +38,7 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 		gate.SetIntents(intent.ForAgents{S: intents, Attempts: attempts})
 		// Platform questions are answered by the coordinator, live.
 		gate.SetInformer(adminsvc.CoordinatorInformer{C: coordinator})
-		gate.SetPlatformAuthority(func(ctx context.Context, bind agentmcp.Binding, change bool) error {
-			if err := book.Update(ctx, func(tx *ledger.Tx) error { return agentmcp.AuthorizeContext(ctx, applicationMCPTx{tx}) }); err != nil {
-				return err
-			}
-			return coordinator.AuthorizePlatform(ctx, bind, change)
-		})
-		if admin != nil {
-			admin.ConfigCommit = func(ctx context.Context, save func() error) error {
-				guard := control.MutationGuard(ctx)
-				if guard == nil {
-					return save()
-				}
-				return book.Update(ctx, func(tx *ledger.Tx) error {
-					if err := guard(tx); err != nil {
-						return err
-					}
-					return save()
-				})
-			}
-		}
-		gate.SetFleeter(adminsvc.FleetTools{Admin: admin, View: view, Guard: func(ctx context.Context, tx *ledger.Tx) error {
-			if err := agentmcp.AuthorizeContext(ctx, applicationMCPTx{tx}); err != nil {
-				return err
-			}
-			scope, ok := agentmcp.ScopeFromContext(ctx)
-			if !ok {
-				return agentmcp.ErrGrantDenied
-			}
-			tracked, found, err := task.GetTx(tx, scope.TaskID)
-			if err != nil {
-				return err
-			}
-			if !found {
-				return agentmcp.ErrGrantDenied
-			}
-			return coordinator.AuthorizePlatformTx(ctx, tx, agentmcp.Binding{ConversationID: tracked.Channel, AgentID: tracked.Member, DelegatedBy: tracked.Parent}, true)
-		}})
+		configurePlatformAuthority(gate, book, work.Accounts(), admin, view)
 		gate.SetMemorizer(coordinator)
 	}
 	var channel *feishu.Channel
