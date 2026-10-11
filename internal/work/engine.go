@@ -256,19 +256,22 @@ func (s *Engine) admitInput(ctx context.Context, req turnapi.Request) (InputReco
 			if old.Principal != account.Principal || old.AccountRevision != account.Revision {
 				return identity.ErrDenied
 			}
-			if old.State == InputDone && old.Attempt != "" {
+			if old.State == InputDone && old.Task != "" {
 				if _, configured, err := durable.Get[string](tx, identity.AuthorityKind, "owner"); err != nil {
 					return err
 				} else if configured {
-					a, err := attempt.GetTx(tx, old.Attempt)
+					tracked, found, err := task.GetTx(tx, old.Task)
 					if err != nil {
 						return err
+					}
+					if !found {
+						return identity.ErrDenied
 					}
 					owner, _, err := durable.Get[string](tx, identity.AuthorityKind, "owner")
 					if err != nil {
 						return err
 					}
-					role, err := project.AccessPolicyTx(tx, a.Project, old.Principal, owner)
+					role, err := project.AccessPolicyTx(tx, tracked.ProjectID, old.Principal, owner)
 					if err != nil {
 						return err
 					}
@@ -305,6 +308,9 @@ func (s *Engine) bindAttempt(ctx context.Context, req turnapi.Request, id, taskI
 		}
 		if !found || current.Runtime != s.Runtime || current.State != InputRunning {
 			return ledger.ErrConflict
+		}
+		if err := s.checkRuntime(tx); err != nil {
+			return err
 		}
 		a, err := attempt.GetTx(tx, attemptID)
 		if err != nil {

@@ -6,6 +6,7 @@ import (
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/identity"
+	"github.com/gopact-ai/steve/internal/interaction"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
@@ -24,8 +25,11 @@ func (s *Engine) PinTask(ctx context.Context, taskID string, req turnapi.Request
 		if err != nil {
 			return err
 		}
-		if !found {
+		if !found || input.Runtime != s.Runtime || input.State != InputRunning || input.Task != "" && input.Task != taskID {
 			return identity.ErrDenied
+		}
+		if err := s.checkRuntime(tx); err != nil {
+			return err
 		}
 		tracked, found, err := task.GetTx(tx, taskID)
 		if err != nil {
@@ -42,7 +46,11 @@ func (s *Engine) PinTask(ctx context.Context, taskID string, req turnapi.Request
 			return identity.ErrDenied
 		}
 		proof := identity.ExecutionProof{Account: input.Actor, Principal: input.Principal, Revision: input.AccountRevision}
-		return tx.PutBinding(identity.TaskAuthorityKind, taskID, identity.TaskAuthority{Epoch: tracked.ExecutionEpoch, Caller: &proof})
+		if err := tx.PutBinding(identity.TaskAuthorityKind, taskID, identity.TaskAuthority{Epoch: tracked.ExecutionEpoch, Caller: &proof}); err != nil {
+			return err
+		}
+		input.Task = taskID
+		return tx.PutBinding(InputKind, input.ID, input)
 	})
 }
 
@@ -120,6 +128,17 @@ func CheckOutputAuthorityTx(tx ledger.Reader, address channel.Address) error {
 	}
 	if !role.AtLeast(project.RoleRead) {
 		return identity.ErrDenied
+	}
+	return nil
+}
+
+func (s *Engine) checkRuntime(tx ledger.Reader) error {
+	active, found, err := durable.Get[string](tx, interaction.RuntimeKind, "active")
+	if err != nil {
+		return err
+	}
+	if found && active != s.Runtime {
+		return ledger.ErrStale
 	}
 	return nil
 }
