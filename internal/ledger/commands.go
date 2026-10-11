@@ -27,31 +27,37 @@ func (l *Ledger) RecordCommand(ctx context.Context, id, kind, actor string, resu
 	if id == "" || kind == "" || !json.Valid(result) {
 		return errors.New("ledger: command acceptance requires an id, kind and JSON result")
 	}
-	return l.Update(ctx, func(tx *Tx) error {
-		var oldKind, oldActor string
-		var finished, oldResult, oldError sql.NullString
-		err := tx.QueryRow(`SELECT kind, actor, finished_at, result, error FROM commands WHERE id = ?`, id).
-			Scan(&oldKind, &oldActor, &finished, &oldResult, &oldError)
-		if errors.Is(err, sql.ErrNoRows) {
-			now := l.now().UTC().Format(time.RFC3339Nano)
-			_, err = tx.Exec(`INSERT INTO commands(id, kind, actor, received_at, finished_at, result, error) VALUES (?, ?, ?, ?, ?, ?, '')`,
-				id, kind, actor, now, now, string(result))
-			return err
-		}
-		if err != nil {
-			return err
-		}
-		if oldKind != kind || oldActor != actor {
-			return fmt.Errorf("%w: command %s has another identity", ErrConflict, id)
-		}
-		if !finished.Valid {
-			return ErrInFlight
-		}
-		if oldError.String != "" || !bytes.Equal([]byte(oldResult.String), result) {
-			return fmt.Errorf("%w: command %s has another result", ErrConflict, id)
-		}
-		return nil
-	})
+	return l.Update(ctx, func(tx *Tx) error { return tx.RecordCommand(id, kind, actor, result) })
+}
+
+// RecordCommand writes an immutable receipt in an existing domain transaction.
+func (tx *Tx) RecordCommand(id, kind, actor string, result json.RawMessage) error {
+	if id == "" || kind == "" || !json.Valid(result) {
+		return errors.New("ledger: command acceptance requires an id, kind and JSON result")
+	}
+	var oldKind, oldActor string
+	var finished, oldResult, oldError sql.NullString
+	err := tx.QueryRow(`SELECT kind, actor, finished_at, result, error FROM commands WHERE id = ?`, id).
+		Scan(&oldKind, &oldActor, &finished, &oldResult, &oldError)
+	if errors.Is(err, sql.ErrNoRows) {
+		now := tx.l.now().UTC().Format(time.RFC3339Nano)
+		_, err = tx.Exec(`INSERT INTO commands(id, kind, actor, received_at, finished_at, result, error) VALUES (?, ?, ?, ?, ?, ?, '')`,
+			id, kind, actor, now, now, string(result))
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	if oldKind != kind || oldActor != actor {
+		return fmt.Errorf("%w: command %s has another identity", ErrConflict, id)
+	}
+	if !finished.Valid {
+		return ErrInFlight
+	}
+	if oldError.String != "" || !bytes.Equal([]byte(oldResult.String), result) {
+		return fmt.Errorf("%w: command %s has another result", ErrConflict, id)
+	}
+	return nil
 }
 
 // Commands reads the receipts owned by one command kind, including unresolved

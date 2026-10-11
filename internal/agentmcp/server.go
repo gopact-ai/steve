@@ -182,6 +182,7 @@ type Server struct {
 	fleeter             Fleeter
 	memorizer           Memorizer
 	scheduler           Scheduler
+	clientInvoker       ClientInvoker
 	journal             func(conversationID, agentID, taskID string, receipt channel.Address)
 	tokens              map[string]binding
 	byBind              map[binding]string
@@ -493,6 +494,9 @@ func (s *Server) DescribeExtras(token, endpoint string) []capability.Extra {
 	if s.scheduler != nil {
 		instructions += "\n\n" + scheduleInstructions
 	}
+	if s.clientInvoker != nil {
+		instructions += "\n\n" + clientInstructions
+	}
 	s.mu.Unlock()
 	return []capability.Extra{{
 		Name:     ServerName,
@@ -592,7 +596,7 @@ type PlatformTool struct {
 // the channel messaging set always, delegation when a delegator is wired.
 func PlatformTools(delegating bool) []PlatformTool {
 	var out []PlatformTool
-	for _, t := range toolList(delegating, true, true, true, true) {
+	for _, t := range append(toolList(delegating, true, true, true, true), clientTools()...) {
 		name, _ := t["name"].(string)
 		desc, _ := t["description"].(string)
 		out = append(out, PlatformTool{Name: name, Description: desc})
@@ -605,33 +609,41 @@ func (s *Server) toolList() []map[string]any {
 	informing, fleeting, remembering := s.informer != nil, s.fleeter != nil, s.memorizer != nil
 	delegating := s.delegator != nil
 	scheduling := s.scheduler != nil
+	clients := s.clientInvoker != nil
 	s.mu.Unlock()
-	return toolList(delegating, informing, fleeting, remembering, scheduling)
+	tools := toolList(delegating, informing, fleeting, remembering, scheduling)
+	if clients {
+		tools = append(tools, clientTools()...)
+	}
+	return tools
 }
 
 // titles are the short labels the console shows for the platform's own
 // tools, kept beside the tools themselves: adding a tool means adding
 // its label here, and the page never names a tool on its own.
 var titles = map[string]i18n.Key{
-	"steve_context":         i18n.MCPToolContext,
-	"steve_help":            i18n.MCPToolHelp,
-	"steve_projects":        i18n.MCPToolProjects,
-	"steve_fleet":           i18n.MCPToolFleet,
-	"steve_delegate":        i18n.MCPToolDelegate,
-	"steve_await":           i18n.MCPToolAwait,
-	"steve_remember":        i18n.MCPToolRemember,
-	"steve_recall":          i18n.MCPToolRecall,
-	"steve_forget":          i18n.MCPToolForget,
-	"steve_schedule":        i18n.MCPToolSchedule,
-	"steve_schedules":       i18n.MCPToolSchedules,
-	"steve_schedule_cancel": i18n.MCPToolScheduleCancel,
-	"channel_send":          i18n.MCPToolChannelSend,
-	"channel_update":        i18n.MCPToolChannelUpdate,
-	"channel_recall":        i18n.MCPToolChannelRecall,
-	"steve_nodes":           i18n.MCPToolNodes,
-	"steve_node_add":        i18n.MCPToolNodeAdd,
-	"steve_node_refresh":    i18n.MCPToolNodeRefresh,
-	"steve_node_remove":     i18n.MCPToolNodeRemove,
+	"steve_client_capabilities": i18n.MCPToolClientCapabilities,
+	"steve_client_invoke":       i18n.MCPToolClientInvoke,
+	"steve_client_result":       i18n.MCPToolClientResult,
+	"steve_context":             i18n.MCPToolContext,
+	"steve_help":                i18n.MCPToolHelp,
+	"steve_projects":            i18n.MCPToolProjects,
+	"steve_fleet":               i18n.MCPToolFleet,
+	"steve_delegate":            i18n.MCPToolDelegate,
+	"steve_await":               i18n.MCPToolAwait,
+	"steve_remember":            i18n.MCPToolRemember,
+	"steve_recall":              i18n.MCPToolRecall,
+	"steve_forget":              i18n.MCPToolForget,
+	"steve_schedule":            i18n.MCPToolSchedule,
+	"steve_schedules":           i18n.MCPToolSchedules,
+	"steve_schedule_cancel":     i18n.MCPToolScheduleCancel,
+	"channel_send":              i18n.MCPToolChannelSend,
+	"channel_update":            i18n.MCPToolChannelUpdate,
+	"channel_recall":            i18n.MCPToolChannelRecall,
+	"steve_nodes":               i18n.MCPToolNodes,
+	"steve_node_add":            i18n.MCPToolNodeAdd,
+	"steve_node_refresh":        i18n.MCPToolNodeRefresh,
+	"steve_node_remove":         i18n.MCPToolNodeRemove,
 }
 
 // ToolTitles is every tool the platform can offer, with its label: the
@@ -640,7 +652,7 @@ var titles = map[string]i18n.Key{
 // without a label is still recognised, by name.
 func ToolTitles() map[string]i18n.Key {
 	out := map[string]i18n.Key{}
-	for _, t := range toolList(true, true, true, true, true) {
+	for _, t := range append(toolList(true, true, true, true, true), clientTools()...) {
 		name, _ := t["name"].(string)
 		if name == "" {
 			continue
@@ -860,6 +872,8 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 		out, err = s.steveForget(ctx, bind, call.Arguments)
 	case "steve_schedule", "steve_schedules", "steve_schedule_cancel":
 		out, err = s.scheduleCall(ctx, bind, call.Name, call.Arguments)
+	case "steve_client_capabilities", "steve_client_invoke", "steve_client_result":
+		out, err = s.clientCall(ctx, bind, call.Name, call.Arguments)
 	default:
 		err = fmt.Errorf("unknown tool %q", call.Name)
 	}

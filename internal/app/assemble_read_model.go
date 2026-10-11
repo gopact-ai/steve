@@ -46,7 +46,7 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 	repos := &adminsvc.RepoCache{Projects: projects, Nodes: nodes, Hub: boot.NodeName(), Poke: make(chan struct{}, 1)}
 	view := readmodel.New(readmodel.Sources{
 		Hub: readmodel.Hub{
-			Node: boot.NodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities,
+			Node: boot.NodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities, Services: []string{"events.v1", "work.v1", "clients.v1"},
 			Level: string(cfg.HubLevel()),
 		},
 		HubAdvert: func() nodewire.Advert {

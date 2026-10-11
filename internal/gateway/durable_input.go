@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/ingress"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -22,7 +24,13 @@ func (g *Gateway) acceptInput(ctx context.Context, key string, input gatewayInpu
 	if err != nil {
 		return err
 	}
-	return g.recoveryLedger.RecordCommand(ctx, key, gatewayInputKind, input.Message.SenderOpenID, raw)
+	return g.recoveryLedger.Update(ctx, func(tx *ledger.Tx) error {
+		if err := tx.RecordCommand(key, gatewayInputKind, input.Message.SenderOpenID, raw); err != nil {
+			return err
+		}
+		_, _, err := ingress.AcceptTx(tx, ingress.Input{Kind: "message", Source: "feishu", Key: key, Actor: input.Message.SenderOpenID, Conversation: conversationID(input.Message), Payload: raw}, key, time.Now().UTC())
+		return err
+	})
 }
 
 func (g *Gateway) consumeInput(ctx context.Context, book *ledger.Ledger, key string, input gatewayInput, driver RecoveryDriver, claim *inputClaim) error {

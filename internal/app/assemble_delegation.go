@@ -76,10 +76,8 @@ func assembleDelegation(life lifetime, input inputAssembly, boot runtimeAssembly
 		// lifetime does not hold the drain until it finishes on its own.
 		stop := boot.Stop()
 		life.Defer(func() { stop(); gate.Close() })
-		if environment != nil {
-			if err := gate.SetStore(newApplicationMCPStore(book), environment.Fail); err != nil {
-				return nil, fmt.Errorf("configure shared collaboration tools: %w", err)
-			}
+		if err := gate.SetStore(newApplicationMCPStore(book), mcpStoreFailure(environment)); err != nil {
+			return nil, fmt.Errorf("configure shared collaboration tools: %w", err)
 		}
 		if err := os.WriteFile(portPath, []byte(fmt.Sprintf("%d\n", gate.Port())), 0o600); err != nil {
 			slog.Error(fmt.Sprintf("steve: remember agent messaging port: %v", err))
@@ -230,4 +228,11 @@ func delegateObserver(ctx context.Context, hub string, admin *adminsvc.Service, 
 			cons.UpdateStep(c.Conversation, c.Task, readmodel.FromStepProgress("#"+c.Task, progress, info))
 		}
 	}
+}
+
+func mcpStoreFailure(environment *Environment) func(error) {
+	if environment == nil {
+		return nil
+	}
+	return environment.Fail
 }

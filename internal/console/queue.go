@@ -11,6 +11,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/readmodel"
@@ -43,6 +44,9 @@ type queuedExchange struct {
 	cancel                context.CancelFunc
 	done                  chan struct{}
 	outcome               outcome
+	// acceptGuard belongs only to an uncommitted service submission. It writes
+	// the Work receipt and rechecks scoped authority in queue admission's txn.
+	acceptGuard func(*ledger.Tx, string) error
 
 	// taskCancels wakes the exchange's recovery worker when a person
 	// cancels a task; it is made under the lock when a recovery first opens
@@ -118,6 +122,7 @@ func (s *Service) EnqueueCommand(ctx context.Context, conversation, input, comma
 // instead of the input; front puts the line ahead of everything still
 // waiting, behind what already ran or runs.
 type enqueueOptions struct {
+	AcceptGuard     func(*ledger.Tx, string) error
 	ResumeAdmission task.ResumeAdmission
 	Prompt, Key     string
 	Front           bool
@@ -226,6 +231,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		return s.resumeLocked(other)
 	}
 	e := &queuedExchange{
+		acceptGuard: options.AcceptGuard,
 		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
 			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject, ExpectedTask: options.ExpectedTask,
 			ResumeAdmission: options.ResumeAdmission,
