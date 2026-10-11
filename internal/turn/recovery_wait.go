@@ -25,7 +25,7 @@ func (c *Coordinator) awaitRecoveryWorkspace(ctx context.Context, req Request, s
 		if !errors.As(err, &waiting) {
 			return ws, err
 		}
-		req.stage(view.StageAwaitSnapshot)
+		req.Stage(view.StageAwaitSnapshot)
 		if touch != nil {
 			touch()
 		}

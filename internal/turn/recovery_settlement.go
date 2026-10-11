@@ -55,7 +55,7 @@ func (t *retainedTurn) options(prompt string, resume bool) lifecycle.Options {
 
 func (t *retainedTurn) ended(e *lifecycle.Execution) {
 	if t.finishing && e.Outcome.PromptSettled {
-		t.req.phase(view.PhaseFinishing)
+		t.req.Phase(view.PhaseFinishing)
 	}
 }
 

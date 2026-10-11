@@ -184,6 +184,5 @@ func (c *Coordinator) closeConversationSessions(ctx context.Context, conversatio
 func (c *Coordinator) forgetConversation(conversationID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.modes, conversationID)
-	delete(c.lastSeen, conversationID)
+	c.conversations.Forget(conversationID)
 }

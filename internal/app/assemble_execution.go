@@ -11,6 +11,7 @@ import (
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
+	messagechannel "github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/execution"
@@ -18,13 +19,17 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 	authidentity "github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/intent"
+	"github.com/gopact-ai/steve/internal/interaction"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/work"
 )
 
 func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, modelInfo modelsAssembly) (executionAssembly, error) {
@@ -43,10 +48,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	nodes := machines.Nodes()
 	projects := machines.Projects()
 
-	catalogText := i18n.New(i18n.FromLang(cfg.EffectiveLocale()))
-	if settings := boot.Settings(); settings != nil {
-		catalogText = i18n.Dynamic(func() i18n.Locale { return i18n.FromLang(settings.Load().Gateway.Locale) })
-	}
+	catalogText := runtimeCatalog(boot)
 	// Memory: the home's MEMORY.md for the owner, one file per project,
 	// every write locked and audited under the state directory.
 	memories := profile.Service
@@ -105,13 +107,14 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	if err != nil {
 		return nil, fmt.Errorf("open plans: %w", err)
 	}
-	var channelOwners map[string]string
-	if cfg.FeishuEnabled() {
-		channelOwners = map[string]string{"feishu": cfg.Feishu.OwnerOpenID}
+	core, err := assembleIntelligence(ctx, book, cfg, projects)
+	if err != nil {
+		return nil, err
 	}
-	identities := authidentity.Configuration{ConsoleOwner: cfg.EffectiveOwnerID(), NativeOwners: channelOwners}
+	identities, accounts, interactions, workEngine := core.identities, core.accounts, core.interactions, core.engine
 	timeoutSource, autoResolveSource := turnPolicy(boot.Settings())
 	coordinator, err := turn.New(turn.Deps{
+		Work:    workEngine,
 		Catalog: catalog, Store: store, Assembler: assembler, Runtime: manager,
 		Timeout: time.Duration(cfg.Gateway.PromptTimeout), TimeoutSource: timeoutSource,
 		AutoResolveSource: autoResolveSource, Text: catalogText,
@@ -143,12 +146,18 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	}
 	slog.Info(fmt.Sprintf("steve: serving at most %d conversations at once", gateway.PoolSize()))
 	artifacts.SetRecoveryResolutionDriver(turn.NewWorkspaceRecoveryControl(coordinator).Drive)
-	gw := gateway.New(coordinator)
-	gw.SetCatalog(catalogText)
-	return &executionValues{artifacts: artifacts, catalogText: catalogText, coordinator: coordinator, executions: executions, gw: gw, intents: intents, memories: memories, plans: plans, scheduler: scheduler, schedules: schedules, tasks: tasks}, nil
+	gw, native, err := assembleNativeChannels(input.Adapters(), coordinator, identities, catalogText)
+	if err != nil {
+		return nil, err
+	}
+	return &executionValues{native: native, adapters: input.Adapters(), accounts: accounts, interactions: interactions, artifacts: artifacts, catalogText: catalogText, coordinator: coordinator, executions: executions, gw: gw, intents: intents, memories: memories, plans: plans, scheduler: scheduler, schedules: schedules, tasks: tasks}, nil
 }
 
 type executionAssembly interface {
+	NativeChannels() map[string]*gateway.Gateway
+	NativeAdapters() map[string]messagechannel.Provider
+	Accounts() *authidentity.Accounts
+	Interactions() *interaction.Service
 	Artifacts() *artifact.Store
 	CatalogText() i18n.Catalog
 	Coordinator() *turn.Coordinator
@@ -163,17 +172,21 @@ type executionAssembly interface {
 }
 
 type executionValues struct {
-	artifacts   *artifact.Store
-	catalogText i18n.Catalog
-	coordinator *turn.Coordinator
-	executions  *execution.Registry
-	gw          *gateway.Gateway
-	intents     *intent.Service
-	memories    *memory.Service
-	plans       *plan.Store
-	scheduler   *turn.Scheduler
-	schedules   *schedule.Store
-	tasks       *task.Store
+	native       map[string]*gateway.Gateway
+	adapters     map[string]messagechannel.Provider
+	accounts     *authidentity.Accounts
+	interactions *interaction.Service
+	artifacts    *artifact.Store
+	catalogText  i18n.Catalog
+	coordinator  *turn.Coordinator
+	executions   *execution.Registry
+	gw           *gateway.Gateway
+	intents      *intent.Service
+	memories     *memory.Service
+	plans        *plan.Store
+	scheduler    *turn.Scheduler
+	schedules    *schedule.Store
+	tasks        *task.Store
 }
 
 func (v *executionValues) Artifacts() *artifact.Store { return v.artifacts }
@@ -237,4 +250,79 @@ func (p modelProbe) Probe(ctx context.Context, node, harnessID string) error {
 // ProbeAll asks every eligible harness, including those already seen.
 func (p modelProbe) ProbeAll(ctx context.Context) []models.Result {
 	return p.prober.ProbeAll(ctx, p.endpoints(ctx), true)
+}
+
+func (v *executionValues) Accounts() *authidentity.Accounts   { return v.accounts }
+func (v *executionValues) Interactions() *interaction.Service { return v.interactions }
+
+func (v *executionValues) NativeChannels() map[string]*gateway.Gateway {
+	if v.native == nil {
+		return map[string]*gateway.Gateway{"feishu": v.gw}
+	}
+	return v.native
+}
+func (v *executionValues) NativeAdapters() map[string]messagechannel.Provider { return v.adapters }
+
+type intelligenceCore struct {
+	identities   authidentity.Configuration
+	accounts     *authidentity.Accounts
+	interactions *interaction.Service
+	engine       *work.Engine
+}
+
+func assembleIntelligence(ctx context.Context, book *ledger.Ledger, cfg *config.Config, projects *project.Store) (intelligenceCore, error) {
+	var channelOwners map[string]string
+	if cfg.FeishuEnabled() {
+		channelOwners = map[string]string{"feishu": cfg.Feishu.OwnerOpenID}
+	}
+	identities := authidentity.Configuration{ConsoleOwner: cfg.EffectiveOwnerID(), NativeOwners: channelOwners}
+	accounts := &authidentity.Accounts{Book: book}
+	if err := accounts.Bootstrap(ctx, identities); err != nil {
+		return intelligenceCore{}, fmt.Errorf("bootstrap accounts: %w", err)
+	}
+	legacyChannel := "console"
+	if cfg.FeishuEnabled() {
+		legacyChannel = "feishu"
+	}
+	if err := projects.SetIdentityPolicy(ctx, accounts, legacyChannel); err != nil {
+		return intelligenceCore{}, fmt.Errorf("migrate project grants: %w", err)
+	}
+	identities.Accounts = accounts
+	workRuntime := authidentity.RandomID()
+	if err := book.Update(ctx, func(tx *ledger.Tx) error { return tx.PutBinding(interaction.RuntimeKind, "active", workRuntime) }); err != nil {
+		return intelligenceCore{}, err
+	}
+	interactions := &interaction.Service{Book: book, Runtime: workRuntime}
+	workEngine := &work.Engine{Book: book, Runtime: workRuntime, Interactions: interactions}
+	return intelligenceCore{identities, accounts, interactions, workEngine}, nil
+}
+
+func assembleNativeChannels(adapters map[string]messagechannel.Provider, coordinator *turn.Coordinator, identities authidentity.Configuration, catalogText i18n.Catalog) (*gateway.Gateway, map[string]*gateway.Gateway, error) {
+	gw := gateway.New(coordinator)
+	ownerAuthority, err := authidentity.NewOwners(identities)
+	if err != nil {
+		return nil, nil, err
+	}
+	gw.SetAuthority(ownerAuthority)
+	gw.SetCatalog(catalogText)
+	native := map[string]*gateway.Gateway{"feishu": gw}
+	for name, adapter := range adapters {
+		if !authidentity.ValidChannel(name) || name == "console" || name == "feishu" || adapter == nil {
+			return nil, nil, fmt.Errorf("invalid installed channel %q", name)
+		}
+		g := gateway.NewChannel(name, coordinator)
+		g.SetCatalog(catalogText)
+		g.SetAuthority(ownerAuthority)
+		native[name] = g
+	}
+	return gw, native, nil
+}
+
+func runtimeCatalog(boot runtimeAssembly) i18n.Catalog {
+	cfg := boot.Config()
+	catalogText := i18n.New(i18n.FromLang(cfg.EffectiveLocale()))
+	if settings := boot.Settings(); settings != nil {
+		catalogText = i18n.Dynamic(func() i18n.Locale { return i18n.FromLang(settings.Load().Gateway.Locale) })
+	}
+	return catalogText
 }

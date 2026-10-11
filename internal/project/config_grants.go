@@ -28,7 +28,21 @@ func (s *Store) reconcileConfigGrants(tx *ledger.Tx, desired map[string]Project)
 		}
 	}
 	for id, p := range desired {
+		resolvedGrants := map[string]Role{}
 		for principal, role := range p.ConfigGrants {
+			if s.identityAccounts != nil {
+				resolved, _, err := canonicalPrincipal(tx, principal, s.legacyGrantChannel)
+				if err != nil {
+					return err
+				}
+				principal = resolved
+			}
+			if old, found := resolvedGrants[principal]; found && old != role {
+				role = RoleNone
+			}
+			resolvedGrants[principal] = role
+		}
+		for principal, role := range resolvedGrants {
 			g, err := normalizeGrant(id, principal, role, "config", s.now().UTC())
 			if err != nil {
 				return err

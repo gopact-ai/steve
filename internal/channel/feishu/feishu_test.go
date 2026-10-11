@@ -173,7 +173,7 @@ func TestParseCardAction(t *testing.T) {
 		}},
 	}}
 	got := parseCardAction(event)
-	if got.OpenID != "ou_sender" || got.MessageID != "om_card" || got.RequestID != "req_1" || got.Decision != "allow" {
+	if got.ActorID != "ou_sender" || got.MessageID != "om_card" || got.RequestID != "req_1" || got.Decision != "allow" {
 		t.Fatalf("unexpected action: %#v", got)
 	}
 }

@@ -39,6 +39,13 @@ func (g *Gateway) claimRecovery(ctx context.Context, receipt ledger.CommandRecor
 	if json.Unmarshal(receipt.Result, &input) != nil || input.ConversationID == "" {
 		return nil, errors.New("gateway recovery has no accepted conversation")
 	}
+	transport := input.Transport
+	if transport == "" {
+		transport = "feishu"
+	}
+	if transport != g.name {
+		return nil, channel.ErrDeliveryQueued
+	}
 	claim, err := g.claimOrdinary(ctx, receipt.ID, input.ConversationID, false)
 	if err != nil {
 		return nil, err

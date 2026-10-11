@@ -3,7 +3,7 @@ package gateway
 import (
 	"context"
 
-	"github.com/gopact-ai/steve/internal/turn"
+	turn "github.com/gopact-ai/steve/internal/turnapi"
 )
 
 // Coordinator is the turn coordinator as the gateway uses it: it runs a

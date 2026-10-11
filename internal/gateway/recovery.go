@@ -15,12 +15,13 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
-	"github.com/gopact-ai/steve/internal/turn"
+	turn "github.com/gopact-ai/steve/internal/turnapi"
 )
 
 const recoveryInputKind = "gateway-recovery-input"
 
 type recoveryInput struct {
+	Transport string `json:"transport,omitempty"`
 	Revival
 	Attempt   string               `json:"attempt,omitempty"`
 	Prompt    string               `json:"prompt"`
@@ -85,7 +86,7 @@ func (g *Gateway) QueueRecovery(ctx context.Context, book *ledger.Ledger, key st
 			return nil
 		}
 	}
-	input := recoveryInput{Revival: r, Attempt: completedAttempt,
+	input := recoveryInput{Transport: g.inputTransport(), Revival: r, Attempt: completedAttempt,
 		Prompt: "@" + r.Member + " " + g.text.T(i18n.ResumePrompt, r.Goal),
 		Notice: g.text.T(i18n.ResumeNotice, r.TaskID)}
 	raw, err := json.Marshal(input)
@@ -203,6 +204,13 @@ func (g *Gateway) recoverAcceptedInput(ctx context.Context, book *ledger.Ledger,
 		json.Unmarshal(receipt.Result, &input) != nil || input.Requester != receipt.Actor {
 		return errors.New("gateway recovery has invalid acceptance")
 	}
+	transport := input.Transport
+	if transport == "" {
+		transport = "feishu"
+	}
+	if transport != g.name {
+		return channel.ErrDeliveryQueued
+	}
 	// A reply may already be durably confirmed while projection
 	// acknowledgement failed. Retry only the acknowledgement then.
 	err := book.AcknowledgeCommand(ctx, receipt.ID, recoveryInputKind, input.Requester, receipt.ID+"/reply", "gateway-recovery-reply")
@@ -223,7 +231,7 @@ func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key str
 	anchor := input.MessageID
 	request := turn.Request{
 		Source: turn.Source{
-			Channel:        "feishu",
+			Channel:        g.name,
 			ConversationID: input.ConversationID,
 			MessageID:      anchor,
 			ChatType:       protocol.ParseChatType(input.ChatType),

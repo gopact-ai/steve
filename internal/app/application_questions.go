@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/interaction"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/task"
@@ -104,26 +105,42 @@ func recoveryConversationOf(ctx context.Context, cons *console.Service, tracked 
 
 // planQuestions answers plan steps and auxiliary executions, on a node or
 // on the hub.
-func planQuestions(cons *console.Service, tasks *task.Store, attempts *attempt.Service) (permission.AskFunc, acphost.AskUserFunc) {
+func planQuestions(cons *console.Service, tasks *task.Store, attempts *attempt.Service, services ...*interaction.Service) (permission.AskFunc, acphost.AskUserFunc) {
+	var shared *interaction.Service
+	if len(services) > 0 {
+		shared = services[0]
+	}
 	ask := func(ctx context.Context, q permission.Ask) (acp.RequestPermissionOutcome, error) {
 		binding, local, err := planQuestionBinding(ctx, cons, tasks, attempts, q.SessionID, q.RequestID)
 		if err != nil {
 			return permission.Choose(false, q.Options), err
 		}
-		if local {
-			return cons.RequestLocalPermission(ctx, binding, q)
+		out, err := shared.RequestExecution(ctx, binding.AttemptID, "permission", q, func() (any, error) {
+			if local {
+				return cons.RequestLocalPermission(ctx, binding, q)
+			}
+			return cons.RequestNativePermission(ctx, binding, q)
+		})
+		if err != nil {
+			return permission.Choose(false, q.Options), err
 		}
-		return cons.RequestNativePermission(ctx, binding, q)
+		return out.(acp.RequestPermissionOutcome), nil
 	}
 	askUser := func(ctx context.Context, q view.Question) (view.Answer, error) {
 		binding, local, err := planQuestionBinding(ctx, cons, tasks, attempts, q.SessionID, q.RequestID)
 		if err != nil {
 			return view.Answer{}, err
 		}
-		if local {
-			return cons.RequestLocalQuestion(ctx, binding, q)
+		out, err := shared.RequestExecution(ctx, binding.AttemptID, "question", q, func() (any, error) {
+			if local {
+				return cons.RequestLocalQuestion(ctx, binding, q)
+			}
+			return cons.RequestNativeQuestion(ctx, binding, q)
+		})
+		if err != nil {
+			return view.Answer{}, err
 		}
-		return cons.RequestNativeQuestion(ctx, binding, q)
+		return out.(view.Answer), nil
 	}
 	return ask, askUser
 }

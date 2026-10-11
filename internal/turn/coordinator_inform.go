@@ -38,13 +38,8 @@ func (c *Coordinator) rememberMode(req Request) {
 	if req.Source.ChatType != protocol.ChatP2P && req.Source.ChatType != protocol.ChatGroup {
 		return
 	}
-	mode := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerID)
-	c.mu.Lock()
-	if c.modes == nil {
-		c.modes = map[string]home.Mode{}
-	}
-	c.modes[req.Source.ConversationID] = mode
-	c.mu.Unlock()
+	mode := c.requestMode(req)
+	c.conversations.RememberMode(req.Source.ConversationID, mode)
 }
 
 // consolePrefix starts every console conversation's key and must stay
@@ -64,10 +59,7 @@ func (c *Coordinator) arrivalMode(conversationID string) (mode home.Mode, known 
 	if strings.HasPrefix(conversationID, consolePrefix) {
 		return injectionMode(protocol.ChatP2P, c.owners.ConsoleOwner(), c.owners.ConsoleOwner()), true
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	mode, known = c.modes[conversationID]
-	return mode, known
+	return c.conversations.Mode(conversationID)
 }
 
 // modeOf is how a conversation reaches Steve, and guest when that is not

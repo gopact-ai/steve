@@ -15,11 +15,17 @@ import (
 
 // assembleTaskChannels is the sole registration point for task handoffs. A new
 // adapter implements taskReceiver; routing and delegation need no channel switch.
-func assembleTaskChannels(page *console.Service, chat *gateway.Gateway, book *ledger.Ledger, coordinator *turn.Coordinator, text i18n.Catalog) (*taskChannelRegistry, error) {
-	return newTaskChannels(map[string]taskReceiver{
+func assembleTaskChannels(page *console.Service, chat *gateway.Gateway, book *ledger.Ledger, coordinator *turn.Coordinator, text i18n.Catalog, native ...map[string]*gateway.Gateway) (*taskChannelRegistry, error) {
+	registered := map[string]taskReceiver{
 		"console": consoleTaskReceiver{page: page, revive: coordinator.ReviveSession, text: text},
 		"feishu":  gatewayTaskReceiver{chat: chat, book: book, driver: coordinator, revive: coordinator.ReviveSession},
-	})
+	}
+	for _, channels := range native {
+		for name, instance := range channels {
+			registered[name] = gatewayTaskReceiver{chat: instance, book: book, driver: coordinator, revive: coordinator.ReviveSession}
+		}
+	}
+	return newTaskChannels(registered)
 }
 
 type consoleTaskReceiver struct {

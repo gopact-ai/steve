@@ -233,6 +233,9 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 		Origin: "delegate:" + parent.ID, ProjectID: parent.ProjectID, Workspace: workspace.Path,
 		ChatID: parent.ChatID, AnchorMessage: parent.AnchorMessage, ChatType: parent.ChatType,
 	}
+	if fixed, ok := agentmcp.ScopeFromContext(requestCtx); ok {
+		childSpec.AuthorizationAttempt = fixed.AttemptID
+	}
 	var spawned task.Task
 	if accepted != nil {
 		guard, guardErr := s.fixedGuard(requestCtx)

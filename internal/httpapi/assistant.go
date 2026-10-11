@@ -20,10 +20,11 @@ import (
 func (s *Server) SetAssistant(ports *serviceapi.Services) { s.assistant = ports }
 
 func (s *Server) assistantRoutes(mux *http.ServeMux) {
-	for _, path := range []string{"connections", "subscriptions", "inbox", "event-deliveries", "client-capabilities", "client-invocations"} {
+	for _, path := range []string{"connections", "subscriptions", "inbox", "event-deliveries", "client-capabilities", "client-invocations", "accounts", "grant-migrations", "work-interactions"} {
 		mux.HandleFunc("GET /console/"+path, s.guard(s.assistantList))
 	}
 	mux.HandleFunc("POST /console/connections", s.guard(s.assistantEnroll))
+	mux.HandleFunc("PUT /console/accounts", s.guard(s.assistantAccount))
 	mux.HandleFunc("DELETE /console/connections/{id}", s.guard(s.assistantRevoke))
 	mux.HandleFunc("PUT /console/subscriptions/{id}", s.guard(s.assistantSubscription))
 	mux.HandleFunc("GET /console/business-events/{id}", s.guard(s.assistantEvent))
@@ -126,6 +127,24 @@ func (s *Server) assistantList(w http.ResponseWriter, r *http.Request) {
 	var err error
 	after := r.URL.Query().Get("cursor")
 	switch strings.TrimPrefix(r.URL.Path, "/console/") {
+	case "accounts":
+		if s.assistant.Accounts == nil {
+			http.Error(w, "account service unavailable", http.StatusNotImplemented)
+			return
+		}
+		value, err = s.assistant.Accounts.Bindings(r.Context(), after)
+	case "grant-migrations":
+		if s.assistant.Policy == nil {
+			http.Error(w, "policy service unavailable", http.StatusNotImplemented)
+			return
+		}
+		value, err = s.assistant.Policy.GrantMigrations(r.Context(), after)
+	case "work-interactions":
+		if s.assistant.Interactions == nil {
+			http.Error(w, "interaction service unavailable", http.StatusNotImplemented)
+			return
+		}
+		value, err = s.assistant.Interactions.Records(r.Context(), after)
 	case "connections":
 		value, err = s.assistant.Identity.Connections(r.Context(), after)
 	case "subscriptions":

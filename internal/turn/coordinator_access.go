@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/datalevel"
+	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -15,7 +16,11 @@ import (
 
 // require refuses a principal whose role in the project is below want.
 func (c *Coordinator) require(ctx context.Context, projectID, principal string, want project.Role) error {
-	return requireRole(ctx, c.projects, c.text, c.ownerID, projectID, principal, want)
+	principal, owner, err := c.owners.Resolve(ctx, c.channel, principal)
+	if err != nil {
+		return err
+	}
+	return requireRole(ctx, c.projects, c.text, owner, projectID, principal, want)
 }
 
 // requireRole refuses a principal whose role in the project, with owner as
@@ -32,7 +37,14 @@ func requireRole(ctx context.Context, projects *project.Store, text i18n.Catalog
 }
 
 func (c *Coordinator) isOwner(req Request) bool {
-	return c.ownerID != "" && req.Actor.ID == c.ownerID
+	return c.owners.IsOwner(context.Background(), req.Source.Channel, req.Actor.ID)
+}
+
+func (c *Coordinator) requestMode(req Request) home.Mode {
+	if req.Source.ChatType == protocol.ChatP2P && c.isOwner(req) {
+		return home.ModeOwner
+	}
+	return home.ModeGuest
 }
 
 // held is an answer from a sealed project waiting for the owner. It lives

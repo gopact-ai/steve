@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	messagechannel "github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/debugapi"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -56,6 +57,24 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 		control := turn.NewWorkspaceRecoveryControl(coordinator)
 		recovery := &applicationWorkspaceRecovery{attempts: attempts, artifacts: work.Artifacts(), state: storage.Store(), sessions: manager, control: control}
 		reconciliations.Go(func() { runReconciler(ctx, "reconcile workspace recovery", recovery.Reconcile) })
+	}
+	for name, adapter := range work.NativeAdapters() {
+		instance := work.NativeChannels()[name]
+		if instance == nil {
+			return fmt.Errorf("installed channel %s has no gateway", name)
+		}
+		background.Go(func(ctx context.Context) {
+			err := adapter.Run(ctx, messagechannel.Handlers{Input: instance.HandleMessage, Action: instance.HandleCardAction}, func() {
+				instance.BindAdapter(adapter)
+				if gate := delegates.Gate(); gate != nil {
+					gate.BindChannel(name, adapter)
+				}
+			})
+			if err != nil && ctx.Err() == nil {
+				view := page.Admin().View
+				view.Observe("channel.error", name, "Installed channel stopped; its accepted input remains pending", map[string]string{"channel": name})
+			}
+		})
 	}
 	if err := services.Ready(); err != nil {
 		return fmt.Errorf("record service readiness: %w", err)

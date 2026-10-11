@@ -61,7 +61,7 @@ func TestInjectMessageUsesDefaults(t *testing.T) {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
 	msg := <-gw.msgs
-	if msg.ChatID != "oc_chat" || msg.SenderOpenID != "ou_owner" || msg.Text != "hi" {
+	if msg.ChatID != "oc_chat" || msg.ActorID != "ou_owner" || msg.Text != "hi" {
 		t.Fatalf("message = %#v", msg)
 	}
 	if !msg.Mentioned || msg.ChatType != protocol.ChatGroup {
@@ -103,7 +103,7 @@ func TestInjectCardAction(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	action := <-gw.action
-	if action.Action != "tool_approval" || action.RequestID != "req_1" || action.OpenID != "ou_owner" {
+	if action.Action != "tool_approval" || action.RequestID != "req_1" || action.ActorID != "ou_owner" {
 		t.Fatalf("action = %#v", action)
 	}
 }

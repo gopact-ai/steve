@@ -10,13 +10,20 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/conversation"
+	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ingress"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/work"
 )
 
 func (g *Gateway) acceptInput(ctx context.Context, key string, input gatewayInput) error {
+	if inputChannel(input) != g.name {
+		return errors.New("gateway input belongs to another channel")
+	}
 	if key == "" || input.Message.MessageID == "" || conversationID(input.Message) == "" {
 		return errors.New("gateway durable input requires its original message and conversation")
 	}
@@ -25,16 +32,27 @@ func (g *Gateway) acceptInput(ctx context.Context, key string, input gatewayInpu
 		return err
 	}
 	return g.recoveryLedger.Update(ctx, func(tx *ledger.Tx) error {
-		if err := tx.RecordCommand(key, gatewayInputKind, input.Message.SenderOpenID, raw); err != nil {
+		if err := conversation.BindRouteTx(tx, conversationID(input.Message), g.name); err != nil {
 			return err
 		}
-		_, _, err := ingress.AcceptTx(tx, ingress.Input{Kind: "message", Source: "feishu", Key: key, Actor: input.Message.SenderOpenID, Conversation: conversationID(input.Message), Payload: raw}, key, time.Now().UTC())
+		if err := conversation.BindMessageTx(tx, g.name, input.Message.MessageID, conversationID(input.Message)); err != nil {
+			return err
+		}
+		if input.Message.ChatType == protocol.ChatP2P && input.Message.Origin == "" && g.authority.IsOwnerTx(tx, identity.Account{Channel: g.name, ID: input.Message.ActorID}) {
+			if err := tx.PutBinding(nativeAnchorKind, durable.Key(g.name, conversationID(input.Message)), nativeWorkAnchor{Message: input.Message}); err != nil {
+				return err
+			}
+		}
+		if err := tx.RecordCommand(key, gatewayInputKind, input.Message.ActorID, raw); err != nil {
+			return err
+		}
+		_, _, err := ingress.AcceptTx(tx, ingress.Input{Kind: "message", Source: g.name, Key: key, Actor: input.Message.ActorID, Conversation: conversationID(input.Message), Payload: raw}, key, time.Now().UTC())
 		return err
 	})
 }
 
 func (g *Gateway) consumeInput(ctx context.Context, book *ledger.Ledger, key string, input gatewayInput, driver RecoveryDriver, claim *inputClaim) error {
-	actor := input.Message.SenderOpenID
+	actor := input.Message.ActorID
 	ack := func() error { return acknowledgeInput(ctx, book, key, actor) }
 	if err := ack(); err == nil {
 		return nil
@@ -61,6 +79,11 @@ func (g *Gateway) consumeInput(ctx context.Context, book *ledger.Ledger, key str
 		msg = ch.EnrichInput(ctx, msg)
 	}
 	input.Message = msg
+	msg, err = g.prepareWork(ctx, ch, book, key, input)
+	if err != nil {
+		return err
+	}
+	input.Message = msg
 	guard := g.topicGuard(msg)
 	if guard == "" {
 		var err error
@@ -80,14 +103,16 @@ func (g *Gateway) consumeInput(ctx context.Context, book *ledger.Ledger, key str
 		return err
 	}
 	if err := g.deliverInput(ctx, ch, book, key, msg, output, ui); err != nil {
+		g.retainWorkDeliveryAttention(ctx, book, key, msg, "reply")
 		return err
 	}
 	return ack()
 }
 
-func (g *Gateway) dispatchInput(ctx context.Context, ch Channel, book *ledger.Ledger, key string, input gatewayInput, msg feishu.InboundMessage, guard string, driver RecoveryDriver) (recoveredOutput, *turnUI, error) {
-	actor := input.Message.SenderOpenID
+func (g *Gateway) dispatchInput(ctx context.Context, ch Channel, book *ledger.Ledger, key string, input gatewayInput, msg channel.Input, guard string, driver RecoveryDriver) (recoveredOutput, *turnUI, error) {
+	actor := input.Message.ActorID
 	request := g.taskRequest(msg, input.ExpectedTask, nil)
+	request.Admission.ExpectedProject = input.ExpectedProject
 	var output recoveredOutput
 	var ui *turnUI
 	dispatch, found, err := book.CommandReceipt(ctx, key+"/dispatch")
@@ -107,13 +132,14 @@ func (g *Gateway) dispatchInput(ctx context.Context, ch Channel, book *ledger.Le
 	}
 	raw, replayed, err := book.Command(ctx, key+"/dispatch", "gateway-input-dispatch", actor, func(ctx context.Context) (json.RawMessage, error) {
 		if g.gate != nil && !g.scheduleControl(msg.Text) {
-			g.gate.Anchor(conversationID(msg), channel.Address{Channel: "feishu", Conversation: conversationID(msg), Message: msg.MessageID})
+			g.gate.Anchor(conversationID(msg), channel.Address{Channel: g.name, Conversation: conversationID(msg), Message: msg.MessageID})
 		}
 		if input.Action != nil && input.Action.Action == "turn_retry" {
 			recall(ch, input.Action.MessageID)
 		}
 		ui = g.newTurnUI(ch, msg, silentListen(msg))
 		request = g.taskRequest(msg, input.ExpectedTask, ui)
+		request.Admission.ExpectedProject = input.ExpectedProject
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		var admitted string
@@ -142,10 +168,18 @@ func (g *Gateway) dispatchInput(ctx context.Context, ch Channel, book *ledger.Le
 	if err != nil || json.Unmarshal(raw, &output) != nil || output.Recover {
 		output, err = recoverDispatchedAttempt(ctx, book, key, actor, request, driver)
 	}
+	if err == nil && !output.Recover {
+		err = book.Update(context.WithoutCancel(ctx), func(tx *ledger.Tx) error {
+			if err := work.CompleteInputTx(tx, request.Address(), output.Result, output.runError()); err != nil {
+				return err
+			}
+			return g.retainWorkOutcomeTx(tx, key, msg, output)
+		})
+	}
 	return output, ui, err
 }
 
-func (g *Gateway) deliverInput(ctx context.Context, ch Channel, book *ledger.Ledger, key string, msg feishu.InboundMessage, output recoveredOutput, ui *turnUI) error {
+func (g *Gateway) deliverInput(ctx context.Context, ch Channel, book *ledger.Ledger, key string, msg channel.Input, output recoveredOutput, ui *turnUI) error {
 	// Listening policy can intentionally produce no external message. Record
 	// that local disposition separately; it is never a fabricated /reply or
 	// evidence that Feishu received a final message.
@@ -154,10 +188,15 @@ func (g *Gateway) deliverInput(ctx context.Context, ch Channel, book *ledger.Led
 		if err != nil {
 			return err
 		}
-		return book.RecordCommand(ctx, key+"/suppressed", "gateway-input-suppressed", msg.SenderOpenID, raw)
+		return book.RecordCommand(ctx, key+"/suppressed", "gateway-input-suppressed", msg.ActorID, raw)
 	}
 	runErr := output.runError()
-	_, _, err := book.Command(ctx, key+"/reply", "gateway-input-reply", msg.SenderOpenID, func(context.Context) (json.RawMessage, error) {
+	_, _, err := book.Command(ctx, key+"/reply", "gateway-input-reply", msg.ActorID, func(sendCtx context.Context) (json.RawMessage, error) {
+		if err := book.Read(sendCtx, func(tx *ledger.ReadTx) error {
+			return work.CheckOutputAuthorityTx(tx, channel.Address{Channel: g.name, Conversation: conversationID(msg), Message: msg.MessageID})
+		}); err != nil {
+			return nil, err
+		}
 		if ui == nil {
 			ui = g.newResultUI(ch, msg)
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/turnapi"
 	"sort"
 
 	"github.com/gopact-ai/steve/internal/agentexec"
@@ -19,17 +20,7 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-type RetainedPlan struct {
-	Abandoned                                      bool
-	AbandonProjected                               bool
-	ForceStopLevel                                 string
-	ForceStopRevision                              uint64
-	TaskID, Conversation, MessageID, PlanID, RunID string
-	AttemptID, AgentID, NodeID, ProjectID          string
-	Completed                                      bool
-	// TaskState is the plan task's durable state when the plan was found.
-	TaskState task.State
-}
+type RetainedPlan = turnapi.RetainedPlan
 
 func (c *Coordinator) retainedPlanRuns(ctx context.Context) ([]exec.RunRecord, error) {
 	if reader, ok := c.supervisor.(retainedRunReader); ok {

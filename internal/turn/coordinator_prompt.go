@@ -39,7 +39,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
 	defer c.clearActive(conversationID, selected.ID)
-	req.phase(view.PhaseWaking)
+	req.Phase(view.PhaseWaking)
 	clock := newTurnClock()
 	defer func() {
 		c.mu.Lock()
@@ -110,7 +110,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			return Result{}, bindErr
 		}
 	}
-	req.stage(view.StageCapabilities)
+	req.Stage(view.StageCapabilities)
 	if err := t.prepareSession(ctx); err != nil {
 		return Result{}, err
 	}
@@ -120,7 +120,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if err != nil {
 		return Result{}, err
 	}
-	req.stage(view.StagePlacement)
+	req.Stage(view.StagePlacement)
 	run, runErr := lifecycle.Run(ctx, t.options(spec, candidate))
 	result, err = t.settle(parent, run, runErr)
 	// Disclosure must remain inside the active turn, but its persistence
@@ -183,7 +183,7 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	extras = append(extras, c.projectMemory(ctx, req.Source.ConversationID, req)...)
 	var capabilities capability.Capabilities
 	if saved.PluginRuntime != nil {
-		mode := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerID)
+		mode := c.requestMode(req)
 		capabilities, err = c.assembler.AssembleExtraPinned(selected, mode, extras, saved.PluginSkillsFingerprint)
 	} else {
 		capabilities, err = c.assemble(selected, req, extras)
@@ -226,7 +226,7 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 }
 
 func (c *Coordinator) buildingProfile(req Request) (bool, error) {
-	owner := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerID) == home.ModeOwner
+	owner := c.requestMode(req) == home.ModeOwner
 	if !onboard.Building(req.Source.ConversationID, owner, true) {
 		return false, nil
 	}
@@ -266,7 +266,7 @@ func (c *Coordinator) open(ctx context.Context, saved state.Session, selected ag
 }
 
 func (c *Coordinator) assemble(selected agent.Agent, req Request, extras []capability.Extra) (capability.Capabilities, error) {
-	return c.assembler.AssembleExtra(selected, injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerID), extras)
+	return c.assembler.AssembleExtra(selected, c.requestMode(req), extras)
 }
 
 // gateExtras injects the messaging server for harnesses that can speak HTTP

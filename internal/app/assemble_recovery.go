@@ -9,7 +9,7 @@ func assembleRecovery(input inputAssembly, boot runtimeAssembly, storage ledgerA
 		return err
 	}
 	work.Coordinator().ResumePlans(boot.Context())
-	recovery := newApplicationRecovery(boot.Book(), storage.Attempts(), work.Tasks(), work.Coordinator(), work.Gateway(), page.Console(), work.CatalogText(), input.Environment() != nil)
+	recovery := newApplicationRecovery(boot.Book(), storage.Attempts(), work.Tasks(), work.Coordinator(), work.Gateway(), page.Console(), work.CatalogText(), input.Environment() != nil, work.NativeChannels())
 	if err := recovery.reconcile(boot.Context(), false); err != nil {
 		return err
 	}

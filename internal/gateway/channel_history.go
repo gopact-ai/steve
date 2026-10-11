@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversation"
+	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
@@ -101,6 +103,11 @@ func channelConversationTx(tx *ledger.ReadTx, id string) (consoleapi.Conversatio
 	}
 	if c.Count == 0 {
 		return c, consoleapi.ErrChannelConversationNotFound
+	}
+	if route, found, err := durable.Get[conversation.Route](tx, conversation.RouteKind, id); err != nil {
+		return c, err
+	} else if found {
+		c.Transport = route.Channel
 	}
 	var err error
 	c.LastAt, err = time.Parse(time.RFC3339Nano, at.String+"Z")

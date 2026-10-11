@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -20,12 +19,12 @@ type topicReceipt struct {
 	Thread  string `json:"thread"`
 }
 
-func topicTask(msg feishu.InboundMessage) (string, bool) {
+func topicTask(msg channel.Input) (string, bool) {
 	cmd, rest := protocol.ParseCommand(strings.TrimSpace(msg.Text))
 	return rest, cmd == protocol.CommandTopic && !silentListen(msg)
 }
 
-func (g *Gateway) topicGuard(msg feishu.InboundMessage) string {
+func (g *Gateway) topicGuard(msg channel.Input) string {
 	text, topic := topicTask(msg)
 	if !topic {
 		return ""
@@ -39,12 +38,12 @@ func (g *Gateway) topicGuard(msg feishu.InboundMessage) string {
 	return ""
 }
 
-func topicMessage(input gatewayInput, receipt ledger.CommandRecord, key string) (feishu.InboundMessage, error) {
+func topicMessage(input gatewayInput, receipt ledger.CommandRecord, key string) (channel.Input, error) {
 	msg := input.Message
 	text, topic := topicTask(msg)
 	var proof topicReceipt
 	if !topic || text == "" || conversationID(msg) != msg.ChatID ||
-		receipt.ID != key+"/topic" || receipt.Kind != "gateway-input-topic" || receipt.Actor != msg.SenderOpenID ||
+		receipt.ID != key+"/topic" || receipt.Kind != "gateway-input-topic" || receipt.Actor != msg.ActorID ||
 		receipt.FinishedAt == nil || receipt.Error != "" || json.Unmarshal(receipt.Result, &proof) != nil ||
 		proof.InputID != key || proof.Anchor == "" || proof.Thread == "" || proof.Thread == msg.ChatID {
 		return msg, fmt.Errorf("%w: topic has no successful route receipt", channel.ErrOutcomeUnknown)
@@ -56,7 +55,7 @@ func topicMessage(input gatewayInput, receipt ledger.CommandRecord, key string) 
 // prepareTopic derives a new address from one input's external seed receipt.
 // Unknown seed effects stay fenced, including a missing response after success.
 // consumeInput calls it only with a channel.
-func (g *Gateway) prepareTopic(ctx context.Context, ch Channel, book *ledger.Ledger, key string, input gatewayInput) (feishu.InboundMessage, error) {
+func (g *Gateway) prepareTopic(ctx context.Context, ch Channel, book *ledger.Ledger, key string, input gatewayInput) (channel.Input, error) {
 	text, topic := topicTask(input.Message)
 	if !topic {
 		return input.Message, nil
@@ -68,7 +67,7 @@ func (g *Gateway) prepareTopic(ctx context.Context, ch Channel, book *ledger.Led
 	if found {
 		return topicMessage(input, receipt, key)
 	}
-	_, _, err = book.Command(ctx, key+"/topic", "gateway-input-topic", input.Message.SenderOpenID, func(ctx context.Context) (json.RawMessage, error) {
+	_, _, err = book.Command(ctx, key+"/topic", "gateway-input-topic", input.Message.ActorID, func(ctx context.Context) (json.RawMessage, error) {
 		anchor, thread, err := ch.ReplyThread(ctx, input.Message.MessageID, text)
 		if err != nil {
 			return nil, noticeError(err)

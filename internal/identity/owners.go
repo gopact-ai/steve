@@ -1,5 +1,5 @@
 // Package identity resolves authenticated callers in their channel's namespace.
-// It consumes the configured authority; it does not persist a second owner store.
+// It combines explicitly configured owners with durable account bindings.
 package identity
 
 import (
@@ -13,6 +13,7 @@ import (
 type Configuration struct {
 	ConsoleOwner string
 	NativeOwners map[string]string
+	Accounts     *Accounts
 }
 
 // Owners is an immutable snapshot of the configured channel identities. Native
@@ -38,6 +39,9 @@ func (o Owners) Owner(channel string) (string, error) {
 	}
 	owner, ok := o.config.NativeOwners[channel]
 	if !ok {
+		if o.config.Accounts != nil && ValidName(channel) {
+			return "", nil
+		}
 		return "", fmt.Errorf("unregistered request channel %q", channel)
 	}
 	return owner, nil

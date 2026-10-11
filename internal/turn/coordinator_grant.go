@@ -5,6 +5,10 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/identity"
+	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/work"
 )
 
 type executionGate interface {
@@ -28,6 +32,17 @@ func (c *Coordinator) bindExecutionGate(ctx context.Context, conversation, id st
 	}
 	if saved := c.store.Conversation(conversation).Sessions[r.Agent]; saved.AgentToken == "" {
 		return nil
+	}
+	if accounts := c.owners.Configuration().Accounts; accounts != nil {
+		tracked, found := c.tasks.Get(r.TaskID)
+		if !found || tracked.Transport == "" || r.By == "" {
+			return identity.ErrDenied
+		}
+		if err := accounts.Book.Update(ctx, func(tx *ledger.Tx) error {
+			return work.BindExecutionAccountTx(tx, r.ID, channel.Address{Channel: tracked.Transport, Conversation: tracked.Channel, Message: r.TurnID}, identity.Account{Channel: tracked.Transport, ID: r.By})
+		}); err != nil {
+			return err
+		}
 	}
 	return gate.BindExecution(ctx, agentmcp.Binding{ConversationID: conversation, AgentID: r.Agent}, agentmcp.GrantScope{TaskID: r.TaskID, TaskEpoch: r.Execution.Epoch, AttemptID: r.ID, ExecutionGeneration: attempt.SessionExecutionEpoch(r), NodeID: r.Node, SessionID: r.Session})
 }

@@ -9,14 +9,14 @@
 | `cmd/steve` | 进程启动、组件装配、管理用例适配 | 应用服务、配置、HTTP 与通道适配器 |
 | `httpapi` | HTTP 鉴权、请求解析、响应与事件流 | `consoleapi` 契约、只读模型接口 |
 | `consoleapi` | Console/Admin 端口、交换与回复等序列化结构 | 领域值类型、`channelsettings`；不执行网络或存储操作，但经 task、project、material、插件库记录类型间接链接账本 |
-| `console` | 会话交换队列、提交去重、回复记录 | 协调入口、账本文档、事件端口 |
+| `console`、`conversation` | Console 兼容入口；会话选择、活动、持久交换、队列与恢复由 Conversation 持有 | `turnapi` 执行契约、账本、事件端口 |
 | `readmodel` | 系统快照、派生状态、用量与事件聚合 | 各领域的查询接口、`consoleapi` 数据结构 |
 | `turn`、`delegate`、`exec` | 对话回合、委派与计划的业务编排 | task、attempt、artifact、project、harness 等领域服务 |
 | `execution`、`agentexec` | 执行作用域、停止等待，以及规划/验证的单次执行壳 | task、attempt、harness 与资源准入端口 |
 | `schedule` | 定时规则、触发认领与受理回执 | 持久化文档；通道投递由组合入口装配 |
-| `identity` | 原生渠道 owner 配置快照、显式授权的 provider/client 连接身份与撤销 | ledger、durable；原生身份不隐式转换 |
+| `identity` | 跨渠道账号绑定、用户主体、原执行权限证明；受限 provider/client 连接授权 | ledger、durable；原生 ID 与连接身份保留各自命名空间 |
 | `ingress`、`durable` | 稳定输入身份、原始适配器回执、类型化账本查询与分页 | ledger；受理记录和原领域事实一起提交 |
-| `events`、`work`、`clientcap` | 业务事件/订阅/Inbox、受控智能入口、授权客户端能力聚合 | identity、ledger；通过端口复用现有队列与 ACP 执行 |
+| `eventlog`、`events`、`work`、`interaction`、`clientcap` | 事务事件/订阅/Inbox、统一 Work 回执、原执行提问与审批、客户端能力 | identity、ledger、`turnapi`；执行仍由已有租约和 ACP 生命周期负责 |
 | `servicehub`、`serviceapi` | 模块装配与恢复循环、HTTP 使用的窄服务端口 | 服务领域；不引入第二个 harness |
 | `task`、`project`、`attempt` | 任务树预算、工作区归属、执行状态与租约 | ledger；不依赖 HTTP 或页面实现 |
 | `ledger` | 文档、事务、命名引用、租约与审计 | SQLite 与本地持久化（单文件文档用 `filedoc`） |
@@ -40,9 +40,9 @@
 
 依赖门禁禁止领域层反向引用应用/传输层，禁止契约包引用服务实现。传递依赖门禁要求 `config`、`i18n` 不链接执行层（exec、lifecycle、turn、node、harness）与存储层（ledger、SQLite），`consoleapi` 不链接执行层，`cmd/steve-node` 不链接 ledger 且只经 `node` 的会话记录使用 SQLite；违规时报告最短导入链。HTTP 实现只由组合入口装配，其他内部服务不导入它。包之间采用消费方所需的接口；运行期可替换的对象才需要接口。
 
-`gateway` 仍包含飞书启动及主动投递逻辑；配置了飞书凭据才创建该适配器。独立 Console 使用 `gateway.owner_id`，无需建立飞书连接。`channel.Messenger` 统一 Agent 的进度消息操作；通道特有的卡片、设备授权和回调留在适配器内。
+`gateway` 消费渠道中立的输入、动作和展示契约，已不依赖飞书 SDK 或卡片实现。飞书认证、长连接和卡片渲染由其适配器负责；组合入口按名称注册 `channel.Provider` 的生命周期和各类任务交接。纯文本渠道可以只提供最小 Adapter，丰富展示能力按接口声明。独立 Console 使用 `gateway.owner_id`。
 
-Console 与 Gateway 通过 `turn.InputExecutor` 调用执行能力，输入契约明确区分 `Source`、原生 `Actor.ID`、`ReplyContext` 和执行 `Admission`。输入持久受理与外部回复对账由适配器负责，执行层保留授权、任务准入与原 attempt 恢复。组合入口的同一份渠道接收器注册表负责定时触发、任务通知、手动恢复、已受理恢复的唤醒及子任务交接；业务路由仅使用持久渠道字段，不从聊天或消息 ID 猜测目标。渠道声明续接重放能力并提供对应回执查询，注册本身不赋予幂等投递保证。迁移细节见 [服务边界](service-boundaries.md)。
+Conversation 持久层与 Gateway 通过独立的 `turnapi.InputExecutor` 契约调用执行能力，输入契约明确区分 `Source`、原生 `Actor.ID`、`ReplyContext` 和执行 `Admission`。输入持久受理与外部回复对账由适配器负责，执行层保留授权、任务准入与原 attempt 恢复。组合入口的同一份渠道接收器注册表负责定时触发、任务通知、手动恢复、已受理恢复的唤醒及子任务交接；业务路由仅使用持久渠道字段，不从聊天或消息 ID 猜测目标。渠道声明续接重放能力并提供对应回执查询，注册本身不赋予幂等投递保证。迁移细节见 [服务边界](service-boundaries.md)。
 
 ## 统一服务框架
 
@@ -147,6 +147,18 @@ Agent 变更依次执行：构造并验证候选目录、持久化配置、发�
 工作区 clone 是独立管理操作，不虚构模型 attempt 或用量。它持有副本目录租约，并在执行中及结果不明时保留持久隔离。超时不会自动判为失败后重复 clone；原进程退出需要明确证据，操作入口见运维指南。
 
 Console 策略设置以配置修订号作 CAS，响应分别返回期望值、当前生效值和重启要求。运行期派生的 harness HOME 环境保存在副本中，不写回声明配置。节点配置另用持久修订号作 CAS，修订号检查属于节点协议 v2 基线。
+
+### 统一业务入口
+
+普通对话、定时触发与事件 Provider 的受控 Work 共用 `work.Engine` 的输入身份和执行回执。
+已完成输入重放原结果；仍在运行或结果不明的输入只能由原 attempt 恢复。会话路由随原受理事务提交，
+旧数据从已有记录恢复渠道归属。原生私聊自动化要求用户显式授权及真实 owner 锚点；原生发送结果不明时保留回执，
+进入事件 Inbox，不自动重发。
+
+账号以 `(channel, native ID)` 解析为用户主体。配置 owner 显式绑定到同一主体；其他绑定使用修订号与审计。
+项目授权迁移保留旧 grant 和账号证据，MCP 每次调用再次核对原账号修订及当前项目权限。
+`interaction.Service` 保存主回合、委派及计划执行的提问；旧进程的迟到回答不能变成新执行的许可。
+Task、Attempt、原始消息与外部回执身份继续保留。具体兼容与迁移边界见 [服务边界](service-boundaries.md)。
 
 ### Console 提交
 

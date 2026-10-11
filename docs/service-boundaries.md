@@ -56,20 +56,63 @@ control-parsing port. Their durable acceptance, transcript, progress callbacks a
 external reply reconciliation remain adapter responsibilities. This is a common
 execution entrance, not a claim that two different durable queues are one store.
 
+## Conversation, Work, Execution and Interaction
+
+`conversation.Controller` owns agent selection, activity and arrival context.
+`conversation/store` owns the durable conversation documents, exchanges, queue,
+questions and recovery previously owned by Console. `console` preserves the public
+Go names as a compatibility facade. Existing `console-*` ledger kinds and JSON
+images stay intact; moving a module does not re-admit historical messages.
+
+`turnapi` is the shared input, context, recovery and control-syntax contract.
+Conversation storage and Gateway consume these contracts without importing the
+Coordinator implementation. Work owns dispatch selection and the common input
+receipt. Coordinator supplies existing platform commands and native execution.
+`execution`, `lifecycle`, `task` and `attempt` continue to own execution epochs,
+leases, accounting and the original harness session. No second executor is added.
+
+`work.Engine` records the authenticated native account and immutable input digest
+before dispatch. Admission binds its original Task/Attempt; known completion and
+`work.completed` outbox commit together. Replaying a settled receipt returns its
+original result. Running or uncertain execution requires original-attempt recovery
+and never silently creates a replacement attempt.
+
+`interaction.Service` records execution-bound questions and decisions for chat,
+delegated and auxiliary plan executions. Presenters authenticate/render the reply;
+the service rechecks the original execution, account revision and project grant.
+A restarted/expired presenter cannot approve work. Native questions keep their
+presenter's timeout policy, including waits across a node outage. Existing
+recovery questions and outbound delivery receipts retain their separate semantics:
+retrying observation is not permission to repeat an uncertain native effect.
+
 ## Identity authority
 
-`identity.Owners` resolves the Console baseline and explicitly registered native
-channel owners from the existing configured authority. The composition root uses
-`config.EffectiveOwnerID()` (including its legacy fallback) and enabled adapters;
-the coordinator and scheduler consume independent immutable snapshots of that
-same configuration. No second owner file or automatic cross-channel account
-binding is introduced. Request-local views carry `ownerID`, not a provider-named
-identity, and unknown channels are refused before execution.
+An authenticated `identity.Account` is `(channel, native ID)`. Its default user
+principal is a stable digest of the tuple, so equal strings across providers do not
+share authority. Configured native owners explicitly link to the Console owner's
+principal. Removing that declaration retires the link; an unchanged restart does
+not change its revision. Owner administration can link/unlink/disable other
+accounts with a revision fence and an audit record. Provider/client connection
+tokens remain scoped delegations and cannot become native accounts or owners.
 
-Native actor IDs on persisted tasks, attempts and grants remain intact. Existing
-project grants are still keyed by native principal strings; adding shared
-principal mappings requires an explicit grant migration rather than guessing that
-equal ID strings in different providers identify the same person.
+Project grants use canonical user principals. Startup migrates both runtime and
+configuration grants from the explicitly selected legacy namespace (Feishu when
+enabled, otherwise Console), retaining the original grant/account in an audit.
+New grants accept canonical `user:<digest>` or `account:<channel>:<native ID>`;
+chat commands resolve an unqualified target in their actual source channel.
+Conflicting aliases produce a deny grant. Disabled account metadata can still be
+reconciled, while execution remains denied. Task/Attempt native sender fields and
+original receipts are never rewritten by this migration.
+
+Every new execution retains the original account revision. MCP calls recheck that
+proof and the current project policy, including a delegated child's exact parent
+turn. Unlink, disable or permission removal cannot be bypassed by an old session
+or token. Auxiliary questions inherit the creating task's frozen caller proof;
+missing/ambiguous legacy authority stays refused rather than adopting the owner.
+
+Owner HTTP endpoints expose `/console/accounts` (GET/PUT),
+`/console/grant-migrations` and `/console/work-interactions`. They use the existing
+owner guard; connection credentials cannot access them.
 
 ## Task-channel handoffs
 
@@ -85,22 +128,40 @@ Gateway keeps its asynchronous confirmation callback and conservative external
 delivery semantics. Unknown channels supply no receipt evidence, and registering
 a receiver does not change the schedule store's interrupted-delivery policy.
 
-## Durable service ingress and intelligent Work
+## Native channel boundary and controlled Work
 
-`internal/ingress` records immutable kind/source/key + authenticated actor,
-conversation, canonical payload digest and the adapter's receipt. Console admission
-and Feishu's existing input-command acceptance write that record in their own
-ledger transaction. Imported history is not emitted as fresh input. Console and
-Gateway retain their own execution queues and external delivery recovery.
+Gateway imports normalized `channel.Input`, `channel.Action`, semantic `view.Turn`
+and `turnapi` contracts. Feishu authentication, enrichment and card rendering live
+in its adapter. A plain `channel.Adapter` needs receipt-bearing text messaging and
+enrichment; unsupported cards/topics/reactions return `channel.ErrUnsupported`.
+A rich adapter supplies `channel.ConversationTransport` and `channel.Presenter`.
 
-`internal/work` is the provider/automation intelligence port. An owner-created
-connection grant names exact Console conversation/project pairs. Work rejects
-platform control commands, checks the existing binding and rereads live authority
-at admission. The Work receipt and original Console Exchange ID commit in the
-same transaction as queue admission. Final results are retained on the Work record
-in the transaction committing the Console reply, so transcript deletion cannot
-silently replace an accepted task with a new ACP turn. Unfinished work whose
-original exchange cannot be found is reported as unknown.
+Installed server integrations register `channel.Provider` by name through
+`app.Config.Adapters`. Their lifecycle receives authenticated-input/action handlers
+and a readiness callback. Composition registers each adapter for schedules, task
+notices, resumes, child results and completion recovery. This is a Go embedding
+port; the default executable does not dynamically load arbitrary shared libraries.
+External event providers continue to use the scoped HTTP protocol.
+
+Admission commits a conversation route and its native message anchor. Historical
+routes are restored from actual persisted heads/admission/topic receipts, never
+from a conversation-ID prefix. Providers must supply stable, globally unique
+conversation identities; collisions are refused instead of merging conversations.
+Plain replies preserve known provider receipts and the original conversation.
+
+Controlled Work can target an enrolled conversation/project on any registered
+channel. Console returns its original Exchange. A native private owner conversation
+returns its original Gateway admission and requires an authenticated owner anchor.
+The provider cannot invent that anchor or submit platform controls. Automation
+announcements have their own immutable native receipt; an unknown announcement
+stops before ACP and publishes a review event to the fallback Inbox. An unknown
+final send retains the completed Work and its original delivery proof separately.
+
+`work.Routes` selects the persisted channel. Work acceptance and the original
+adapter receipt commit in one transaction. Results retain the original Task/Attempt
+and known output even after transcript deletion. Transport-specific acceptance and
+external delivery reconciliation remain adapter responsibilities; neither an
+accepted queue entry nor a completed execution proves external delivery.
 
 ## Business events, subscriptions and fallback Inbox
 
@@ -125,8 +186,8 @@ read-model feed and is never a reliable business consumer.
 
 `identity.Service` persists scoped, revocable provider/client delegations. Only
 credential digests are stored. Connection tokens never pass the Console owner
-guard. Native channel owners, project grants and retained actor IDs remain in their
-existing namespaces; no implicit cross-channel principal migration is performed.
+guard. Native account mappings and project policy are distinct from connection grants;
+retained actor IDs remain in their original namespaces.
 
 `clientcap` separates advertised availability from permission. Explicit grants
 bind a capability to a conversation. Registration has a process generation and
@@ -136,8 +197,8 @@ and are never automatically replayed. The original claim token can submit a late
 receipt after server restart; a replacement claim cannot adopt that proof.
 
 The ACP bridge offers capability discovery, invocation and result tools only to a
-private Console execution. Admission and dispatch both check its original task,
-attempt, process generation and live lease. Delegated/shared channel sessions do
+private owner execution on its recorded native channel. Admission and dispatch both check its original task,
+attempt, process generation and live lease. Delegated/shared sessions do
 not inherit the private client's authority. No arbitrary code-execution capability
 is implicitly registered.
 
@@ -148,8 +209,8 @@ adapters behind the service ports. Native mail/calendar/IM providers and macOS/i
 capability implementations can use the versioned HTTP contract in
 [event-providers](event-providers.md). They are not installed by this change.
 Existing Skills/MCP immutable runtime bundles and user-managed harness versions
-continue unchanged. A2A adapters and explicit cross-channel account/grant migration
-are separate extensions requiring their own contracts and compatibility evidence.
+continue unchanged. A2A adapters remain a product extension. Account/grant migration is part of the
+foundation above, with explicit bindings and original execution evidence.
 
 ## Validation cadence
 

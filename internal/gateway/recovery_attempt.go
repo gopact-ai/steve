@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/channel"
 
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"modernc.org/sqlite"
 )
@@ -16,9 +16,12 @@ const invalidAttemptReceipt = "!invalid"
 const gatewayInputKind = "gateway-input"
 
 type gatewayInput struct {
-	Message      feishu.InboundMessage `json:"message"`
-	ExpectedTask string                `json:"expected_task,omitempty"`
-	Action       *feishu.CardAction    `json:"action,omitempty"`
+	Transport       string          `json:"transport,omitempty"`
+	ExpectedProject string          `json:"expected_project,omitempty"`
+	ReplyAnchor     string          `json:"reply_anchor,omitempty"`
+	Message         channel.Input   `json:"message"`
+	ExpectedTask    string          `json:"expected_task,omitempty"`
+	Action          *channel.Action `json:"action,omitempty"`
 }
 
 const attemptInputQuery = `SELECT id FROM commands
@@ -81,6 +84,27 @@ func (g *Gateway) OwnsAttempt(ctx context.Context, book *ledger.Ledger, attemptI
 			input.Kind != gatewayInputKind && input.Kind != recoveryInputKind {
 			return false, errors.New("gateway result has no successful original acceptance")
 		}
+		if input.Kind == gatewayInputKind {
+			decoded, err := decodeGatewayInput(input)
+			if err != nil {
+				return false, err
+			}
+			if inputChannel(decoded) != g.name {
+				return false, nil
+			}
+		} else {
+			var recovery recoveryInput
+			if json.Unmarshal(input.Result, &recovery) != nil {
+				return false, ledger.ErrConflict
+			}
+			name := recovery.Transport
+			if name == "" {
+				name = "feishu"
+			}
+			if name != g.name {
+				return false, nil
+			}
+		}
 		if err := verifyAttemptInput(ctx, book, input, proof); err != nil {
 			return false, err
 		}
@@ -99,11 +123,22 @@ func verifyAttemptInput(ctx context.Context, book *ledger.Ledger, receipt ledger
 func verifyAttemptInputTx(tx ledger.Reader, receipt ledger.CommandRecord, proof recoveryAttempt) error {
 	if receipt.Kind == gatewayInputKind {
 		var input gatewayInput
-		if json.Unmarshal(receipt.Result, &input) != nil || input.Message.SenderOpenID != receipt.Actor ||
+		if json.Unmarshal(receipt.Result, &input) != nil || input.Message.ActorID != receipt.Actor ||
 			input.ExpectedTask != "" && input.ExpectedTask != proof.TaskID {
 			return errors.New("gateway attempt is not linked to its accepted message")
 		}
 		msg := input.Message
+		if input.ReplyAnchor != "" {
+			anchor, found, err := ledger.CommandReceiptTx(tx, receipt.ID+"/work-anchor")
+			if err != nil {
+				return err
+			}
+			var message string
+			if !found || anchor.Kind != "gateway-work-anchor" || anchor.Actor != receipt.Actor || anchor.FinishedAt == nil || anchor.Error != "" || json.Unmarshal(anchor.Result, &message) != nil || message == "" {
+				return errors.New("gateway Work lacks its original successful anchor receipt")
+			}
+			msg.MessageID = message
+		}
 		if _, topic := topicTask(msg); topic {
 			route, found, err := ledger.CommandReceiptTx(tx, receipt.ID+"/topic")
 			if err != nil {

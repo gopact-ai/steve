@@ -102,12 +102,12 @@ func (s *Service) Enroll(ctx context.Context, requested Grant) (Enrollment, erro
 		}
 	}
 	for conversation, project := range requested.Work {
-		if !strings.HasPrefix(conversation, "console:") || !ValidName(project) {
+		if (conversation == "" || len(conversation) > 512) || !ValidName(project) {
 			return Enrollment{}, errors.New("work scope requires an explicit Console conversation and project")
 		}
 	}
 	for _, c := range requested.Capabilities {
-		if !(ValidName(c.Client) || requested.Kind == "client" && c.Client == "") || !ValidName(c.Capability) || !strings.HasPrefix(c.Conversation, "console:") {
+		if !(ValidName(c.Client) || requested.Kind == "client" && c.Client == "") || !ValidName(c.Capability) || (c.Conversation == "" || len(c.Conversation) > 512) {
 			return Enrollment{}, errors.New("invalid client capability grant")
 		}
 	}

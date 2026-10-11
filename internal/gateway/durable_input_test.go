@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/turn/turntest"
@@ -32,8 +31,8 @@ func (p *durableInputProbe) ResumeRetainedChat(_ context.Context, id string, _ t
 	return turn.Result{Text: "complete original result", Attempt: id}, nil
 }
 
-func inboundFixture() feishu.InboundMessage {
-	return feishu.InboundMessage{ConversationID: "conversation", ChatID: "chat", MessageID: "input-message", SenderOpenID: "owner", Text: "original work", Mentioned: true}
+func inboundFixture() channel.Input {
+	return channel.Input{ConversationID: "conversation", ChatID: "chat", MessageID: "input-message", ActorID: "owner", Text: "original work", Mentioned: true}
 }
 
 func TestGatewayDurableInputRecoversAfterCompletionBeforeReply(t *testing.T) {
@@ -180,7 +179,7 @@ func TestGatewayCompletedAttemptKeepsItsOriginalInputOwner(t *testing.T) {
 // with channel.ErrDeliveryQueued, without waiting, when no slot is free. A
 // dispatch that must be recovered from its admitted attempt resumes through
 // driver, as ingress resumes it through the driver SetIngressLifetime wires.
-func (g *Gateway) processAcceptedFixture(msg feishu.InboundMessage, driver RecoveryDriver) error {
+func (g *Gateway) processAcceptedFixture(msg channel.Input, driver RecoveryDriver) error {
 	ctx, key, input := context.Background(), "gateway-input/"+msg.MessageID, gatewayInput{Message: msg}
 	if err := g.acceptInput(ctx, key, input); err != nil {
 		return err

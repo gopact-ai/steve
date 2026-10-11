@@ -11,11 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
-	"github.com/gopact-ai/steve/internal/turn"
+	turn "github.com/gopact-ai/steve/internal/turnapi"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 // cardMinInterval coalesces changed progress snapshots into at most one
@@ -27,16 +26,16 @@ type turnUI struct {
 	// ch is the gateway's channel when the turn began; the turn uses it
 	// throughout, even if a channel is bound while it runs.
 	ch         Channel
-	msg        feishu.InboundMessage
+	msg        channel.Input
 	listen     bool
 	resultOnly bool
-	copy       card.Copy
+	copy       view.Copy
 
 	// sendMu serializes card delivery. Acquire it before mu when both are
 	// needed, and render only after admission so queued sends use fresh state.
 	sendMu    sync.Mutex
 	mu        sync.Mutex
-	state     card.Turn
+	state     view.Turn
 	cardID    string
 	fallback  bool
 	closed    bool
@@ -49,8 +48,8 @@ type turnUI struct {
 }
 
 // turnCopy is every word a turn card says, in text's language.
-func turnCopy(text i18n.Catalog) card.Copy {
-	return card.Copy{
+func turnCopy(text i18n.Catalog) view.Copy {
+	return view.Copy{
 		Title:          text.T(i18n.CardTitle),
 		Running:        text.T(i18n.CardRunning),
 		Completed:      text.T(i18n.CardCompleted),
@@ -87,7 +86,7 @@ func turnCopy(text i18n.Catalog) card.Copy {
 	}
 }
 
-func (g *Gateway) newTurnUI(ch Channel, msg feishu.InboundMessage, listen bool) *turnUI {
+func (g *Gateway) newTurnUI(ch Channel, msg channel.Input, listen bool) *turnUI {
 	now := time.Now()
 	ui := &turnUI{
 		g:      g,
@@ -95,9 +94,9 @@ func (g *Gateway) newTurnUI(ch Channel, msg feishu.InboundMessage, listen bool) 
 		msg:    msg,
 		listen: listen,
 		copy:   turnCopy(g.text),
-		state: card.Turn{
-			Status: card.StatusRunning, Phase: card.PhaseWaking,
-			Recipient: msg.SenderOpenID, StartedAt: now, UpdatedAt: now,
+		state: view.Turn{
+			Status: view.StatusRunning, Phase: view.PhaseWaking,
+			Recipient: msg.ActorID, StartedAt: now, UpdatedAt: now,
 		},
 	}
 	if listen {
@@ -107,7 +106,7 @@ func (g *Gateway) newTurnUI(ch Channel, msg feishu.InboundMessage, listen bool) 
 	ui.state.TurnID = ui.turnID
 	ui.reaction = ack(ch, msg.MessageID)
 	if ch != nil && msg.MessageID != "" {
-		payload := card.Render(ui.state, ui.copy)
+		payload := g.render(ch, ui.state, ui.copy)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		id, err := ch.ReplyCard(ctx, msg.MessageID, payload)
 		cancel()
@@ -127,7 +126,7 @@ func (g *Gateway) newTurnUI(ch Channel, msg feishu.InboundMessage, listen bool) 
 
 // A retained result has no new live turn. Render only its final delivery,
 // without an opener, reaction or native-progress worker.
-func (g *Gateway) newResultUI(ch Channel, msg feishu.InboundMessage) *turnUI {
+func (g *Gateway) newResultUI(ch Channel, msg channel.Input) *turnUI {
 	ui := g.newTurnUI(ch, msg, true)
 	ui.listen, ui.resultOnly = silentListen(msg), true
 	return ui
@@ -154,7 +153,7 @@ func (u *turnUI) stopProgress() {
 	u.mu.Unlock()
 }
 
-func (u *turnUI) setPhase(p card.Phase) {
+func (u *turnUI) setPhase(p view.Phase) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.closed || u.listen || u.fallback || u.cardID == "" || u.state.Phase == p {
@@ -166,7 +165,7 @@ func (u *turnUI) setPhase(p card.Phase) {
 	u.scheduleLocked()
 }
 
-func (u *turnUI) setApproval(a *card.Approval) {
+func (u *turnUI) setApproval(a *view.Approval) {
 	u.mu.Lock()
 	if u.closed || u.listen || u.fallback || u.cardID == "" {
 		u.mu.Unlock()
@@ -183,7 +182,7 @@ func (u *turnUI) setApproval(a *card.Approval) {
 	u.flushProgress(true)
 }
 
-func (u *turnUI) setQuestion(q *card.Question) {
+func (u *turnUI) setQuestion(q *view.Question) {
 	u.mu.Lock()
 	if u.closed || u.listen || u.fallback || u.cardID == "" {
 		u.mu.Unlock()
@@ -203,7 +202,7 @@ func (u *turnUI) setQuestion(q *card.Question) {
 // progress records every snapshot and schedules changed card content.
 // Streaming text uses the same coalescing timer as tools and plans, so it
 // reaches the card before finish without requiring a patch for every token.
-func (u *turnUI) progress(p card.Progress) {
+func (u *turnUI) progress(p view.Progress) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.closed || u.listen || u.fallback || u.cardID == "" {
@@ -213,16 +212,16 @@ func (u *turnUI) progress(p card.Progress) {
 	// Some execution paths report content without a phase callback. Content
 	// proves execution has started; configuration and usage alone do not.
 	// Never demote an explicit later phase such as finishing or saving.
-	if u.state.Phase == card.PhaseWaking &&
+	if u.state.Phase == view.PhaseWaking &&
 		(p.Answer != "" || p.Reasoning != "" || len(p.Tools) > 0 || len(p.Plan) > 0) {
-		u.state.Phase = card.PhaseRunning
+		u.state.Phase = view.PhaseRunning
 		news = true
 	}
 	u.state.Answer = p.Answer
 	u.state.Reasoning = p.Reasoning
-	u.state.Tools = append([]card.Tool(nil), p.Tools...)
+	u.state.Tools = append([]view.Tool(nil), p.Tools...)
 	u.state.Usage = p.Usage
-	u.state.Plan = append([]card.Step(nil), p.Plan...)
+	u.state.Plan = append([]view.Step(nil), p.Plan...)
 	// Settings only ever become more complete during a turn, so a snapshot
 	// taken before the agent reported its model must not blank them out.
 	if !p.Settings.Empty() {
@@ -230,7 +229,7 @@ func (u *turnUI) progress(p card.Progress) {
 		// Interim cards should wear the same tail as this card will; push
 		// the identity line as soon as (and whenever) it becomes known.
 		if u.g.gate != nil {
-			if line := card.SettingsLine(p.Settings); line != "" && line != u.style {
+			if line := view.SettingsLine(p.Settings); line != "" && line != u.style {
 				u.style = line
 				u.g.gate.SetStyle(conversationID(u.msg), line)
 			}
@@ -247,17 +246,17 @@ func (u *turnUI) progress(p card.Progress) {
 // isMilestone detects changed card content, not just tool/plan transitions.
 // Compare settings as rendered: selector metadata is not visible, and an
 // empty settings snapshot retains the identity already stored by progress.
-func isMilestone(state card.Turn, next card.Progress) bool {
+func isMilestone(state view.Turn, next view.Progress) bool {
 	if state.Answer != next.Answer || state.Reasoning != next.Reasoning ||
 		!slices.Equal(state.Plan, next.Plan) ||
 		!slices.EqualFunc(state.Tools, next.Tools, sameCardTool) ||
 		!reflect.DeepEqual(state.Usage, next.Usage) {
 		return true
 	}
-	return !next.Settings.Empty() && card.SettingsLine(state.Settings) != card.SettingsLine(next.Settings)
+	return !next.Settings.Empty() && view.SettingsLine(state.Settings) != view.SettingsLine(next.Settings)
 }
 
-func sameCardTool(a, b card.Tool) bool {
+func sameCardTool(a, b view.Tool) bool {
 	return a.ID == b.ID && a.Status == b.Status &&
 		a.Kind == b.Kind && a.Name == b.Name && a.Detail == b.Detail &&
 		a.Input == b.Input && a.Output == b.Output &&
@@ -300,7 +299,7 @@ func (u *turnUI) flushProgress(immediate bool) {
 		u.mu.Unlock()
 		return
 	}
-	payload := card.Render(u.state, u.copy)
+	payload := u.g.render(u.ch, u.state, u.copy)
 	u.g.rememberCard(payload)
 	id := u.cardID
 	u.dirty = false
@@ -339,17 +338,17 @@ func (u *turnUI) finish(result turn.Result, err error) (string, error) {
 	u.state.Question = nil
 	u.state.Status = status
 	u.state.Title = result.Title
-	u.state.Fields = append([]card.Field(nil), result.Fields...)
+	u.state.Fields = append([]view.Field(nil), result.Fields...)
 	u.state.Answer = text
 	u.state.UpdatedAt = time.Now()
-	if result.Recover && status == card.StatusCompleted {
+	if result.Recover && status == view.StatusCompleted {
 		u.state.RecoverID = conversationID(u.msg)
 	}
 	// The answer renders inside the card as rich text. It went out as a
 	// plain message for one iteration; that made markdown display as bare
 	// symbols and split every turn into two mismatched artifacts. One card,
 	// rich body, is the uniform shape.
-	if status == card.StatusFailed {
+	if status == view.StatusFailed {
 		u.state.Error = text
 		u.state.Answer = ""
 		u.state.Fields = nil
@@ -361,7 +360,7 @@ func (u *turnUI) finish(result turn.Result, err error) (string, error) {
 	u.mu.Unlock()
 	defer unack(u.ch, u.msg.MessageID, u.reaction)
 	// Retry needs the card to keep its button, so a failed turn stays live.
-	retryable := status == card.StatusFailed || status == card.StatusCancelled
+	retryable := status == view.StatusFailed || status == view.StatusCancelled
 	if !retryable {
 		u.mu.Lock()
 		u.state.TurnID = ""
@@ -429,7 +428,7 @@ func (u *turnUI) repostFinal() (string, error) {
 		return "", errors.New("gateway card repost is unavailable")
 	}
 	u.mu.Lock()
-	payload := card.Render(u.state, u.copy)
+	payload := u.g.render(u.ch, u.state, u.copy)
 	u.mu.Unlock()
 	u.g.rememberCard(payload)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -454,7 +453,7 @@ func (u *turnUI) patchFinal() error {
 		return errors.New("gateway card patch is unavailable")
 	}
 	u.mu.Lock()
-	payload := card.Render(u.state, u.copy)
+	payload := u.g.render(u.ch, u.state, u.copy)
 	id := u.cardID
 	u.mu.Unlock()
 	u.g.rememberCard(payload)
@@ -467,16 +466,16 @@ func (u *turnUI) patchFinal() error {
 	return nil
 }
 
-func (u *turnUI) finalText(result turn.Result, err error) (string, card.Status) {
+func (u *turnUI) finalText(result turn.Result, err error) (string, view.Status) {
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return u.g.text.T(i18n.TurnCanceled), card.StatusCancelled
+			return u.g.text.T(i18n.TurnCanceled), view.StatusCancelled
 		}
 		var userErr turn.UserError
 		if errors.As(err, &userErr) {
-			return userErr.Text, card.StatusFailed
+			return userErr.Text, view.StatusFailed
 		}
-		return u.g.text.T(i18n.AgentFailed), card.StatusFailed
+		return u.g.text.T(i18n.AgentFailed), view.StatusFailed
 	}
 	out := result.Text
 	if out == "" {
@@ -485,5 +484,5 @@ func (u *turnUI) finalText(result turn.Result, err error) (string, card.Status) 
 	if u.fallback && len(result.Activity) > 0 {
 		out += "\n\n---\n" + strings.Join(result.Activity, "\n")
 	}
-	return u.g.truncateRunes(out, maxReplyRunes), card.StatusCompleted
+	return u.g.truncateRunes(out, maxReplyRunes), view.StatusCompleted
 }

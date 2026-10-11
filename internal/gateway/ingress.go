@@ -84,7 +84,7 @@ func pendingGatewayInputs(ctx context.Context, book *ledger.Ledger) ([]ledger.Co
 func decodeGatewayInput(receipt ledger.CommandRecord) (gatewayInput, error) {
 	var input gatewayInput
 	if receipt.Kind != gatewayInputKind || receipt.FinishedAt == nil || receipt.Error != "" ||
-		json.Unmarshal(receipt.Result, &input) != nil || input.Message.SenderOpenID != receipt.Actor ||
+		json.Unmarshal(receipt.Result, &input) != nil || input.Message.ActorID != receipt.Actor ||
 		input.Message.MessageID == "" || conversationID(input.Message) == "" {
 		return input, errors.New("gateway input has invalid acceptance")
 	}
@@ -113,6 +113,9 @@ func (g *Gateway) claimGatewayInput(ctx context.Context, book *ledger.Ledger, re
 	input, err := decodeGatewayInput(receipt)
 	if err != nil {
 		return nil, nil, err
+	}
+	if inputChannel(input) != g.name {
+		return nil, nil, channel.ErrDeliveryQueued
 	}
 	conversation := conversationID(input.Message)
 	_, seedPending := topicTask(input.Message)

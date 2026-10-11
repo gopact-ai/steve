@@ -15,7 +15,7 @@ import (
 func TestDependenciesRespectDomainAndTransportBoundaries(t *testing.T) {
 	_, here, _, _ := runtime.Caller(0)
 	root := filepath.Clean(filepath.Join(filepath.Dir(here), "../.."))
-	domains := map[string]bool{"ledger": true, "task": true, "project": true, "attempt": true, "ability": true, "capability": true, "agent": true, "state": true, "plugins": true, "identity": true, "ingress": true, "events": true, "work": true, "clientcap": true, "durable": true}
+	domains := map[string]bool{"ledger": true, "task": true, "project": true, "attempt": true, "ability": true, "capability": true, "agent": true, "state": true, "plugins": true, "identity": true, "ingress": true, "events": true, "eventlog": true, "interaction": true, "work": true, "clientcap": true, "durable": true}
 	err := filepath.WalkDir(filepath.Join(root, "internal"), func(file string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -36,6 +36,12 @@ func TestDependenciesRespectDomainAndTransportBoundaries(t *testing.T) {
 			}
 			dependency := strings.TrimPrefix(importPath, "github.com/gopact-ai/steve/internal/")
 			top := strings.Split(dependency, "/")[0]
+			if owner == "gateway" && (dependency == "channel/feishu" || top == "card" || top == "turn") {
+				t.Errorf("%s: channel core imports provider/execution implementation %s", rel, dependency)
+			}
+			if owner == "conversation" && (top == "turn" || top == "gateway" || dependency == "channel/feishu") {
+				t.Errorf("%s: conversation imports execution/provider implementation %s", rel, dependency)
+			}
 			// app is the composition root; other implementations consume API ports.
 			if top == "httpapi" && owner != "httpapi" && owner != "app" {
 				t.Errorf("%s: implementation imports HTTP transport %s", rel, dependency)

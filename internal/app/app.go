@@ -11,14 +11,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/logs"
 	"github.com/gopact-ai/steve/internal/turn"
+	"maps"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 )
 
 // Config selects the existing configuration file and optional cluster ports.
 type Config struct {
+	// Adapters are installed native I/O providers. External event providers
+	// use the scoped service API instead and need no in-process registration.
+	Adapters    map[string]channel.Provider
 	Path        string
 	Environment *Environment
 }
@@ -51,7 +56,7 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 			}
 		}
 	})
-	input := &assemblyInput{parent: ctx, path: cfg.Path, environment: cfg.Environment}
+	input := &assemblyInput{parent: ctx, path: cfg.Path, environment: cfg.Environment, adapters: maps.Clone(cfg.Adapters)}
 	runtime, err := assembleRuntime(life, input)
 	if err != nil {
 		return nil, err
@@ -113,7 +118,7 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	if err := assembleRecovery(input, runtime, ledger, execution, console); err != nil {
 		return nil, err
 	}
-	assembleAssistant(runtime, console, delegation)
+	assembleAssistant(runtime, console, delegation, execution)
 	assembleNodeReceipts(input, runtime, ledger, fleet)
 	built = true
 	return &App{life: life, stop: runtime.Stop(), run: func() error {

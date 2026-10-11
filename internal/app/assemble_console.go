@@ -77,7 +77,7 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	if environment != nil {
 		cons.EnableRetainedRecovery(ctx)
 	}
-	ask, askUser := planQuestions(cons, tasks, attempts)
+	ask, askUser := planQuestions(cons, tasks, attempts, work.Interactions())
 	stepRunner.SetQuestionHandlers(ask, askUser)
 	auxiliary.SetQuestionHandlers(ask, askUser)
 	view.SetInteractions(cons)
@@ -85,7 +85,7 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	dashboard.SetConsole(cons)
 	wireExecutionControls(cons, dashboard, coordinator)
 	dashboard.SetChannelHistory(&channelConversations{
-		ChannelHistory: gateway.NewChannelHistory(book), contexts: coordinator, tasks: tasks, activity: work.Gateway(),
+		ChannelHistory: gateway.NewChannelHistory(book), contexts: coordinator, tasks: tasks, activity: channelActivity(work.NativeChannels()),
 	})
 	// A copy may only sit where the project's level admits; the store
 	// asks the registry, which knows every machine's level.

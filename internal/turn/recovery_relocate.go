@@ -20,24 +20,13 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/state"
+	"github.com/gopact-ai/steve/internal/turnapi"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
-type RelocationContext struct {
-	Input   string `json:"input"`
-	History string `json:"history"`
-}
+type RelocationContext = turnapi.RelocationContext
 
-type RelocationPlan struct {
-	ID           string        `json:"id"`
-	AttemptID    string        `json:"attempt_id"`
-	TargetNodeID string        `json:"target_node_id"`
-	Checkpoint   string        `json:"checkpoint"`
-	CheckpointAt time.Time     `json:"checkpoint_at"`
-	Automatic    bool          `json:"automatic"`
-	Approved     bool          `json:"approved,omitempty"`
-	Question     view.Question `json:"question"`
-}
+type RelocationPlan = turnapi.RelocationPlan
 
 func (c *Coordinator) recoveryAgent(conversation string, selected agent.Agent, origin string) agent.Agent {
 	if tracked, ok := c.tasks.RecoveryOn(conversation, selected.ID, origin); ok && tracked.RecoveryWorkspace.HarnessID == selected.Harness {

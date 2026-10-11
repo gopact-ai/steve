@@ -157,7 +157,7 @@ func (c commands) status(req Request, selected agent.Agent) Result {
 		{Label: "Agent", Value: selected.ID, IsMetric: true},
 	}
 	fields = append(fields, c.taskFields(req.Source.ConversationID, selected.ID)...)
-	if injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerID) != home.ModeOwner {
+	if c.requestMode(req) != home.ModeOwner {
 		fields = append(fields,
 			view.Field{Label: "Mode", Value: "guest", IsMetric: true},
 			view.Field{Label: "Harness", Value: selected.Harness, Wide: true},

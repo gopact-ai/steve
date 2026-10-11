@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/delegate"
+	"github.com/gopact-ai/steve/internal/interaction"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/view"
@@ -33,27 +34,43 @@ func delegateQuestionBinding(ctx context.Context, cons *console.Service, binding
 // wireDelegateQuestions puts a child's questions before the owner in its
 // parent's conversation. A node-owned child answers to its node callback;
 // a hub-local child to the hub's own execution record, in any deployment.
-func wireDelegateQuestions(delegation *delegate.Service, cons *console.Service) {
+func wireDelegateQuestions(delegation *delegate.Service, cons *console.Service, services ...*interaction.Service) {
+	var shared *interaction.Service
+	if len(services) > 0 {
+		shared = services[0]
+	}
 	delegation.SetQuestionHandlers(
 		func(ctx context.Context, binding delegate.QuestionBinding, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 			pending, err := delegateQuestionBinding(ctx, cons, binding, ask.RequestID)
 			if err != nil {
 				return permission.Choose(false, ask.Options), err
 			}
-			if !nodewire.IsManagedSession(binding.Session) {
-				return cons.RequestLocalPermission(ctx, pending, ask)
+			out, err := shared.RequestExecution(ctx, binding.Attempt, "permission", ask, func() (any, error) {
+				if !nodewire.IsManagedSession(binding.Session) {
+					return cons.RequestLocalPermission(ctx, pending, ask)
+				}
+				return cons.RequestNativePermission(ctx, pending, ask)
+			})
+			if err != nil {
+				return permission.Choose(false, ask.Options), err
 			}
-			return cons.RequestNativePermission(ctx, pending, ask)
+			return out.(acp.RequestPermissionOutcome), nil
 		},
 		func(ctx context.Context, binding delegate.QuestionBinding, question view.Question) (view.Answer, error) {
 			pending, err := delegateQuestionBinding(ctx, cons, binding, question.RequestID)
 			if err != nil {
 				return view.Answer{}, err
 			}
-			if !nodewire.IsManagedSession(binding.Session) {
-				return cons.RequestLocalQuestion(ctx, pending, question)
+			out, err := shared.RequestExecution(ctx, binding.Attempt, "question", question, func() (any, error) {
+				if !nodewire.IsManagedSession(binding.Session) {
+					return cons.RequestLocalQuestion(ctx, pending, question)
+				}
+				return cons.RequestNativeQuestion(ctx, pending, question)
+			})
+			if err != nil {
+				return view.Answer{}, err
 			}
-			return cons.RequestNativeQuestion(ctx, pending, question)
+			return out.(view.Answer), nil
 		},
 	)
 }

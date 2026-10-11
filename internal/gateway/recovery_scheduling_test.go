@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -511,7 +510,7 @@ func TestGatewayRecoverySlotDoesNotBlockItsOrdinaryStop(t *testing.T) {
 		t.Fatal("recovery never entered")
 	}
 	go func() {
-		done <- g.serveTask(feishu.InboundMessage{ConversationID: "conversation", ChatID: "chat", MessageID: "stop", SenderOpenID: "owner", Text: "/cancel"}, "conversation", "")
+		done <- g.serveTask(channel.Input{ConversationID: "conversation", ChatID: "chat", MessageID: "stop", ActorID: "owner", Text: "/cancel"}, "conversation", "")
 	}()
 	blocked := false
 	select {

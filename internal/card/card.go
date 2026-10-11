@@ -79,41 +79,7 @@ const (
 
 // Copy is every word a card says. The caller fills all of it from its
 // catalog, in the reader's language; the card adds no words of its own.
-type Copy struct {
-	Title          string
-	Running        string
-	Completed      string
-	Failed         string
-	Cancelled      string
-	EarlierTools   string
-	Execution      string
-	Plan           string
-	EarlierSteps   string
-	Input          string
-	Output         string
-	Context        string
-	In             string
-	Out            string
-	Hit            string
-	Write          string
-	Awaiting       string
-	ApprovalTitle  string
-	ApprovalTool   string
-	ApprovalReason string
-	ApprovalRule   string
-	QuestionTitle  string
-	QuestionHint   string
-	Recover        string
-	SentTo         string
-	AllowOnce      string
-	Deny           string
-	Waking         string
-	Finishing      string
-	Saving         string
-	Partial        string
-	Stop           string
-	Retry          string
-}
+type Copy = view.Copy
 
 type renderOmissions struct {
 	tools   int

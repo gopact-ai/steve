@@ -3,8 +3,9 @@ package gateway
 import (
 	"context"
 	"errors"
-
-	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/card"
+	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 var (
@@ -29,9 +30,11 @@ func (nopChannel) PatchCard(context.Context, string, []byte) error { return nil 
 func (nopChannel) ReplyThread(context.Context, string, string) (string, string, error) {
 	return "", "", errTopicRefused
 }
-func (nopChannel) EnrichInput(_ context.Context, msg feishu.InboundMessage) feishu.InboundMessage {
+func (nopChannel) EnrichInput(_ context.Context, msg channel.Input) channel.Input {
 	return msg
 }
 func (nopChannel) AddReaction(context.Context, string, string) (string, error) { return "", nil }
 func (nopChannel) RemoveReaction(context.Context, string, string) error        { return nil }
 func (nopChannel) DeleteMessage(context.Context, string) error                 { return nil }
+
+func (nopChannel) Render(t view.Turn, copy view.Copy) []byte { return card.Render(t, copy) }

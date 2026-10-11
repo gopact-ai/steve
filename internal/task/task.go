@@ -217,17 +217,20 @@ type PreparedPlan struct {
 }
 
 type Task struct {
-	ResumeGrant       ResumeGrant        `json:"resume_grant,omitzero"`
-	PreparedPlan      *PreparedPlan      `json:"prepared_plan,omitempty"`
-	ExecutionEpoch    uint64             `json:"execution_epoch"`
-	RecoveryWorkspace *RecoveryWorkspace `json:"recovery_workspace,omitempty"`
-	ID                string             `json:"id"`
-	Goal              string             `json:"goal"`
-	Requester         string             `json:"requester,omitempty"`
-	Transport         string             `json:"transport"`
-	Channel           string             `json:"channel"`
-	Member            string             `json:"member,omitempty"`
-	Node              string             `json:"node,omitempty"`
+	// AuthorizationAttempt pins a delegated task to the exact parent turn's
+	// account proof; later conversation turns cannot lend it new authority.
+	AuthorizationAttempt string             `json:"authorization_attempt,omitempty"`
+	ResumeGrant          ResumeGrant        `json:"resume_grant,omitzero"`
+	PreparedPlan         *PreparedPlan      `json:"prepared_plan,omitempty"`
+	ExecutionEpoch       uint64             `json:"execution_epoch"`
+	RecoveryWorkspace    *RecoveryWorkspace `json:"recovery_workspace,omitempty"`
+	ID                   string             `json:"id"`
+	Goal                 string             `json:"goal"`
+	Requester            string             `json:"requester,omitempty"`
+	Transport            string             `json:"transport"`
+	Channel              string             `json:"channel"`
+	Member               string             `json:"member,omitempty"`
+	Node                 string             `json:"node,omitempty"`
 	// Origin records what opened the task when it was not a person typing:
 	// a schedule's id, say. It is how unattended work can be recognised and
 	// rotated without touching a task the user has since taken over.

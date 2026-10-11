@@ -30,20 +30,20 @@ func TestDecideAccess(t *testing.T) {
 		msg    InboundMessage
 		want   string
 	}{
-		{"dm open", open, InboundMessage{ChatType: "p2p", SenderOpenID: "ou_other"}, actionAllow},
+		{"dm open", open, InboundMessage{ChatType: "p2p", ActorID: "ou_other"}, actionAllow},
 		{"empty sender", open, InboundMessage{ChatType: "p2p"}, actionDrop},
-		{"group open", open, InboundMessage{ChatType: "group", SenderOpenID: "ou_other"}, actionAllow},
-		{"open ignores allowed list", Access{GroupPolicy: config.GroupPolicyOpen, Allowed: map[string]struct{}{"ou_user": {}}}, InboundMessage{ChatType: "group", SenderOpenID: "ou_other"}, actionAllow},
-		{"empty allowlist denies everyone", Access{GroupPolicy: config.GroupPolicyAllowlist}, InboundMessage{ChatType: "group", SenderOpenID: "ou_user"}, actionDrop},
-		{"blocked wins over allowlist", Access{GroupPolicy: config.GroupPolicyAllowlist, Allowed: map[string]struct{}{"ou_user": {}}, Blocked: map[string]struct{}{"ou_user": {}}}, InboundMessage{ChatType: "group", SenderOpenID: "ou_user"}, actionDrop},
-		{"unknown group policy denies", Access{GroupPolicy: "unknown"}, InboundMessage{ChatType: "group", SenderOpenID: "ou_user"}, actionDrop},
-		{"group allowlist hit", allowlist, InboundMessage{ChatType: "group", SenderOpenID: "ou_user"}, actionAllow},
-		{"group allowlist miss", allowlist, InboundMessage{ChatType: "group", SenderOpenID: "ou_other"}, actionDrop},
-		{"dm ignores allowlist", allowlist, InboundMessage{ChatType: "p2p", SenderOpenID: "ou_other"}, actionAllow},
-		{"blocked dm", blocked, InboundMessage{ChatType: "p2p", SenderOpenID: "ou_spam"}, actionDrop},
-		{"blocked group", blocked, InboundMessage{ChatType: "group", SenderOpenID: "ou_spam"}, actionDrop},
-		{"disabled group", disabled, InboundMessage{ChatType: "group", SenderOpenID: "ou_user"}, actionDrop},
-		{"disabled still allows dm", disabled, InboundMessage{ChatType: "p2p", SenderOpenID: "ou_user"}, actionAllow},
+		{"group open", open, InboundMessage{ChatType: "group", ActorID: "ou_other"}, actionAllow},
+		{"open ignores allowed list", Access{GroupPolicy: config.GroupPolicyOpen, Allowed: map[string]struct{}{"ou_user": {}}}, InboundMessage{ChatType: "group", ActorID: "ou_other"}, actionAllow},
+		{"empty allowlist denies everyone", Access{GroupPolicy: config.GroupPolicyAllowlist}, InboundMessage{ChatType: "group", ActorID: "ou_user"}, actionDrop},
+		{"blocked wins over allowlist", Access{GroupPolicy: config.GroupPolicyAllowlist, Allowed: map[string]struct{}{"ou_user": {}}, Blocked: map[string]struct{}{"ou_user": {}}}, InboundMessage{ChatType: "group", ActorID: "ou_user"}, actionDrop},
+		{"unknown group policy denies", Access{GroupPolicy: "unknown"}, InboundMessage{ChatType: "group", ActorID: "ou_user"}, actionDrop},
+		{"group allowlist hit", allowlist, InboundMessage{ChatType: "group", ActorID: "ou_user"}, actionAllow},
+		{"group allowlist miss", allowlist, InboundMessage{ChatType: "group", ActorID: "ou_other"}, actionDrop},
+		{"dm ignores allowlist", allowlist, InboundMessage{ChatType: "p2p", ActorID: "ou_other"}, actionAllow},
+		{"blocked dm", blocked, InboundMessage{ChatType: "p2p", ActorID: "ou_spam"}, actionDrop},
+		{"blocked group", blocked, InboundMessage{ChatType: "group", ActorID: "ou_spam"}, actionDrop},
+		{"disabled group", disabled, InboundMessage{ChatType: "group", ActorID: "ou_user"}, actionDrop},
+		{"disabled still allows dm", disabled, InboundMessage{ChatType: "p2p", ActorID: "ou_user"}, actionAllow},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

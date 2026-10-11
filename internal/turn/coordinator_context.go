@@ -3,6 +3,7 @@ package turn
 import (
 	"context"
 	"errors"
+	"github.com/gopact-ai/steve/internal/turnapi"
 	"regexp"
 	"sort"
 	"strings"
@@ -23,24 +24,9 @@ import (
 // line. It is what the page's context bar shows, computed by the same
 // rules a turn is judged by, so the bar never promises what a turn would
 // refuse.
-type Context struct {
-	Conversation string
-	Project      *ContextProject
-	Agent        *AgentChoice
-	Agents       []AgentChoice
-}
+type Context = turnapi.Context
 
-type ContextProject struct {
-	ID      string
-	Node    string
-	Path    string
-	Level   string
-	Repo    string
-	Version int64
-	// Bound is false when the conversation has no binding yet and the
-	// project shown is the one its first line will bind.
-	Bound bool
-}
+type ContextProject = turnapi.ContextProject
 
 // projectFor is the conversation's project without side effects: its
 // binding if it has one, else the project its first turn will bind. A
@@ -63,13 +49,7 @@ func (c *Coordinator) projectFor(ctx context.Context, conversationID string) (id
 }
 
 // Suggestion is one completion for a line being typed.
-type Suggestion struct {
-	Label  string
-	Args   string
-	Detail string
-	Insert string
-	Muted  bool
-}
+type Suggestion = turnapi.Suggestion
 
 // Suggest completes the line so far, by the rules the line will be judged
 // by: verbs from the catalogue, agents with their admission here, projects,
@@ -266,27 +246,10 @@ var atMention = regexp.MustCompile(`(^|\s)@([\w-]*)$`)
 // AgentChoice is one agent as a candidate for this conversation. Ready is
 // the roster's word (the machine is up, the runtime is there); Usable
 // adds the project's: the agent is where the project's workspace is.
-type AgentChoice struct {
-	ID      string
-	Node    string
-	Harness string
-	Model   string
-	Ready   bool
-	Why     string
-	Usable  bool
-	Because string
-	Current bool
-	// Place is where the agent would work in the current project; nil
-	// when its machine has no workspace of it.
-	Place *Placement
-}
+type AgentChoice = turnapi.AgentChoice
 
 // Placement is one workspace as a place to work: which, what kind, where.
-type Placement struct {
-	Workspace string
-	Kind      string
-	Node      string
-}
+type Placement = turnapi.Placement
 
 // blocked says why an agent cannot take this conversation, in the
 // reader's language and naming the machine the way its owner named it.
@@ -404,36 +367,32 @@ func (c *Coordinator) contextFrom(ctx context.Context, conversationID string, de
 
 // Verb is one thing the console can be told, with a line saying what it
 // does, so the page can offer the verbs rather than assume they are known.
-type Verb struct {
-	Command string
-	Args    string
-	Summary string
-}
+type Verb = turnapi.Verb
 
 // verbs lists the console's verbs, in the order a person would look.
 func (c *Coordinator) verbs() []Verb {
 	t := c.text.T
 	return []Verb{
-		{string(protocol.CommandPlan), t(i18n.VerbPlanArgs), t(i18n.VerbPlan)},
-		{string(protocol.CommandProject), "use <id>", t(i18n.VerbProject)},
-		{string(protocol.CommandTasks), "[id | pause id | resume id | cancel id]", t(i18n.VerbTasks)},
-		{string(protocol.CommandPlans), "[id]", t(i18n.VerbPlans)},
-		{string(protocol.CommandFleet), "[probe]", t(i18n.VerbFleet)},
-		{string(protocol.CommandRepair), "<agent>", t(i18n.VerbRepair)},
-		{string(protocol.CommandUse), "<agent>", t(i18n.VerbUse)},
-		{string(protocol.CommandModel), "[name]", t(i18n.VerbModel)},
-		{string(protocol.CommandStatus), "", t(i18n.VerbStatus)},
-		{string(protocol.CommandNew), "", t(i18n.VerbNew)},
-		{string(protocol.CommandClear), "", t(i18n.VerbClear)},
-		{string(protocol.CommandCancel), "", t(i18n.VerbCancel)},
-		{string(protocol.CommandHistory), "", t(i18n.VerbHistory)},
-		{string(protocol.CommandSkills), "[list | add <ref> | update]", t(i18n.VerbSkills)},
-		{string(protocol.CommandEvery), "<when> <what>", t(i18n.VerbEvery)},
-		{string(protocol.CommandAt), "<when> <what>", t(i18n.VerbAt)},
-		{string(protocol.CommandSchedules), "", t(i18n.VerbSchedules)},
-		{string(protocol.CommandGrant), "<project> <who> <role>", t(i18n.VerbGrant)},
-		{string(protocol.CommandApprove), "<id>", t(i18n.VerbApprove)},
-		{string(protocol.CommandDeny), "<id>", t(i18n.VerbDeny)},
-		{string(protocol.CommandEffects), "[id happened|new]", t(i18n.VerbEffects)},
+		{Command: string(protocol.CommandPlan), Args: t(i18n.VerbPlanArgs), Summary: t(i18n.VerbPlan)},
+		{Command: string(protocol.CommandProject), Args: "use <id>", Summary: t(i18n.VerbProject)},
+		{Command: string(protocol.CommandTasks), Args: "[id | pause id | resume id | cancel id]", Summary: t(i18n.VerbTasks)},
+		{Command: string(protocol.CommandPlans), Args: "[id]", Summary: t(i18n.VerbPlans)},
+		{Command: string(protocol.CommandFleet), Args: "[probe]", Summary: t(i18n.VerbFleet)},
+		{Command: string(protocol.CommandRepair), Args: "<agent>", Summary: t(i18n.VerbRepair)},
+		{Command: string(protocol.CommandUse), Args: "<agent>", Summary: t(i18n.VerbUse)},
+		{Command: string(protocol.CommandModel), Args: "[name]", Summary: t(i18n.VerbModel)},
+		{Command: string(protocol.CommandStatus), Args: "", Summary: t(i18n.VerbStatus)},
+		{Command: string(protocol.CommandNew), Args: "", Summary: t(i18n.VerbNew)},
+		{Command: string(protocol.CommandClear), Args: "", Summary: t(i18n.VerbClear)},
+		{Command: string(protocol.CommandCancel), Args: "", Summary: t(i18n.VerbCancel)},
+		{Command: string(protocol.CommandHistory), Args: "", Summary: t(i18n.VerbHistory)},
+		{Command: string(protocol.CommandSkills), Args: "[list | add <ref> | update]", Summary: t(i18n.VerbSkills)},
+		{Command: string(protocol.CommandEvery), Args: "<when> <what>", Summary: t(i18n.VerbEvery)},
+		{Command: string(protocol.CommandAt), Args: "<when> <what>", Summary: t(i18n.VerbAt)},
+		{Command: string(protocol.CommandSchedules), Args: "", Summary: t(i18n.VerbSchedules)},
+		{Command: string(protocol.CommandGrant), Args: "<project> <who> <role>", Summary: t(i18n.VerbGrant)},
+		{Command: string(protocol.CommandApprove), Args: "<id>", Summary: t(i18n.VerbApprove)},
+		{Command: string(protocol.CommandDeny), Args: "<id>", Summary: t(i18n.VerbDeny)},
+		{Command: string(protocol.CommandEffects), Args: "[id happened|new]", Summary: t(i18n.VerbEffects)},
 	}
 }

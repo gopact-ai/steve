@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/turnapi"
 	"log/slog"
 	"strings"
 	"time"
@@ -33,7 +34,7 @@ const goalLimit = 120
 func (c *Coordinator) beginTurnScope(ctx context.Context, req Request, agentID string) (project.Binding, *execution.Scope, error) {
 	var previous task.Task
 	previous, _ = c.tasks.Active(req.Source.ConversationID, agentID, req.Source.Origin)
-	req.stage(view.StageWorkspace)
+	req.Stage(view.StageWorkspace)
 	binding, err := c.bindingFor(ctx, req)
 	if err != nil {
 		return binding, nil, err
@@ -357,57 +358,26 @@ func (c *Coordinator) taskFields(conversationID, agentID string) []view.Field {
 // The coordinator cannot post messages itself, so it hands these fields to
 // whoever owns the chat: post a notice at the task's anchor and replay it as
 // a real message, and the resumed turn renders a card like any other turn.
-type TaskResume struct {
-	Admission      task.ResumeAdmission
-	Transport      string
-	TaskID         string
-	Goal           string
-	Member         string
-	ConversationID string
-	ChatID         string
-	MessageID      string
-	Requester      string
-	ChatType       string
-}
+type TaskResume = turnapi.TaskResume
 
 // TaskNotice is a line Steve pushes into the chat on its own, outside any
 // turn's card. It exists because delivery is a platform promise here: a task
 // that ran for an hour and then ended must say so, whether or not the person
 // who asked is still watching.
-type TaskNotice struct {
-	Transport string
-	TaskID    string
-	ChatID    string
-	MessageID string
-	Requester string
-	// Conversation is the thread the task lives in: on the console, the
-	// notice belongs there, not to whichever thread is open.
-	Conversation string
-	Text         string
-}
+type TaskNotice = turnapi.TaskNotice
 
 // ErrResumeAwaitsStop is what a channel's Resumer returns for a task whose
 // earlier execution was asked to stop and has not confirmed it yet.
-var ErrResumeAwaitsStop = errors.New("the task's earlier execution has not confirmed its stop")
+var ErrResumeAwaitsStop = turnapi.ErrResumeAwaitsStop
 
 // noteActivity records that this conversation just heard from a person. The
 // question the reminder has to answer is "did they walk away?", and the only
 // evidence Steve has is whether anything arrived while the turn was running.
 func (c *Coordinator) noteActivity(conversationID string) time.Time {
-	now := time.Now()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.lastSeen == nil {
-		c.lastSeen = map[string]time.Time{}
-	}
-	c.lastSeen[conversationID] = now
-	return now
+	return c.conversations.Arrived(conversationID)
 }
-
-func (c *Coordinator) heardSince(conversationID string, mark time.Time) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.lastSeen[conversationID].After(mark)
+func (c *Coordinator) heardSince(id string, mark time.Time) bool {
+	return c.conversations.HeardSince(id, mark)
 }
 
 // offlineReminder pings the asker when a long turn lands. The final card
@@ -434,18 +404,15 @@ func (c *Coordinator) offlineReminder(req Request, id string, started time.Time,
 }
 
 const (
-	taskList taskVerb = iota
-	taskShow
-	taskPause
-	taskResume
-	taskCancel
-	taskComplete
-	// taskHandled and taskIgnored are the two ways a person closes a
-	// failed task without pretending it was called off; taskReopen puts
-	// it back in front of them.
-	taskHandled
-	taskIgnored
-	taskReopen
+	taskList     = protocol.TaskList
+	taskShow     = protocol.TaskShow
+	taskPause    = protocol.TaskPause
+	taskResume   = protocol.TaskResume
+	taskCancel   = protocol.TaskCancel
+	taskComplete = protocol.TaskComplete
+	taskHandled  = protocol.TaskHandled
+	taskIgnored  = protocol.TaskIgnored
+	taskReopen   = protocol.TaskReopen
 )
 
 // setTaskAside moves tracked and the tasks under it to to and stops what

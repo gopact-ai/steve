@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/channel"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -39,7 +39,7 @@ func historyRecord(t *testing.T, book *ledger.Ledger, id, kind string, value any
 }
 func historyInput(t *testing.T, book *ledger.Ledger, id, conversation, text string) {
 	t.Helper()
-	historyRecord(t, book, id, gatewayInputKind, gatewayInput{Message: feishu.InboundMessage{ConversationID: conversation, ChatID: "group", MessageID: id, SenderOpenID: "owner", Text: text, Mentioned: true}})
+	historyRecord(t, book, id, gatewayInputKind, gatewayInput{Message: channel.Input{ConversationID: conversation, ChatID: "group", MessageID: id, ActorID: "owner", Text: text, Mentioned: true}})
 }
 func historyOutput(t *testing.T, book *ledger.Ledger, id, body string) {
 	t.Helper()
@@ -230,7 +230,7 @@ func TestChannelHistoryIndexedLookupAndDirectory(t *testing.T) {
 	if _, err := book.DB().Exec(`WITH RECURSIVE n(seq) AS (VALUES(1) UNION ALL SELECT seq+1 FROM n WHERE seq<1000)
  INSERT INTO commands(id,kind,actor,received_at,finished_at,result,error)
  SELECT 'old-'||seq,'gateway-input','owner','bad-date','bad-date',
- json_object('message',json_object('MessageID','old-'||seq,'SenderOpenID','owner','ConversationID','z-other','Text','unrelated')),'' FROM n`); err != nil {
+ json_object('message',json_object('MessageID','old-'||seq,'ActorID','owner','ConversationID','z-other','Text','unrelated')),'' FROM n`); err != nil {
 		t.Fatal(err)
 	}
 	var path string

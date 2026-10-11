@@ -81,7 +81,7 @@ func unstartedFixture(t *testing.T, attemptState, data string) (*ledger.Ledger, 
 		t.Fatal(err)
 	}
 	msg := inboundFixture()
-	tracked, err := tasks.Create(task.Task{Goal: "original work", Channel: conversationID(msg), Transport: "feishu", Member: "dev", Requester: msg.SenderOpenID})
+	tracked, err := tasks.Create(task.Task{Goal: "original work", Channel: conversationID(msg), Transport: "feishu", Member: "dev", Requester: msg.ActorID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func unstartedFixture(t *testing.T, attemptState, data string) (*ledger.Ledger, 
 	coordinator := turntest.New(t, func(o *turntest.Options) {
 		o.Ledger, o.Catalog, o.Store, o.Timeout = book, catalog, sessions, time.Minute
 		o.Tasks, o.Node, o.Attempts = tasks, "node", attempt.New(book)
-		o.Identity.NativeOwners = map[string]string{"feishu": msg.SenderOpenID}
+		o.Identity.NativeOwners = map[string]string{"feishu": msg.ActorID}
 	})
 	return book, tasks, &unstartedProbe{taskID: tracked.ID, coordinator: coordinator}
 }

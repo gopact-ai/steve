@@ -16,7 +16,7 @@ import (
 
 func TestClientDispatchRequiresTheOriginalLiveAttemptAndProcessGeneration(t *testing.T) {
 	book, tasks := applicationGrantBook(t)
-	root, err := tasks.Create(task.Task{Channel: "console:main", Transport: "console", Requester: "owner", Member: "agent", ProjectID: "scratch"})
+	root, err := tasks.Create(task.Task{Channel: "console:main", Transport: "console", ChatType: "p2p", Requester: "owner", Member: "agent", ProjectID: "scratch"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestClientDispatchRequiresTheOriginalLiveAttemptAndProcessGeneration(t *tes
 		t.Fatal(err)
 	}
 	attempts := attempt.New(book)
-	r, err := attempts.Open(t.Context(), attempt.Spec{ID: "original-client-attempt", TaskID: root.ID, TurnID: "turn", Execution: &token, Kind: attempt.KindChat, Project: "scratch", Node: "hub", Agent: "agent", Harness: "mock", Scope: attempt.ScopeNone, Workspace: project.Workspace{ID: "work", Project: "scratch", Node: "hub", Kind: project.KindWorktree, Path: filepath.Join(t.TempDir(), "work")}})
+	r, err := attempts.Open(t.Context(), attempt.Spec{ID: "original-client-attempt", TaskID: root.ID, TurnID: "turn", Execution: &token, Kind: attempt.KindChat, By: "owner", Project: "scratch", Node: "hub", Agent: "agent", Harness: "mock", Scope: attempt.ScopeNone, Workspace: project.Workspace{ID: "work", Project: "scratch", Node: "hub", Kind: project.KindWorktree, Path: filepath.Join(t.TempDir(), "work")}})
 	if err != nil {
 		t.Fatal(err)
 	}

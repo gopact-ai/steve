@@ -3,6 +3,7 @@ package turn
 import (
 	"context"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/turnapi"
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/capability"
@@ -16,24 +17,7 @@ import (
 // are made of, and the servers it is connected to. A trace answers what
 // happened in one turn; this answers what the agent had in hand, which
 // is the question people actually ask when a reply looks wrong.
-type Setup struct {
-	Agent, Node, Harness, Model string
-	// Mode is which identity the home lends this conversation.
-	Mode string
-	// Instructions is the assembled text a session is given, and Sections
-	// is what it is made of, in order. The messaging server's guidance is
-	// included only for a session that already holds a token for it. A
-	// conversation without one is shown the rest, although the session its
-	// next turn opens is also given that guidance when this hub runs the
-	// messaging server and the agent speaks HTTP MCP.
-	Instructions string
-	Sections     []capability.Section
-	MCPServers   []string
-	// Applied says the current session already read these instructions.
-	// When false the next turn will send them — a new session, or one
-	// whose context changed.
-	Applied bool
-}
+type Setup = turnapi.Setup
 
 // SessionSetup assembles the agent's standing contract for a
 // conversation. It reads the same pieces a turn does — home identity,

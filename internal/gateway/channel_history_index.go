@@ -65,6 +65,8 @@ func channelRecordFact(kind, actor string, raw []byte, field string) driver.Valu
 			return nil
 		}
 		switch field {
+		case "transport":
+			return inputChannel(input)
 		case "conversation":
 			return conversationID(input.Message)
 		case "topic":
@@ -82,6 +84,11 @@ func channelRecordFact(kind, actor string, raw []byte, field string) driver.Valu
 			return nil
 		}
 		switch field {
+		case "transport":
+			if input.Transport == "" {
+				return "feishu"
+			}
+			return input.Transport
 		case "conversation":
 			return input.ConversationID
 		case "topic":
