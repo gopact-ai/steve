@@ -7,9 +7,9 @@ const labels = {
     done: "assistant.deliveryDone", failed: "assistant.failed", unknown: "assistant.unknown", cancelled: "assistant.deliveryCancelled",
 } as const;
 
-export function DeliveryState({ state, mode }: { state: EventDelivery["state"]; mode: EventDelivery["rule"]["mode"] }) {
+export function DeliveryState({ state, mode, className }: { state: EventDelivery["state"]; mode: EventDelivery["rule"]["mode"]; className?: string }) {
     const { t } = useI18n();
-    if (mode === "inbox" && state === "done") return <Badge type="pill-color" color="gray" size="sm">{t("assistant.deliveryToInbox")}</Badge>;
+    if (mode === "inbox" && state === "done") return <Badge className={className} type="pill-color" color="gray" size="sm">{t("assistant.deliveryToInbox")}</Badge>;
     const color = state === "done" ? "success" : state === "failed" ? "error" : state === "unknown" ? "warning" : ["claimed", "accepted"].includes(state) ? "brand" : "gray";
-    return <Badge type="pill-color" color={color} size="sm">{labels[state] ? t(labels[state]) : state}</Badge>;
+    return <Badge className={className} type="pill-color" color={color} size="sm">{labels[state] ? t(labels[state]) : state}</Badge>;
 }

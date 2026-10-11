@@ -192,13 +192,19 @@ separately. A failed read does not display healthy zero counts. Queue/activity
 reads refresh every two seconds; Inbox, limits and storage refresh every ten
 seconds while the page is visible. Hidden pages do not continue polling.
 
-The **Bus Activity** instrument draws independently flowing publication and claim
-particles over Magic UI Animated Beam curves between publisher, queue and
-consumer nodes. The MIT component is adapted to play once per observed record,
+The dashboard uses compact queue metrics, a live flow instrument, plugin health,
+and a paginated React Aria / Untitled UI record table. Capacity and storage live
+in a disclosure; original events, frozen subscriptions and receipts open in the
+inspector. The instrument has no demo playback controls or explanatory legend.
+
+The **Event Flow** dashboard instrument draws independently flowing publication and claim
+particles over Magic UI Animated Beam paths along a horizontal channel, with a rounded
+illuminated pending buffer in the middle. The MIT component is adapted to play once per observed record,
 with shared path measurement instead of continuously looping demonstration
-traffic. One buffer pixel represents one pending delivery,
-up to 128 pixels, with an explicit overflow count. Unknown effects remain in an
-amber holding area. Its owner-only `GET /console/event-flow` reads queue counts,
+traffic. One buffer dot represents one pending delivery. Dots form a single row
+against the right edge, with a width-dependent display limit of at most 128 dots and an explicit
+undisplayed remainder. Claims remove the right-hand head; new dots join the left.
+Unknown effects retain a separate amber count. Its owner-only `GET /console/event-flow` reads queue counts,
 the latest 64 immutable event intake receipts and 64 claim fingerprints in one
 ledger snapshot every two seconds. It never fetches payloads or claim credentials.
 Read indexes bound recent-record lookup without decompressing archived events.
@@ -209,8 +215,7 @@ input/output can overlap rather than playing exclusive batches. This is bounded
 observability with a short delay, not a lossless transport or rate measurement:
 activity exceeding a sample window may be omitted. First load, reconnect and
 return from a hidden tab establish a baseline rather than replaying old activity.
-Acknowledgment updates do not create a second claim particle. Animation can be
-paused without pausing reads; reduced-motion preferences keep a static queue.
+Acknowledgment updates do not create a second claim particle. Reduced-motion preferences keep a static queue while reads continue.
 The opt-in `STEVE_FIXTURE_BUS_MOTION=1` disposable acceptance fixture runs a real
 producer and consumer concurrently with different rates; production never injects
 preview events.

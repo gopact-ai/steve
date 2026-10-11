@@ -23,7 +23,7 @@ export function ConnectionsPage() {
     const { t } = useI18n(); const [params, setParams] = useSearchParams();
     const section = ["bus", "connections", "subscriptions", "clients"].includes(params.get("section") || "") ? params.get("section")! : "connections";
     return <div className="workbench-page flex min-w-0 flex-col">
-        <PageHeader title={t("assistant.title")} description={t("assistant.description")}>
+        <PageHeader title={t("assistant.title")} description={section === "bus" ? undefined : t("assistant.description")}>
             <Tabs selectedKey={section} onSelectionChange={(key) => setParams({ section: String(key) })}>
                 <Tabs.List type="underline" size="sm" aria-label={t("assistant.title")} className="flex-wrap" items={[{ id: "bus", label: t("assistant.bus") }, { id: "connections", label: t("assistant.connections") }, { id: "subscriptions", label: t("assistant.subscriptions") }, { id: "clients", label: t("assistant.clients") }]}>{(item) => <Tabs.Item {...item} />}</Tabs.List>
             </Tabs>

@@ -66,7 +66,7 @@ try {
     await page.getByRole("heading",{name:"Mail Fixture",exact:true}).waitFor();
     await page.getByText("Health Not Registered",{exact:true}).waitFor();
     await page.locator('[data-bus-queue="event_unknown"] dd').first().filter({hasText:"1"}).waitFor();
-    const completed=page.getByRole("list",{name:"Deliveries",exact:true}).locator("li").filter({hasText:connection.bus.done});
+    const completed=page.getByRole("grid",{name:"Deliveries",exact:true}).getByRole("row").filter({hasText:connection.bus.done});
     await page.getByText("Sent to Inbox",{exact:true}).waitFor();
     await completed.getByText("Consumption Completed",{exact:true}).waitFor();
     await completed.getByRole("link",{name:"Inspect",exact:true}).click();
@@ -79,15 +79,22 @@ try {
     await page.getByRole("dialog",{name:"Delivery Details",exact:true}).getByText("receipt:mail-review-complete",{exact:true}).waitFor();
     await page.keyboard.press("Escape");
     await page.getByRole("dialog",{name:"Delivery Details",exact:true}).waitFor({state:"hidden"});
+    await page.setViewportSize({width:390,height:844});
+    await page.waitForFunction(()=>document.querySelector('[role="grid"] thead tr')?.children.length===3);
+    assert.equal(await completed.locator('.bus-table-state').evaluate((cell)=>cell.firstElementChild.getBoundingClientRect().right<=cell.getBoundingClientRect().right),true,"narrow delivery state overflowed its column");
     await page.getByRole("tab",{name:"Events",exact:true}).click();
-    await page.getByRole("list",{name:"Events",exact:true}).locator("li").filter({hasText:connection.event}).waitFor();
+    await page.getByRole("grid",{name:"Events",exact:true}).getByRole("row").filter({hasText:connection.event}).waitFor();
     const journalResponse=await fetch(connection.url+"/console/business-events",{headers:ownerHeaders});
     const journal=await journalResponse.json();
     assert.equal(journalResponse.status,200);assert.ok(journal.items.length>0);
     assert.ok(journal.items.every((item)=>!("payload"in item)),"event journal eagerly returned external payloads");
     assert.equal((await fetch(connection.url+"/console/business-events")).status,401,"journal lost its owner guard");
     await page.setViewportSize({width:390,height:844});
-    await page.getByRole("list",{name:"Events",exact:true}).locator("li").filter({hasText:connection.bus.done_event}).getByRole("link",{name:"Inspect",exact:true}).press("Enter");
+    await page.waitForFunction(()=>document.querySelector('[role="grid"] thead tr')?.children.length===3);
+    const eventInspect=page.getByRole("grid",{name:"Events",exact:true}).getByRole("row").filter({hasText:connection.bus.done_event}).getByRole("link",{name:"Inspect",exact:true});
+    await eventInspect.focus();
+    await page.keyboard.press("Enter");
+
     await page.getByRole("dialog",{name:"Event Details",exact:true}).getByText("A recorded event for delivery inspection",{exact:false}).waitFor();
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,"narrow bus or drawer overflowed viewport");
     await page.keyboard.press("Escape");
@@ -139,13 +146,11 @@ try {
     assert.equal(await page.locator('.bus-flow-particle').count(),0,"a quiet bus retained or repeated completed beams");
     await publish("overlap-1");
     assert.equal((await observe()).events.filter((item)=>item.id===intake.id).length,1,"duplicate publication created extra activity");
-    await page.getByRole("button",{name:"Pause Animation",exact:true}).press("Enter");
-    await page.locator('[data-motion="paused"]').waitFor();await publish("while-paused");
+    assert.equal(await page.getByRole("button",{name:/Pause Animation|Resume Animation/}).count(),0,"the dashboard retained demo playback controls");
+    await publish("dashboard-live");
     await page.waitForFunction((count)=>Number(document.querySelector('.bus-flow-values strong').textContent)===count,startFlow.queues.pending.pending+3);
-    assert.equal(await page.locator(".bus-flow-particle").count(),0,"pause stopped neither the motion nor its retained particles");
-    await page.getByRole("button",{name:"Resume Animation",exact:true}).click();
     await page.emulateMedia({reducedMotion:"reduce"});
-    await page.getByRole("button",{name:"Reduced Motion",exact:true}).waitFor();await publish("while-reduced");
+    await page.locator('[data-motion="static"]').waitFor();await publish("while-reduced");
     await page.waitForFunction((count)=>document.querySelectorAll('.bus-flow-cell[data-filled="true"]').length===count,startFlow.queues.pending.pending+4);
     assert.equal(await page.locator(".bus-flow-particle").count(),0,"reduced motion retained moving packets");
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,"narrow neon board overflowed the page");
@@ -157,7 +162,7 @@ try {
     await page.locator('[data-bus-flow="ready"]').waitFor();
     assert.equal(await page.locator(".bus-flow-particle").count(),0,"read recovery replayed old claims");
     assert.deepEqual(writes,[],"the animation invoked a consumer action");
-    console.log("PASS overlapping real publication/claim, shared queue snapshots, secret-free stable claim timing, pause/reduced motion and read recovery");
+    console.log("PASS overlapping real publication/claim, shared queue snapshots, secret-free stable claim timing, dashboard live updates/reduced motion and read recovery");
     assert.deepEqual(errors,[]);console.log("PASS keyboard, narrow layout and read-failure recovery keep decisions grounded in committed facts");
 } finally {
     await browser?.close();await server?.close();
