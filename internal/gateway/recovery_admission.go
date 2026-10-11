@@ -10,7 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
-	"github.com/gopact-ai/steve/internal/turn"
+	turn "github.com/gopact-ai/steve/internal/turnapi"
 )
 
 // SetRecoveryLedger wires the durable input owner before serving messages.
@@ -26,7 +26,7 @@ func (g *Gateway) QueueTaskResume(ctx context.Context, book *ledger.Ledger, key 
 	if g.channel() == nil {
 		return errors.New("gateway resume channel cannot post notices")
 	}
-	input := recoveryInput{Revival: r, Admission: admission,
+	input := recoveryInput{Transport: g.inputTransport(), Revival: r, Admission: admission,
 		Prompt: "@" + r.Member + " " + g.text.T(i18n.TaskResumeManual, r.Goal),
 		Notice: g.text.T(i18n.TaskResumeNotice, r.TaskID)}
 	raw, err := json.Marshal(input)

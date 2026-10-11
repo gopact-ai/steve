@@ -107,7 +107,7 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 		fleet = c.fleet
 	}
 	attempts := waitingAttempts{Attempts: c.attempts, passes: snapshotPasses, limit: snapshotWaitLimit, waiting: func() {
-		req.stage(view.StageAwaitSnapshot)
+		req.Stage(view.StageAwaitSnapshot)
 	}}
 	if spec.WorkspaceRecovery != nil {
 		attempts.passes = recoveryCopyPasses(spec.Workspace.ID)
@@ -188,7 +188,7 @@ func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*a
 	if perr != nil || !ok {
 		return nil, nil
 	}
-	req.stage(view.StageSnapshot)
+	req.Stage(view.StageSnapshot)
 	before, _, serr := c.snapshot(ctx, p, workspace, e.Record.Leases, "", e.Record.ID, "before turn "+req.Source.MessageID)
 	if serr != nil {
 		return nil, fmt.Errorf("before-snapshot: %w", serr)
@@ -203,9 +203,9 @@ func (t *chatTurn) open(ctx context.Context, e *lifecycle.Execution) (harness.Ru
 	// Reopening a session the conversation already has and starting a
 	// cold one are minutes apart on a bad day; the reader is told which.
 	if t.saved.UpstreamID != "" {
-		t.req.stage(view.StageResume)
+		t.req.Stage(view.StageResume)
 	} else {
-		t.req.stage(view.StageSession)
+		t.req.Stage(view.StageSession)
 	}
 	ctx = harness.WithMCPAuthorizationRefresh(ctx, t.credentialRefresh)
 	runner, err := c.open(ctx, t.saved, selected, t.workspace.Path, e.Servers)
@@ -234,7 +234,7 @@ func (t *chatTurn) arm(ctx context.Context, e *lifecycle.Execution) (func(*attem
 		}
 	}
 	t.managed = e.Managed
-	req.phase(view.PhaseRunning)
+	req.Phase(view.PhaseRunning)
 	t.session = state.Session{
 		NativeImport:   e.Record.NativeImport.Clone(),
 		PluginRuntime:  e.Record.PluginRuntime.Clone(),
@@ -290,7 +290,7 @@ func (t *chatTurn) compose(e *lifecycle.Execution, preface string) error {
 			speaker = "-"
 		}
 		ownerFlag := "false"
-		if req.Actor.ID != "" && req.Actor.ID == c.ownerID {
+		if c.isOwner(req) {
 			ownerFlag = "true"
 		}
 		user = fmt.Sprintf("[steve: speaker=%s owner=%s chat=%s]\n%s", speaker, ownerFlag, req.Source.ChatType, t.prompt)
@@ -348,7 +348,7 @@ func (t *chatTurn) compose(e *lifecycle.Execution, preface string) error {
 func (t *chatTurn) ended(e *lifecycle.Execution) {
 	t.clock.mark("prompt")
 	if e.Outcome.PromptSettled {
-		t.req.phase(view.PhaseFinishing)
+		t.req.Phase(view.PhaseFinishing)
 		if t.told != nil {
 			t.told(!t.c.stoppedTurn(t.req.Source.ConversationID, t.selected.ID))
 		}

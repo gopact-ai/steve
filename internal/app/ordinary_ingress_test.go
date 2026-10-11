@@ -43,7 +43,7 @@ func TestOrdinaryFeishuIngressRecoversOriginalCompletionAndAccountingAfterReopen
 	g.SetIngressLifetime(first.ctx, workers, nil)
 	err := g.HandleMessage(feishu.InboundMessage{
 		ConversationID: crashConversation, ChatID: "console", MessageID: "web-original",
-		SenderOpenID: "owner", Text: "original goal", Mentioned: true, ChatType: protocol.ChatP2P,
+		ActorID: "owner", Text: "original goal", Mentioned: true, ChatType: protocol.ChatP2P,
 	})
 	if err != nil {
 		t.Fatal(err)

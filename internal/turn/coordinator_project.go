@@ -26,7 +26,7 @@ func (c *Coordinator) bindingFor(ctx context.Context, req Request) (project.Bind
 	if ok {
 		return binding, nil
 	}
-	id := c.unboundProject(injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerID))
+	id := c.unboundProject(c.requestMode(req))
 	if id == "" {
 		return project.Binding{}, UserError{Text: c.text.T(i18n.ProjectUnbound, protocol.CommandProject)}
 	}

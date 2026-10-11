@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -29,6 +30,7 @@ type applicationRecovery struct {
 	tasks       *task.Store
 	coordinator *turn.Coordinator
 	gateway     *gateway.Gateway
+	channels    map[string]*gateway.Gateway
 	console     *console.Service
 	text        i18n.Catalog
 	retained    bool
@@ -36,8 +38,11 @@ type applicationRecovery struct {
 	workers     *reconciliationWorkers
 }
 
-func newApplicationRecovery(book *ledger.Ledger, attempts *attempt.Service, tasks *task.Store, coordinator *turn.Coordinator, gateway *gateway.Gateway, console *console.Service, text i18n.Catalog, retained bool) *applicationRecovery {
+func newApplicationRecovery(book *ledger.Ledger, attempts *attempt.Service, tasks *task.Store, coordinator *turn.Coordinator, gateway *gateway.Gateway, console *console.Service, text i18n.Catalog, retained bool, channels ...map[string]*gateway.Gateway) *applicationRecovery {
 	r := &applicationRecovery{book: book, attempts: attempts, tasks: tasks, coordinator: coordinator, gateway: gateway, console: console, text: text, retained: retained, orphaned: map[string]bool{}, workers: &reconciliationWorkers{}}
+	if len(channels) > 0 {
+		r.channels = maps.Clone(channels[0])
+	}
 	for _, candidate := range tasks.OpenPrimaryAccounting() {
 		if conversationDriven(candidate.Task) {
 			r.orphaned[primaryRecoveryKey(candidate)] = true
@@ -91,8 +96,14 @@ func (r *applicationRecovery) reconcile(ctx context.Context, deliver bool) error
 	if err := r.console.Drain(); err != nil {
 		return err
 	}
-	if deliver && r.gateway != nil {
-		return r.gateway.ReconcileQueued(ctx, r.book, r.coordinator, r.coordinator.ReviveSession, r.workers)
+	if deliver {
+		for _, channel := range r.nativeChannels() {
+			if channel != nil {
+				if err := channel.ReconcileQueued(ctx, r.book, r.coordinator, r.coordinator.ReviveSession, r.workers); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -120,7 +131,7 @@ func (r *applicationRecovery) reconcileTask(ctx context.Context, candidate task.
 			return nil
 		}
 		if record.State == attempt.Bound {
-			if tracked.Transport == "feishu" {
+			if r.nativeChannels()[tracked.Transport] != nil {
 				if err := r.queue(ctx, tracked, "task-result/"+record.ID, record.ID); err != nil {
 					return err
 				}
@@ -208,12 +219,18 @@ func (r *applicationRecovery) queue(ctx context.Context, t task.Task, key, compl
 	switch t.Transport {
 	case "console":
 		return r.console.QueueTaskResume(ctx, t.Channel, t.ID, key, t.Member, r.text.T(i18n.ResumeNotice, t.ID), r.text.T(i18n.ResumePrompt, t.Goal))
-	case "feishu":
-		if r.gateway == nil {
-			return errors.New("Feishu recovery delivery is not configured")
-		}
-		return r.gateway.QueueRecovery(ctx, r.book, key, gateway.Revival{TaskID: t.ID, Goal: t.Goal, Member: t.Member, ConversationID: t.Channel, ChatID: t.ChatID, MessageID: t.AnchorMessage, Requester: t.Requester, ChatType: t.ChatType, OpenCard: t.OpenCard, Interim: t.Interim}, completedAttempt)
 	default:
-		return fmt.Errorf("unsupported recovery transport %q", t.Transport)
+		adapter := r.nativeChannels()[t.Transport]
+		if adapter == nil {
+			return fmt.Errorf("unsupported recovery transport %q", t.Transport)
+		}
+		return adapter.QueueRecovery(ctx, r.book, key, gateway.Revival{TaskID: t.ID, Goal: t.Goal, Member: t.Member, ConversationID: t.Channel, ChatID: t.ChatID, MessageID: t.AnchorMessage, Requester: t.Requester, ChatType: t.ChatType, OpenCard: t.OpenCard, Interim: t.Interim}, completedAttempt)
 	}
+}
+
+func (r *applicationRecovery) nativeChannels() map[string]*gateway.Gateway {
+	if r.channels != nil {
+		return r.channels
+	}
+	return map[string]*gateway.Gateway{"feishu": r.gateway}
 }

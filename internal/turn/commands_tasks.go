@@ -15,67 +15,10 @@ import (
 	"time"
 )
 
-// taskVerb is what the user asked to do to a task.
-type taskVerb int
+type taskVerb = protocol.TaskVerb
 
-// taskVerbs maps chat words to verbs. The Chinese aliases are not a nicety:
-// the surface is Chinese by default, and a verb that only answers to English
-// would make half of it untypable.
-var taskVerbs = map[string]taskVerb{
-	"pause": taskPause, "暂停": taskPause,
-	"resume": taskResume, "继续": taskResume, "恢复": taskResume,
-	"cancel": taskCancel, "取消": taskCancel, "结束": taskCancel,
-	"complete": taskComplete, "done": taskComplete, "完成": taskComplete,
-	"show": taskShow, "详情": taskShow,
-	"handled": taskHandled, "handle": taskHandled, "已处理": taskHandled, "人工处理": taskHandled, "手动处理": taskHandled,
-	"ignore": taskIgnored, "ignored": taskIgnored, "忽略": taskIgnored, "无需关注": taskIgnored,
-	"reopen": taskReopen, "重开": taskReopen, "重新打开": taskReopen,
-}
-
-// parseTaskArgs reads "pause 12", "12 pause", "12" or "pause", so nobody has
-// to remember which half comes first. An unrecognised word is a usage error
-// rather than a guess: acting on the wrong task is worse than asking again.
-func parseTaskArgs(rest string) (taskVerb, string, bool) {
-	verb, id := taskList, ""
-	for _, field := range strings.Fields(rest) {
-		if trimmed := strings.TrimPrefix(field, "#"); isTaskID(trimmed) {
-			id = trimmed
-			if verb == taskList {
-				verb = taskShow
-			}
-			continue
-		}
-		found, ok := taskVerbs[strings.ToLower(field)]
-		if !ok {
-			return taskList, "", false
-		}
-		verb = found
-	}
-	return verb, id, true
-}
-
-func isTaskID(s string) bool {
-	if prefix, tail, ok := strings.Cut(s, "~"); ok {
-		if len(prefix) != 13 || prefix[0] != 'h' {
-			return false
-		}
-		for _, r := range prefix[1:] {
-			if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
-				return false
-			}
-		}
-		s = tail
-	}
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
+func parseTaskArgs(rest string) (taskVerb, string, bool) { return protocol.ParseTaskArgs(rest) }
+func isTaskID(id string) bool                            { return protocol.IsTaskID(id) }
 
 // tasksCmd is everything the user can do to a task from the chat. Listing was
 // never the point on its own: a task that outlives its turn is only useful if

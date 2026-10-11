@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/gopact-ai/steve/internal/turnapi"
 	"sort"
 	"time"
 
@@ -19,23 +20,7 @@ import (
 	"github.com/gopact-ai/steve/internal/view"
 )
 
-type RetainedChat struct {
-	Abandoned         bool
-	AbandonProjected  bool
-	ForceStopLevel    string
-	ForceStopRevision uint64
-	AttemptID         string
-	TaskID            string
-	Conversation      string
-	MessageID         string
-	AgentID           string
-	NodeID            string
-	ProjectID         string
-	Completed         bool
-	// TaskState is the task's durable state when the execution was found:
-	// a task set aside by the owner is not the execution's to carry on.
-	TaskState task.State
-}
+type RetainedChat = turnapi.RetainedChat
 
 // retainedBlocked leaves the original attempt and exchange unresolved. The
 // question describes reconciliation work; it is not an invented native-agent
@@ -221,7 +206,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	c.setRunner(req.Source.ConversationID, record.Agent, runner)
 	spent := &turnSpend{resetIdle: touch}
 	req.OnProgress = spent.wrap(req.OnProgress, record.Agent)
-	req.phase(view.PhaseRunning)
+	req.Phase(view.PhaseRunning)
 	t := &retainedTurn{c: c, req: req, record: record, spent: spent, finishing: true, injected: &Injected{Project: record.Project, Workspace: record.Workspace.Path, Agent: record.Agent, Node: record.Node, Harness: record.Harness, Session: record.Session}}
 	run, runErr := lifecycle.Reattach(ctx, t.options("", true), record, runner)
 	settled = run.Settled

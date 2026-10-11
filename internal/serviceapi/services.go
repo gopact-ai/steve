@@ -8,6 +8,8 @@ import (
 	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/events"
 	"github.com/gopact-ai/steve/internal/identity"
+	"github.com/gopact-ai/steve/internal/interaction"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/work"
 )
 
@@ -48,8 +50,22 @@ type Clients interface {
 	Invocations(context.Context, string) (durable.Page[clientcap.Invocation], error)
 }
 type Services struct {
-	Identity Identity
-	Events   Events
-	Work     Work
-	Clients  Clients
+	Accounts     Accounts
+	Interactions Interactions
+	Policy       Policy
+	Identity     Identity
+	Events       Events
+	Work         Work
+	Clients      Clients
+}
+
+type Accounts interface {
+	Bindings(context.Context, string) (durable.Page[identity.AccountBinding], error)
+	Bind(context.Context, identity.Account, string, uint64, bool) (identity.AccountBinding, error)
+}
+type Interactions interface {
+	Records(context.Context, string) (durable.Page[interaction.Record], error)
+}
+type Policy interface {
+	GrantMigrations(context.Context, string) (durable.Page[project.GrantMigration], error)
 }

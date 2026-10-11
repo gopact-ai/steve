@@ -41,7 +41,7 @@ func assembleDelegation(life lifetime, input inputAssembly, boot runtimeAssembly
 	view := projection.View()
 	admin := page.Admin()
 	cons := page.Console()
-	taskChannels, err := assembleTaskChannels(cons, gw, book, work.Coordinator(), work.CatalogText())
+	taskChannels, err := assembleTaskChannels(cons, gw, book, work.Coordinator(), work.CatalogText(), work.NativeChannels())
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func assembleDelegation(life lifetime, input inputAssembly, boot runtimeAssembly
 		delegation.SetLedger(attempts, artifacts)
 		delegation.SetGate(gate)
 		delegation.SetEndpoints(nodes)
-		wireDelegateQuestions(delegation, cons)
+		wireDelegateQuestions(delegation, cons, work.Interactions())
 		if environment != nil {
 			wireDelegateRecovery(delegation, cons)
 		}

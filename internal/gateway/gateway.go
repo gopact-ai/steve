@@ -16,15 +16,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/gopact-ai/acp"
-	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
-	"github.com/gopact-ai/steve/internal/turn"
+	turn "github.com/gopact-ai/steve/internal/turnapi"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -37,7 +36,7 @@ type pendingAsk struct {
 // liveTurn lets a card button act on the turn that rendered it: stop while it
 // runs, retry the original message after it failed.
 type liveTurn struct {
-	msg     feishu.InboundMessage
+	msg     channel.Input
 	cardID  string
 	running bool
 }
@@ -45,35 +44,11 @@ type liveTurn struct {
 // maxLiveTurns bounds the retry history; turns are dropped oldest first.
 const maxLiveTurns = 64
 
-// approvalTimeout caps how long a turn waits for a human to tap the card.
+// approvalTimeout caps how long a turn waits for a human to tap the view.
 const approvalTimeout = 3 * time.Minute
 
-// Channel is the Feishu transport the gateway replies through. Until Feishu
-// is bound, and when it is not configured or never verifies, the gateway has
-// no channel at all, never a partial one: accepted input and queued recovery
-// stay pending until it has one, Notify posts nothing, and child result
-// delivery, schedule fires and task resumes return an error.
-type Channel interface {
-	// Reply posts text without reporting the new message's id.
-	Reply(ctx context.Context, messageID, text string) error
-	// ReplyText posts text and returns the new message's id.
-	ReplyText(ctx context.Context, messageID, text string) (string, error)
-	// ReplyCard posts a card and returns its message id.
-	ReplyCard(ctx context.Context, messageID string, payload []byte) (string, error)
-	// PatchCard replaces a posted card in place.
-	PatchCard(ctx context.Context, messageID string, payload []byte) error
-	// ReplyThread starts a topic thread on a message and returns the anchor
-	// message's id and the thread's id.
-	ReplyThread(ctx context.Context, messageID, text string) (string, string, error)
-	// EnrichInput reads an accepted message's optional remote context.
-	EnrichInput(ctx context.Context, msg feishu.InboundMessage) feishu.InboundMessage
-	// AddReaction reacts to a message and returns the reaction's id.
-	AddReaction(ctx context.Context, messageID, emoji string) (string, error)
-	// RemoveReaction removes a reaction AddReaction returned.
-	RemoveReaction(ctx context.Context, messageID, reactionID string) error
-	// DeleteMessage recalls a message the gateway posted.
-	DeleteMessage(ctx context.Context, messageID string) error
-}
+// Channel is the native conversation presentation and delivery port.
+type Channel = channel.ConversationTransport
 
 // agentAnchor is the messaging MCP server's view of the gateway: each
 // inbound message tells it where that conversation's interim agent sends
@@ -82,7 +57,7 @@ type agentAnchor interface {
 	Anchor(conversationID string, address channel.Address)
 	// SetStyle hands the messaging server the turn's card tail ("codex ·
 	// GPT 5.6 Sol · Agent") so interim cards read as the same family as
-	// the final card.
+	// the final view.
 	SetStyle(conversationID, style string)
 	// Interim reports whether agent-sent cards landed in the conversation
 	// this turn — if so the final answer must be posted below them, not
@@ -93,6 +68,8 @@ type agentAnchor interface {
 const thinkingEmoji = "THINKING"
 
 type Gateway struct {
+	name           string
+	authority      identity.Owners
 	recoveryLedger *ledger.Ledger
 	recoveryAfter  string
 	ingressContext context.Context
@@ -133,10 +110,20 @@ func PoolSize() int { return max(2, runtime.NumCPU()*3/2) }
 // New makes a gateway whose turns run through coordinator. It panics when
 // coordinator is nil.
 func New(coordinator Coordinator) *Gateway {
+	return NewChannel("feishu", coordinator)
+}
+
+// NewChannel builds an adapter-neutral durable gateway. Each instance owns
+// only its registered transport's presentation and delivery receipts.
+func NewChannel(name string, coordinator Coordinator) *Gateway {
+	if !identity.ValidChannel(name) || name == "console" {
+		panic("gateway: invalid channel name")
+	}
 	if coordinator == nil {
 		panic("gateway: New needs a coordinator")
 	}
 	return &Gateway{
+		name:        name,
 		coordinator: coordinator,
 		text:        i18n.New(i18n.LocaleZH),
 		seen:        map[string]struct{}{},
@@ -176,13 +163,17 @@ func (g *Gateway) SetCatalog(cat i18n.Catalog) { g.text = cat }
 // HandleMessage waits for durable acceptance, not native execution. Serving
 // shares bounded conversation capacity with recovery; a control message joins
 // its conversation's existing owner rather than waiting for the turn it stops.
-func (g *Gateway) HandleMessage(msg feishu.InboundMessage) error {
+func (g *Gateway) HandleMessage(msg channel.Input) error {
 	return g.handleTaskMessage(msg, "")
 }
 
-func (g *Gateway) handleTaskMessage(msg feishu.InboundMessage, expectedTask string) error {
+func (g *Gateway) handleTaskMessage(msg channel.Input, expectedTask string) error {
 	if g.recoveryLedger != nil {
-		return g.acceptAndWake("gateway-input/"+msg.MessageID, gatewayInput{Message: msg, ExpectedTask: expectedTask})
+		key := "gateway-input/" + msg.MessageID
+		if g.name != "feishu" {
+			key = "gateway-input/" + g.name + "/" + msg.MessageID
+		}
+		return g.acceptAndWake(key, gatewayInput{Message: msg, ExpectedTask: expectedTask, Transport: g.inputTransport()})
 	}
 	g.mu.Lock()
 	if _, duplicate := g.seen[msg.MessageID]; msg.MessageID != "" && duplicate {
@@ -193,7 +184,7 @@ func (g *Gateway) handleTaskMessage(msg feishu.InboundMessage, expectedTask stri
 	g.mu.Unlock()
 	// The sender's open_id in the log is also how a new owner finds their
 	// own id during setup.
-	slog.Info(fmt.Sprintf("gateway: message conversation=%s sender=%s", conversationID(msg), msg.SenderOpenID), "conversation", conversationID(msg), "sender", msg.SenderOpenID)
+	slog.Info(fmt.Sprintf("gateway: message conversation=%s sender=%s", conversationID(msg), msg.ActorID), "conversation", conversationID(msg), "sender", msg.ActorID)
 	go g.serveTask(msg, conversationID(msg), expectedTask)
 	return nil
 }
@@ -206,7 +197,7 @@ func (g *Gateway) handleTaskMessage(msg feishu.InboundMessage, expectedTask stri
 // is holding would deadlock the two against each other — the same mistake
 // the per-conversation queue made. So only the first message of a
 // conversation takes a slot, and whoever finishes last gives it back.
-func (g *Gateway) serveTask(msg feishu.InboundMessage, conversation, expectedTask string) error {
+func (g *Gateway) serveTask(msg channel.Input, conversation, expectedTask string) error {
 	g.mu.Lock()
 	first := g.serving[conversation] == 0
 	g.serving[conversation]++
@@ -218,7 +209,7 @@ func (g *Gateway) serveTask(msg feishu.InboundMessage, conversation, expectedTas
 	return g.processTask(msg, expectedTask)
 }
 
-func conversationID(msg feishu.InboundMessage) string {
+func conversationID(msg channel.Input) string {
 	if msg.ConversationID != "" {
 		return msg.ConversationID
 	}
@@ -237,7 +228,7 @@ func (g *Gateway) rememberLocked(messageID string) {
 	}
 }
 
-func silentListen(msg feishu.InboundMessage) bool {
+func silentListen(msg channel.Input) bool {
 	return msg.ChatType == protocol.ChatGroup && !msg.Mentioned
 }
 
@@ -246,7 +237,7 @@ func silentListen(msg feishu.InboundMessage) bool {
 // the task text so the topic's preview says what it is about; the task then
 // runs as if it had been sent inside the new thread, so its card, answer and
 // session all live there, isolated from the flat chat's own session.
-func (g *Gateway) seedTopic(ch Channel, msg feishu.InboundMessage, task string) {
+func (g *Gateway) seedTopic(ch Channel, msg channel.Input, task string) {
 	if ch == nil {
 		postReply(ch, msg.MessageID, g.text.T(i18n.TopicFailed))
 		return
@@ -277,9 +268,9 @@ func (g *Gateway) seedTopic(ch Channel, msg feishu.InboundMessage, task string) 
 	g.process(seeded)
 }
 
-func (g *Gateway) process(msg feishu.InboundMessage) error { return g.processTask(msg, "") }
+func (g *Gateway) process(msg channel.Input) error { return g.processTask(msg, "") }
 
-func (g *Gateway) processTask(msg feishu.InboundMessage, expectedTask string) error {
+func (g *Gateway) processTask(msg channel.Input, expectedTask string) error {
 	conversationID := msg.ConversationID
 	if conversationID == "" {
 		conversationID = msg.ChatID
@@ -291,7 +282,7 @@ func (g *Gateway) processTask(msg feishu.InboundMessage, expectedTask string) er
 		return nil
 	}
 	if g.gate != nil && msg.MessageID != "" && !g.scheduleControl(msg.Text) {
-		g.gate.Anchor(conversationID, channel.Address{Channel: "feishu", Conversation: conversationID, Message: msg.MessageID})
+		g.gate.Anchor(conversationID, channel.Address{Channel: g.name, Conversation: conversationID, Message: msg.MessageID})
 	}
 	ui := g.newTurnUI(ch, msg, listen)
 	result, err := g.coordinator.Handle(context.Background(), g.taskRequest(msg, expectedTask, ui))
@@ -302,10 +293,10 @@ func (g *Gateway) processTask(msg feishu.InboundMessage, expectedTask string) er
 	return errors.Join(err, deliveryErr)
 }
 
-func (g *Gateway) taskRequest(msg feishu.InboundMessage, expectedTask string, ui *turnUI) turn.Request {
+func (g *Gateway) taskRequest(msg channel.Input, expectedTask string, ui *turnUI) turn.Request {
 	req := turn.Request{
 		Source: turn.Source{
-			Channel:        "feishu",
+			Channel:        g.name,
 			ConversationID: conversationID(msg),
 			Origin:         msg.Origin,
 			MessageID:      msg.MessageID,
@@ -315,7 +306,7 @@ func (g *Gateway) taskRequest(msg feishu.InboundMessage, expectedTask string, ui
 		Input:     g.promptText(msg),
 		Admission: turn.Admission{ExpectedTask: expectedTask},
 		Reply:     turn.ReplyContext{ChatID: msg.ChatID},
-		Actor:     turn.Actor{ID: msg.SenderOpenID},
+		Actor:     turn.Actor{ID: msg.ActorID},
 		Images:    inboundImages(msg),
 	}
 	if ui != nil {
@@ -356,7 +347,7 @@ func postReply(ch Channel, messageID, text string) {
 	}
 }
 
-func (g *Gateway) promptText(msg feishu.InboundMessage) string {
+func (g *Gateway) promptText(msg channel.Input) string {
 	text := msg.Text
 	if msg.Quote != "" {
 		quoted := g.text.T(i18n.QuotedMessage, msg.Quote)
@@ -379,7 +370,7 @@ func (g *Gateway) promptText(msg feishu.InboundMessage) string {
 	return text
 }
 
-func inboundImages(msg feishu.InboundMessage) []harness.Media {
+func inboundImages(msg channel.Input) []harness.Media {
 	if len(msg.Images) == 0 {
 		return nil
 	}
@@ -397,7 +388,7 @@ func (g *Gateway) askPermission(ctx context.Context, ui *turnUI, ask permission.
 	ui.mu.Lock()
 	cardID := ui.cardID
 	closed := ui.closed || ui.listen || ui.fallback
-	openID := ui.msg.SenderOpenID
+	openID := ui.msg.ActorID
 	ui.mu.Unlock()
 	if closed || cardID == "" {
 		return permission.Choose(false, ask.Options), nil
@@ -417,7 +408,7 @@ func (g *Gateway) askPermission(ctx context.Context, ui *turnUI, ask permission.
 	if name == "" {
 		name = string(ask.Kind)
 	}
-	ui.setApproval(&card.Approval{RequestID: id, ToolName: name, Reason: ask.Reason})
+	ui.setApproval(&view.Approval{RequestID: id, ToolName: name, Reason: ask.Reason})
 	slog.Info(fmt.Sprintf("gateway: approval %s pending: tool=%q kind=%s", id, name, ask.Kind), "request", id, "tool", name, "kind", ask.Kind)
 	timer := time.NewTimer(approvalTimeout)
 	defer timer.Stop()
@@ -434,9 +425,9 @@ func (g *Gateway) askPermission(ctx context.Context, ui *turnUI, ask permission.
 	}
 }
 
-func (g *Gateway) HandleCardAction(action feishu.CardAction) feishu.CardToast {
+func (g *Gateway) HandleCardAction(action channel.Action) channel.Feedback {
 	slog.Info(fmt.Sprintf("gateway: card action=%q request=%s decision=%s user=%s message=%s",
-		action.Action, action.RequestID, action.Decision, action.OpenID, action.MessageID), "action", action.Action, "request", action.RequestID, "decision", action.Decision, "user", action.OpenID, "message", action.MessageID)
+		action.Action, action.RequestID, action.Decision, action.ActorID, action.MessageID), "action", action.Action, "request", action.RequestID, "decision", action.Decision, "user", action.ActorID, "message", action.MessageID)
 	if g.recoveryLedger != nil && (action.Action == "turn_cancel" || action.Action == "turn_retry" || action.Action == "history_restore") {
 		return g.handleDurableAction(action)
 	}
@@ -452,11 +443,11 @@ func (g *Gateway) HandleCardAction(action feishu.CardAction) feishu.CardToast {
 	case "turn_retry":
 		return g.handleRetryAction(action)
 	default:
-		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalMalformed)}
+		return channel.Feedback{Type: "error", Content: g.text.T(i18n.ApprovalMalformed)}
 	}
 }
 
-func (g *Gateway) registerTurn(msg feishu.InboundMessage) string {
+func (g *Gateway) registerTurn(msg channel.Input) string {
 	id := newRequestID()
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -539,52 +530,52 @@ func (g *Gateway) finishTurn(id string, failed bool) {
 	entry.running = false
 }
 
-func (g *Gateway) handleStopAction(action feishu.CardAction) feishu.CardToast {
+func (g *Gateway) handleStopAction(action channel.Action) channel.Feedback {
 	g.mu.Lock()
 	entry := g.turns[action.RequestID]
 	g.mu.Unlock()
 	if entry == nil || !entry.running {
-		return feishu.CardToast{Type: "info", Content: g.text.T(i18n.TurnActionExpired)}
+		return channel.Feedback{Type: "info", Content: g.text.T(i18n.TurnActionExpired)}
 	}
-	if entry.msg.SenderOpenID != "" && action.OpenID != entry.msg.SenderOpenID {
-		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
+	if entry.msg.ActorID != "" && action.ActorID != entry.msg.ActorID {
+		return channel.Feedback{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
 	}
 	cancel := entry.msg
 	cancel.Text = string(protocol.CommandCancel)
 	cancel.Images, cancel.ImageKeys, cancel.Quote = nil, nil, ""
 	go g.process(cancel)
-	return feishu.CardToast{Type: "success", Content: g.text.T(i18n.TurnStopRequested)}
+	return channel.Feedback{Type: "success", Content: g.text.T(i18n.TurnStopRequested)}
 }
 
 // handleRecoverAction turns the tap into the words the user would have
 // typed: a synthesized "/history 1" from this chat. The button carries the
 // conversation id itself because a completed turn has already left the
 // registry, and the shortcut must outlive it.
-func (g *Gateway) handleRecoverAction(action feishu.CardAction) feishu.CardToast {
+func (g *Gateway) handleRecoverAction(action channel.Action) channel.Feedback {
 	if action.RequestID == "" {
-		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalMalformed)}
+		return channel.Feedback{Type: "error", Content: g.text.T(i18n.ApprovalMalformed)}
 	}
-	msg := feishu.InboundMessage{
+	msg := channel.Input{
 		ChatID:         action.ChatID,
 		ConversationID: action.RequestID,
 		MessageID:      action.MessageID,
-		SenderOpenID:   action.OpenID,
+		ActorID:        action.ActorID,
 		Text:           string(protocol.CommandHistory) + " 1",
 	}
 	go g.process(msg)
-	return feishu.CardToast{Type: "success", Content: g.text.T(i18n.TurnStopRequested)}
+	return channel.Feedback{Type: "success", Content: g.text.T(i18n.TurnStopRequested)}
 }
 
-func (g *Gateway) handleRetryAction(action feishu.CardAction) feishu.CardToast {
+func (g *Gateway) handleRetryAction(action channel.Action) channel.Feedback {
 	g.mu.Lock()
 	entry := g.turns[action.RequestID]
 	if entry == nil || entry.running {
 		g.mu.Unlock()
-		return feishu.CardToast{Type: "info", Content: g.text.T(i18n.TurnActionExpired)}
+		return channel.Feedback{Type: "info", Content: g.text.T(i18n.TurnActionExpired)}
 	}
-	if entry.msg.SenderOpenID != "" && action.OpenID != entry.msg.SenderOpenID {
+	if entry.msg.ActorID != "" && action.ActorID != entry.msg.ActorID {
 		g.mu.Unlock()
-		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
+		return channel.Feedback{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
 	}
 	current := *entry
 	delete(g.turns, action.RequestID)
@@ -594,7 +585,7 @@ func (g *Gateway) handleRetryAction(action feishu.CardAction) feishu.CardToast {
 		recall(g.channel(), current.cardID)
 		g.process(current.msg)
 	}()
-	return feishu.CardToast{Type: "success", Content: g.text.T(i18n.TurnRetryStarted)}
+	return channel.Feedback{Type: "success", Content: g.text.T(i18n.TurnRetryStarted)}
 }
 
 func recall(ch Channel, cardID string) {
@@ -608,30 +599,30 @@ func recall(ch Channel, cardID string) {
 	}
 }
 
-func (g *Gateway) handleApprovalAction(action feishu.CardAction) feishu.CardToast {
+func (g *Gateway) handleApprovalAction(action channel.Action) channel.Feedback {
 	if action.Decision != "allow" && action.Decision != "deny" {
-		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalMalformed)}
+		return channel.Feedback{Type: "error", Content: g.text.T(i18n.ApprovalMalformed)}
 	}
 	g.mu.Lock()
 	pending := g.asks[action.RequestID]
 	g.mu.Unlock()
 	if pending == nil {
-		return feishu.CardToast{Type: "info", Content: g.text.T(i18n.ApprovalExpired)}
+		return channel.Feedback{Type: "info", Content: g.text.T(i18n.ApprovalExpired)}
 	}
-	if pending.openID != "" && action.OpenID != pending.openID {
-		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
+	if pending.openID != "" && action.ActorID != pending.openID {
+		return channel.Feedback{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
 	}
 	if pending.cardID != "" && action.MessageID != "" && action.MessageID != pending.cardID {
-		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
+		return channel.Feedback{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
 	}
 	select {
 	case pending.done <- action.Decision:
 	default:
 	}
 	if action.Decision == "allow" {
-		return feishu.CardToast{Type: "success", Content: g.text.T(i18n.ApprovalAllowed)}
+		return channel.Feedback{Type: "success", Content: g.text.T(i18n.ApprovalAllowed)}
 	}
-	return feishu.CardToast{Type: "info", Content: g.text.T(i18n.ApprovalRejected)}
+	return channel.Feedback{Type: "info", Content: g.text.T(i18n.ApprovalRejected)}
 }
 
 func newRequestID() string {
@@ -677,7 +668,7 @@ func (g *Gateway) askQuestion(ctx context.Context, ui *turnUI, q view.Question) 
 	ui.mu.Lock()
 	cardID := ui.cardID
 	closed := ui.closed || ui.listen || ui.fallback
-	openID := ui.msg.SenderOpenID
+	openID := ui.msg.ActorID
 	ui.mu.Unlock()
 	if closed || cardID == "" {
 		return view.Answer{}, nil
@@ -712,25 +703,25 @@ func (g *Gateway) askQuestion(ctx context.Context, ui *turnUI, q view.Question) 
 	}
 }
 
-func (g *Gateway) handleQuestionAction(action feishu.CardAction) feishu.CardToast {
+func (g *Gateway) handleQuestionAction(action channel.Action) channel.Feedback {
 	if action.Decision == "" {
-		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalMalformed)}
+		return channel.Feedback{Type: "error", Content: g.text.T(i18n.ApprovalMalformed)}
 	}
 	g.mu.Lock()
 	pending := g.asks[action.RequestID]
 	g.mu.Unlock()
 	if pending == nil {
-		return feishu.CardToast{Type: "info", Content: g.text.T(i18n.ApprovalExpired)}
+		return channel.Feedback{Type: "info", Content: g.text.T(i18n.ApprovalExpired)}
 	}
-	if pending.openID != "" && action.OpenID != pending.openID {
-		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
+	if pending.openID != "" && action.ActorID != pending.openID {
+		return channel.Feedback{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
 	}
 	if pending.cardID != "" && action.MessageID != "" && action.MessageID != pending.cardID {
-		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
+		return channel.Feedback{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
 	}
 	select {
 	case pending.done <- action.Decision:
 	default:
 	}
-	return feishu.CardToast{Type: "success", Content: g.text.T(i18n.ApprovalAllowed)}
+	return channel.Feedback{Type: "success", Content: g.text.T(i18n.ApprovalAllowed)}
 }

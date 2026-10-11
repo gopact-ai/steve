@@ -89,8 +89,16 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	routes.Resumer = func(r turn.TaskResume) error {
 		return taskChannels.Resume(ctx, r)
 	}
-	gw.SetRecoveryLedger(book)
-	gw.SetIngressLifetime(ctx, page.Reconciliations(), coordinator)
+	for _, instance := range work.NativeChannels() {
+		instance.SetRecoveryLedger(book)
+		if err := instance.RestoreRoutes(ctx, book); err != nil {
+			return nil, err
+		}
+		instance.SetIngressLifetime(ctx, page.Reconciliations(), coordinator)
+		if gate != nil {
+			instance.SetAgentGate(gate)
+		}
+	}
 	routes.ResumeDispatcher = func(r turn.TaskResume) {
 		// Acceptance and owner authorization are already durable. Waking a
 		// consumer is best-effort; startup/runtime recovery uses the same input.

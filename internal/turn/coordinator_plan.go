@@ -108,6 +108,9 @@ func (c *Coordinator) openPlanTaskWithPrepared(req Request, goal, projectID stri
 	if err != nil {
 		return task.Task{}, fmt.Errorf("%s", c.text.T(i18n.PlanFailed, err))
 	}
+	if err := c.work.PinTask(context.Background(), created.ID, req); err != nil {
+		return created, err
+	}
 	return created, nil
 }
 

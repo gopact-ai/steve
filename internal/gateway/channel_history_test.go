@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/channel"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -39,7 +39,7 @@ func historyRecord(t *testing.T, book *ledger.Ledger, id, kind string, value any
 }
 func historyInput(t *testing.T, book *ledger.Ledger, id, conversation, text string) {
 	t.Helper()
-	historyRecord(t, book, id, gatewayInputKind, gatewayInput{Message: feishu.InboundMessage{ConversationID: conversation, ChatID: "group", MessageID: id, SenderOpenID: "owner", Text: text, Mentioned: true}})
+	historyRecord(t, book, id, gatewayInputKind, gatewayInput{Message: channel.Input{ConversationID: conversation, ChatID: "group", MessageID: id, ActorID: "owner", Text: text, Mentioned: true}})
 }
 func historyOutput(t *testing.T, book *ledger.Ledger, id, body string) {
 	t.Helper()

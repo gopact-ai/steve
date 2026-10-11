@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 )
@@ -97,4 +98,15 @@ func (h *channelConversations) enrich(ctx context.Context, item *consoleapi.Conv
 			return err
 		}
 	}
+}
+
+type channelActivity map[string]*gateway.Gateway
+
+func (a channelActivity) ConversationBusy(id string) bool {
+	for _, g := range a {
+		if g != nil && g.ConversationBusy(id) {
+			return true
+		}
+	}
+	return false
 }

@@ -44,41 +44,10 @@ const (
 )
 
 // InboundMessage is a normalized text message from Feishu.
-type InboundMessage struct {
-	ConversationID string
-	ChatID         string
-	ChatType       protocol.ChatType
-	MessageID      string
-	SenderOpenID   string
-	Text           string
-	Quote          string
-	ParentID       string
-	ImageKeys      []string
-	Images         []Image
-	Mentioned      bool
-	// Origin marks a message Steve generated on the user's behalf — a
-	// schedule firing — rather than one that arrived from the channel.
-	Origin string
-}
-
-type Image struct {
-	MIME string
-	Data []byte
-}
-
-type CardAction struct {
-	OpenID    string
-	MessageID string
-	ChatID    string
-	Action    string
-	RequestID string
-	Decision  string
-}
-
-type CardToast struct {
-	Type    string
-	Content string
-}
+type InboundMessage = messagechannel.Input
+type Image = messagechannel.Image
+type CardAction = messagechannel.Action
+type CardToast = messagechannel.Feedback
 
 // Handler durably accepts inbound input. It must return before native execution.
 type Handler func(msg InboundMessage) error
@@ -332,7 +301,7 @@ func normalize(event *larkim.P2MessageReceiveV1, botOpenID string, allowUnmentio
 		ChatType:       chatType,
 		MessageID:      deref(m.MessageId),
 		ParentID:       deref(m.ParentId),
-		SenderOpenID:   sender,
+		ActorID:        sender,
 		Text:           text,
 		ImageKeys:      imageKeys,
 		Mentioned:      mentioned || chatType != protocol.ChatGroup,
@@ -813,7 +782,7 @@ func parseCardAction(event *callback.CardActionTriggerEvent) CardAction {
 	}
 	action := CardAction{}
 	if event.Event.Operator != nil {
-		action.OpenID = event.Event.Operator.OpenID
+		action.ActorID = event.Event.Operator.OpenID
 	}
 	if event.Event.Context != nil {
 		action.MessageID = event.Event.Context.OpenMessageID

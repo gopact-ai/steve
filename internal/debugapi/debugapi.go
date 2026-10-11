@@ -143,13 +143,13 @@ type messageRequest struct {
 
 func (r messageRequest) inbound(def Defaults) feishu.InboundMessage {
 	msg := feishu.InboundMessage{
-		ChatID:       or(r.ChatID, def.ChatID),
-		MessageID:    or(r.MessageID, fmt.Sprintf("om_debug_%d", time.Now().UnixNano())),
-		SenderOpenID: or(r.SenderOpenID, def.SenderOpenID),
-		Text:         r.Text,
-		Quote:        r.Quote,
-		ChatType:     protocol.ParseChatType(or(r.ChatType, string(protocol.ChatGroup))),
-		Mentioned:    true,
+		ChatID:    or(r.ChatID, def.ChatID),
+		MessageID: or(r.MessageID, fmt.Sprintf("om_debug_%d", time.Now().UnixNano())),
+		ActorID:   or(r.SenderOpenID, def.SenderOpenID),
+		Text:      r.Text,
+		Quote:     r.Quote,
+		ChatType:  protocol.ParseChatType(or(r.ChatType, string(protocol.ChatGroup))),
+		Mentioned: true,
 	}
 	if r.Mentioned != nil {
 		msg.Mentioned = *r.Mentioned
@@ -171,7 +171,7 @@ func (r cardRequest) action(def Defaults) feishu.CardAction {
 		Action:    r.Action,
 		RequestID: r.RequestID,
 		Decision:  r.Decision,
-		OpenID:    or(r.OpenID, def.SenderOpenID),
+		ActorID:   or(r.OpenID, def.SenderOpenID),
 		MessageID: r.MessageID,
 		ChatID:    or(r.ChatID, def.ChatID),
 	}

@@ -52,10 +52,10 @@ func AccessFrom(cfg config.Feishu) Access {
 }
 
 func decide(msg InboundMessage, access Access) string {
-	if msg.SenderOpenID == "" {
+	if msg.ActorID == "" {
 		return actionDrop
 	}
-	if _, blocked := access.Blocked[msg.SenderOpenID]; blocked {
+	if _, blocked := access.Blocked[msg.ActorID]; blocked {
 		return actionDrop
 	}
 	if msg.ChatType != protocol.ChatGroup {
@@ -65,7 +65,7 @@ func decide(msg InboundMessage, access Access) string {
 	case config.GroupPolicyOpen:
 		return actionAllow
 	case config.GroupPolicyAllowlist:
-		if _, ok := access.Allowed[msg.SenderOpenID]; ok {
+		if _, ok := access.Allowed[msg.ActorID]; ok {
 			return actionAllow
 		}
 	}

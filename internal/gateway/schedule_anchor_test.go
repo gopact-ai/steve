@@ -1,9 +1,9 @@
 package gateway
 
 import (
+	"github.com/gopact-ai/steve/internal/channel"
 	"testing"
 
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -14,7 +14,7 @@ func TestScheduleControlsPreserveChannelAnchor(t *testing.T) {
 			g.BindChannel(&reply{text: make(chan string, 4)})
 			gate := &recordingGate{calls: make(chan string, 4)}
 			g.SetAgentGate(gate)
-			msg := feishu.InboundMessage{ConversationID: "chat", ChatID: "chat", MessageID: "control", Text: input, SenderOpenID: "owner"}
+			msg := channel.Input{ConversationID: "chat", ChatID: "chat", MessageID: "control", Text: input, ActorID: "owner"}
 			if durable {
 				book, err := ledger.Open(t.TempDir(), ledger.Options{})
 				if err != nil {

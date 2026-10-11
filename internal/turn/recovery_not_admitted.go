@@ -19,7 +19,7 @@ func (c *Coordinator) ConfirmNeverAdmitted(ctx context.Context, req Request) (bo
 	}
 	if req.Source.Channel != "console" || !strings.HasPrefix(req.Source.ConversationID, consolePrefix) ||
 		req.Admission.ExchangeID == "" || req.Source.MessageID != "web-"+req.Admission.ExchangeID ||
-		c.ownerID == "" || req.Actor.ID != c.ownerID {
+		!c.isOwner(req) {
 		return false, errors.New("never-admitted proof requires the original console input and owner")
 	}
 	// Keep the live turn-slot exclusion across the committed read. This is

@@ -69,7 +69,7 @@ func TestOrdinarySealedDisclosureNotificationKeepsExecutionIdentity(t *testing.T
 			g.SetIngressLifetime(f.ctx, workers, f.c)
 			if err := g.HandleMessage(feishu.InboundMessage{
 				ConversationID: crashConversation, ChatID: "console", MessageID: "web-original",
-				SenderOpenID: "owner", Text: "original goal", Mentioned: true, ChatType: protocol.ChatP2P,
+				ActorID: "owner", Text: "original goal", Mentioned: true, ChatType: protocol.ChatP2P,
 			}); err != nil {
 				t.Fatal(err)
 			}

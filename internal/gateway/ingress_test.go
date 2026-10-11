@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/turn/turntest"
@@ -281,9 +280,9 @@ func TestDurableCardRetryDoesNotReuseOriginalMessageCommand(t *testing.T) {
 	id := g.registerTurn(msg)
 	g.setTurnCard(id, "failed-card")
 	g.finishTurn(id, true)
-	action := feishu.CardAction{OpenID: "owner", ChatID: msg.ChatID, MessageID: "failed-card", RequestID: id, Action: "turn_retry"}
+	action := channel.Action{ActorID: "owner", ChatID: msg.ChatID, MessageID: "failed-card", RequestID: id, Action: "turn_retry"}
 	wrong := action
-	wrong.OpenID = "intruder"
+	wrong.ActorID = "intruder"
 	if toast := g.HandleCardAction(wrong); toast.Type != "error" {
 		t.Fatalf("wrong actor authorized: %+v", toast)
 	}
@@ -373,7 +372,7 @@ func TestIngressClaimRefusesARecoveryReceipt(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			return book.RecordCommand(ctx, key, recoveryInputKind, msg.SenderOpenID, raw)
+			return book.RecordCommand(ctx, key, recoveryInputKind, msg.ActorID, raw)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

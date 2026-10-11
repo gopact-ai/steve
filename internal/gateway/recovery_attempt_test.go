@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/channel"
 	"strings"
 	"testing"
 
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/turn"
 )
@@ -22,7 +22,7 @@ func attemptOwnerBook(t *testing.T) (*Gateway, *ledger.Ledger) {
 	t.Cleanup(func() { book.Close() })
 	g := New(&recoveryProbe{})
 	g.SetRecoveryLedger(book)
-	raw, err := json.Marshal(gatewayInput{Message: feishu.InboundMessage{ConversationID: "conversation", MessageID: "input-message", SenderOpenID: "owner"}, ExpectedTask: "original-task"})
+	raw, err := json.Marshal(gatewayInput{Message: channel.Input{ConversationID: "conversation", MessageID: "input-message", ActorID: "owner"}, ExpectedTask: "original-task"})
 	if err != nil {
 		t.Fatal(err)
 	}

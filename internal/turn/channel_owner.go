@@ -7,8 +7,8 @@ func (c *Coordinator) forChannel(channel string) (*Coordinator, error) {
 	if err != nil {
 		return nil, err
 	}
-	if owner == c.ownerID {
+	if owner == c.ownerID && channel == c.channel {
 		return c, nil
 	}
-	return &Coordinator{coordinatorState: c.coordinatorState, text: c.text, ownerID: owner}, nil
+	return &Coordinator{coordinatorState: c.coordinatorState, text: c.text, ownerID: owner, channel: channel}, nil
 }

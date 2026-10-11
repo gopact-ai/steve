@@ -3,12 +3,12 @@ package gateway
 import (
 	"context"
 	"errors"
+	"github.com/gopact-ai/steve/internal/channel"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/turn/turntest"
@@ -149,7 +149,7 @@ func TestScheduleControlsTheCoordinatorParsesPreserveChannelAnchor(t *testing.T)
 			g.BindChannel(&reply{text: make(chan string, 4)})
 			gate := &recordingGate{calls: make(chan string, 4)}
 			g.SetAgentGate(gate)
-			msg := feishu.InboundMessage{ConversationID: "chat", ChatID: "chat", MessageID: "control", Text: control, SenderOpenID: "owner"}
+			msg := channel.Input{ConversationID: "chat", ChatID: "chat", MessageID: "control", Text: control, ActorID: "owner"}
 			if path == "durable" {
 				book, err := ledger.Open(t.TempDir(), ledger.Options{})
 				if err != nil {

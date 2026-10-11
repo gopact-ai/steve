@@ -1,0 +1,207 @@
+package store
+
+import (
+	"context"
+	"encoding/json"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/turn/turntest"
+	"github.com/gopact-ai/steve/internal/view"
+)
+
+func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{})
+	doc := &memDoc{}
+	h := &queueHandler{started: make(chan *queueCall, 4)}
+	s := New(h, "owner", model)
+	if err := s.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := s.enqueue(t.Context(), "main", "delegate", nil, enqueueOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := nextCall(t, h)
+	step := readmodel.FromStepProgress("#59", consoleapi.Progress{
+		Agent: "builder", Node: "node-a", Model: "child-model",
+		Reasoning: strings.Repeat("完整思考\n", 2000),
+		Plan:      []consoleapi.PlanLine{{Text: "build", Status: "in_progress"}},
+		Tools:     []consoleapi.ToolCall{{ID: "tool-1", Name: "build", Status: "running"}},
+	}, consoleapi.StepInfo{Kind: "delegate", Goal: "build the release", State: "running"})
+	s.UpdateStep("main", "59", step)
+	other := step
+	other.ID = "#60"
+	s.UpdateStep("main", "60", other)
+	call.finish <- nil
+	<-first.done
+	if got := first.outcome.reply.Process; got == nil || len(got.Steps) != 2 || got.Steps[0].Model != "child-model" {
+		t.Fatalf("parent lost its child snapshots: %+v", got)
+	}
+
+	// Late progress while idle updates the existing reply immediately.
+	step.Reasoning += "父回合已经结束"
+	s.UpdateStep("console:main", "59", step)
+	second, _, err := s.enqueue(t.Context(), "main", "a different turn", nil, enqueueOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call = nextCall(t, h)
+	oldReplies := s.Replies("main")
+	encoded := make(chan struct{})
+	go func() {
+		defer close(encoded)
+		for range 100 {
+			_, _ = json.Marshal(oldReplies)
+		}
+	}()
+	step.State, step.Answer, step.Elapsed = "done", "built the release", "2m0s"
+	step.Refs, step.Attempt, step.Files = []string{"artifact:release"}, "attempt-59", 2
+	step.Plan = []consoleapi.PlanLine{{Text: "build", Status: "completed"}}
+	step.Tools = []consoleapi.ToolCall{{ID: "tool-1", Name: "build", Status: "completed"}}
+	for range 100 {
+		s.UpdateStep("main", "59", step)
+	}
+	<-encoded
+	if got := oldReplies[1].Process.Steps[0].State; got != "running" {
+		t.Fatalf("mutated a reader's snapshot: %s", got)
+	}
+	call.finish <- nil
+	<-second.done
+	if got := second.outcome.reply.Process; got != nil && len(got.Steps) != 0 {
+		t.Fatalf("old child was attached to the new turn: %+v", got)
+	}
+	found := false
+	for _, ev := range model.Recent() {
+		if ev.Kind == "console.step" && ev.TaskID == "59" {
+			found = true
+			if ev.Conversation != "console:main" || ev.ReplyID != first.ReplyID || ev.Step == nil || ev.Step.Model != "child-model" {
+				t.Fatalf("child event has the wrong owner or snapshot: %+v", ev)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no console.step event")
+	}
+	restored := New(turntest.IdleCoordinator{}, "owner", nil)
+	if err := restored.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	got := restored.Replies("main")[1].Process.Steps
+	if len(got) != 2 || got[0].State != "done" || got[0].Reasoning != step.Reasoning || got[0].Model != step.Model || got[0].Plan[0].Status != "completed" || got[0].Files != 2 || got[0].Refs[0] != "artifact:release" || got[1].State != "running" {
+		t.Fatalf("restart lost the final child snapshot: %+v", got)
+	}
+}
+
+func TestParentAndLateChildTimelinesSurviveRestart(t *testing.T) {
+	doc := &memDoc{}
+	parentTimeline := []view.Span{{Kind: "text", Text: "parent narration", At: time.Now().UTC()}}
+	child := readmodel.FromStepProgress("#72", consoleapi.Progress{Timeline: []consoleapi.Span{{Kind: "thought", Text: "child thinking", At: time.Now().UTC()}}}, consoleapi.StepInfo{Kind: "delegate", State: "running"})
+	var s *Service
+	s = New(stepHandler{answer: func(req turn.Request) turn.Result {
+		req.OnProgress(view.Progress{Timeline: parentTimeline})
+		s.UpdateStep(req.Source.ConversationID, "72", child)
+		return turn.Result{Text: "The reply remains the complete answer."}
+	}}, "owner", nil)
+	if err := s.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Send(t.Context(), "main", "delegate"); err != nil {
+		t.Fatal(err)
+	}
+	child.State = "done"
+	child.Timeline = append(child.Timeline, consoleapi.Span{Kind: "text", Text: "child final", At: time.Now().UTC()})
+	s.UpdateStep("main", "72", child)
+	restored := New(turntest.IdleCoordinator{}, "owner", nil)
+	if err := restored.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	reply := restored.Replies("main")[1]
+	if reply.Text != "The reply remains the complete answer." || reply.Process == nil || len(reply.Process.Timeline) != 1 || reply.Process.Timeline[0].Text != "parent narration" || !reflect.DeepEqual(reply.Process.Steps[0].Timeline, child.Timeline) {
+		t.Fatalf("restart lost parent or late child timeline: %+v", reply)
+	}
+}
+
+// stepHandler answers each turn with its function.
+type stepHandler struct {
+	turntest.IdleCoordinator
+	answer func(turn.Request) turn.Result
+}
+
+func (h stepHandler) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
+	return h.answer(req), nil
+}
+
+type finishingInspector struct{ entered, release chan struct{} }
+
+func (i finishingInspector) ProjectOf(context.Context, string) string { return "scratch" }
+func (i finishingInspector) Placement(context.Context, string) (string, string, error) {
+	return "", "", nil
+}
+func (i finishingInspector) Changes(context.Context, string) (*consoleapi.ChangeSummary, error) {
+	close(i.entered)
+	<-i.release
+	return nil, nil
+}
+
+func TestChildFinishesBetweenHandlerReturnAndReplySave(t *testing.T) {
+	inspector := finishingInspector{make(chan struct{}), make(chan struct{})}
+	step := readmodel.FromStepProgress("#59", consoleapi.Progress{Model: "child-model"}, consoleapi.StepInfo{Kind: "delegate", State: "running"})
+	var s *Service
+	s = New(stepHandler{answer: func(req turn.Request) turn.Result {
+		s.UpdateStep(req.Source.ConversationID, "59", step)
+		return turn.Result{Text: "parent finished", Attempt: "parent-attempt"}
+	}}, "owner", nil)
+	s.SetInspector(inspector)
+	e, _, err := s.enqueue(t.Context(), "main", "delegate", nil, enqueueOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-inspector.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	step.State, step.Answer = "done", "child finished after its parent returned"
+	s.UpdateStep("main", "59", step)
+	close(inspector.release)
+	<-e.done
+	if got := s.Replies("main")[1].Process.Steps[0]; got.State != "done" || got.Answer != step.Answer {
+		t.Fatalf("completion fell into the save gap: %+v", got)
+	}
+}
+
+func TestReplacementTurnKeepsSeparateChildrenWhileOldTurnFinishes(t *testing.T) {
+	h := &queueHandler{started: make(chan *queueCall, 4)}
+	s := New(h, "owner", nil)
+	first, _, err := s.enqueue(t.Context(), "main", "first", nil, enqueueOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCall := nextCall(t, h)
+	step := readmodel.FromStepProgress("#59", consoleapi.Progress{}, consoleapi.StepInfo{Kind: "delegate", State: "running"})
+	s.UpdateStep("main", "59", step)
+	next, _, err := s.enqueue(t.Context(), "main", "!replacement", nil, enqueueOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newCall := nextCall(t, h)
+	s.UpdateStep("main", "60", step)
+	step.State = "done"
+	s.UpdateStep("main", "59", step)
+	oldCall.finish <- nil
+	<-first.done
+	newCall.finish <- nil
+	<-next.done
+	if got := first.outcome.reply.Process.Steps; len(got) != 1 || got[0].ID != "#59" || got[0].State != "done" {
+		t.Fatalf("old turn lost its child: %+v", got)
+	}
+	if got := next.outcome.reply.Process.Steps; len(got) != 1 || got[0].ID != "#60" {
+		t.Fatalf("replacement lost or adopted another turn's child: %+v", got)
+	}
+}

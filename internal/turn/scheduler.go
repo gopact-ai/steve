@@ -117,11 +117,11 @@ func (s *Scheduler) scheduleIdentity(ctx context.Context, binding agentmcp.Bindi
 	// Task.Requester belongs to the opening request, whereas By is the sender
 	// of this exact turn. A guest's later turn must not inherit the opener's rights.
 	tracked.Requester = r.By
-	owner, err := s.owners.Owner(tracked.Transport)
+	principal, owner, err := s.owners.Resolve(ctx, tracked.Transport, r.By)
 	if err != nil {
 		return task.Task{}, err
 	}
-	if injectionMode(protocol.ChatType(tracked.ChatType), r.By, owner) != home.ModeOwner {
+	if injectionMode(protocol.ChatType(tracked.ChatType), principal, owner) != home.ModeOwner {
 		return task.Task{}, errors.New("scheduling is available only in the owner's private conversation")
 	}
 	current, ok, err := s.projects.Binding(ctx, tracked.Channel)
@@ -131,7 +131,7 @@ func (s *Scheduler) scheduleIdentity(ctx context.Context, binding agentmcp.Bindi
 	if !ok || current.ProjectID != r.Project {
 		return task.Task{}, errors.New("the current project binding changed; scheduling is refused")
 	}
-	if err := requireRole(ctx, s.projects, s.text, owner, r.Project, r.By, project.RoleWrite); err != nil {
+	if err := requireRole(ctx, s.projects, s.text, owner, r.Project, principal, project.RoleWrite); err != nil {
 		return task.Task{}, err
 	}
 	return tracked, nil

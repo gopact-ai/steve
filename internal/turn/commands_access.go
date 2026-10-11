@@ -41,7 +41,15 @@ func (c commands) grantCmd(ctx context.Context, req Request, rest string) (Resul
 		if err := c.require(ctx, fields[0], req.Actor.ID, project.RoleAdmin); err != nil {
 			return Result{}, err
 		}
-		g, err := c.projects.Grant(ctx, fields[0], fields[1], project.Role(fields[2]), req.Actor.ID)
+		principal, err := c.projects.Principal(ctx, fields[1], req.Source.Channel)
+		if err != nil {
+			return Result{}, err
+		}
+		by, _, err := c.owners.Resolve(ctx, req.Source.Channel, req.Actor.ID)
+		if err != nil {
+			return Result{}, err
+		}
+		g, err := c.projects.Grant(ctx, fields[0], principal, project.Role(fields[2]), by)
 		if err != nil {
 			if user, isUser := err.(UserError); isUser {
 				return Result{}, user

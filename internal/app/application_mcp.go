@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -135,6 +136,44 @@ func (t applicationMCPTx) check(binding agentmcp.Binding, scope agentmcp.GrantSc
 	}
 	if !work.State.Holds() || work.Channel != binding.ConversationID || work.Member != binding.AgentID {
 		return agentmcp.ErrGrantDenied
+	}
+	if _, enabled, err := durable.Get[string](t.tx, identity.AuthorityKind, "owner"); err != nil {
+		return err
+	} else if enabled {
+		proofAttempt := record.ID
+		proofWork := work
+		for depth := 0; proofWork.AuthorizationAttempt != ""; depth++ {
+			if depth >= 16 {
+				return agentmcp.ErrGrantDenied
+			}
+			proofAttempt = proofWork.AuthorizationAttempt
+			original, err := attempt.GetTx(t.tx, proofAttempt)
+			if err != nil {
+				return err
+			}
+			proofWork, ok, err = task.GetTx(t.tx, original.TaskID)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return agentmcp.ErrGrantDenied
+			}
+		}
+		proof, err := identity.CheckExecutionTx(t.tx, proofAttempt)
+		if err != nil {
+			return agentmcp.ErrGrantDenied
+		}
+		owner, _, err := durable.Get[string](t.tx, identity.AuthorityKind, "owner")
+		if err != nil {
+			return err
+		}
+		role, err := project.AccessPolicyTx(t.tx, work.ProjectID, proof.Principal, owner)
+		if err != nil {
+			return err
+		}
+		if !role.AtLeast(project.RoleWrite) {
+			return agentmcp.ErrGrantDenied
+		}
 	}
 	if binding.TaskID != "" {
 		parent, found, err := task.GetTx(t.tx, work.Parent)

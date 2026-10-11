@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/datalevel"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
@@ -391,11 +392,13 @@ const (
 
 // Store keeps projects and bindings in the ledger.
 type Store struct {
-	l           *ledger.Ledger
-	now         func() time.Time
-	declaration atomic.Pointer[string]
-	hubID       atomic.Pointer[string]
-	guards      []DeclarationGuard
+	identityAccounts   *identity.Accounts
+	legacyGrantChannel string
+	l                  *ledger.Ledger
+	now                func() time.Time
+	declaration        atomic.Pointer[string]
+	hubID              atomic.Pointer[string]
+	guards             []DeclarationGuard
 	// Levels answers a machine's data level, when the store is given a way
 	// to know; a copy may only sit where the project's level admits.
 	Levels func(node string) datalevel.Level
@@ -809,6 +812,11 @@ func normalizeGrant(projectID, principal string, role Role, by string, at time.T
 
 // Grant records a principal's role in a project.
 func (s *Store) Grant(ctx context.Context, projectID, principal string, role Role, by string) (Grant, error) {
+	var policyErr error
+	principal, policyErr = s.Principal(ctx, principal, "")
+	if policyErr != nil {
+		return Grant{}, policyErr
+	}
 	g, err := normalizeGrant(projectID, principal, role, by, s.now().UTC())
 	if err != nil {
 		return Grant{}, err
@@ -869,6 +877,9 @@ func (s *Store) Grants(ctx context.Context, projectID string) ([]Grant, error) {
 // write for public and internal projects, nothing for restricted and
 // sealed ones, unless the project says otherwise.
 func (s *Store) Access(ctx context.Context, projectID, principal, owner string) (Role, error) {
+	if s.identityAccounts != nil && principal != "" && !strings.HasPrefix(principal, "user:") {
+		return RoleNone, identity.ErrDenied
+	}
 	p, ok, err := s.Get(ctx, projectID)
 	if err != nil {
 		return RoleNone, err

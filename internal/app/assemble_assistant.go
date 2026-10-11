@@ -18,8 +18,13 @@ import (
 	"github.com/gopact-ai/steve/internal/work"
 )
 
-func assembleAssistant(boot runtimeAssembly, page consoleAssembly, delegates delegationAssembly) {
-	services := servicehub.New(boot.Book(), boot.Config().EffectiveOwnerID(), page.Console())
+func assembleAssistant(boot runtimeAssembly, page consoleAssembly, delegates delegationAssembly, execution executionAssembly) {
+	adapters := map[string]work.Conversation{"console": page.Console()}
+	for name, g := range execution.NativeChannels() {
+		adapters[name] = g
+	}
+	routes := work.NewRoutes(boot.Book(), adapters)
+	services := servicehub.New(boot.Book(), boot.Config().EffectiveOwnerID(), routes)
 	services.Clients.CheckExecution = func(tx *ledger.Tx, call clientcap.Invocation) error {
 		return checkClientExecution(tx, services.Identity.OwnerID, call)
 	}
@@ -40,11 +45,14 @@ func assembleAssistant(boot runtimeAssembly, page consoleAssembly, delegates del
 		}
 		return events.DepthAfter(r, w.Request.Causation)
 	}
-	page.Dashboard().SetAssistant(&serviceapi.Services{Identity: services.Identity, Events: services.Events, Work: services.Work, Clients: services.Clients})
+	page.Dashboard().SetAssistant(&serviceapi.Services{Identity: services.Identity, Events: services.Events, Work: services.Work, Clients: services.Clients, Accounts: execution.Accounts(), Interactions: execution.Interactions(), Policy: page.Admin().Projects})
 	if gate := delegates.Gate(); gate != nil {
 		gate.SetClientInvoker(&clientCapabilityTools{services: services})
 	}
 	boot.Background().Go(services.Run)
+	if interactions := execution.Interactions(); interactions != nil {
+		boot.Background().Go(interactions.Run)
+	}
 }
 
 // checkClientExecution uses the ORIGINAL attempt, epoch and process generation.
@@ -72,8 +80,20 @@ func checkClientExecution(tx *ledger.Tx, owner string, call clientcap.Invocation
 	if err != nil {
 		return err
 	}
-	if !found || !t.State.Holds() || t.Transport != "console" || t.Channel != call.Request.Conversation || t.Requester != owner {
+	if !found || !t.State.Holds() || t.Transport == "" || t.ChatType != "p2p" || t.Channel != call.Request.Conversation {
 		return identity.ErrDenied
+	}
+	binding, err := identity.ResolveAccount(tx, identity.Account{Channel: t.Transport, ID: r.By})
+	if err != nil || binding.Principal != (identity.Account{Channel: "console", ID: owner}).Principal() {
+		return identity.ErrDenied
+	}
+	if _, enabled, err := durable.Get[string](tx, identity.AuthorityKind, "owner"); err != nil {
+		return err
+	} else if enabled {
+		proof, err := identity.CheckExecutionTx(tx, r.ID)
+		if err != nil || proof.Account != (identity.Account{Channel: t.Transport, ID: r.By}) || proof.Principal != binding.Principal {
+			return identity.ErrDenied
+		}
 	}
 	if err := task.CheckExecutionTx(tx, r.Execution); err != nil {
 		return err

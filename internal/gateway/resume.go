@@ -12,11 +12,10 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
-	"github.com/gopact-ai/steve/internal/turn"
+	turn "github.com/gopact-ai/steve/internal/turnapi"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -103,11 +102,11 @@ func (g *Gateway) deliver(r Revival, notice, prompt string, confirm func(error))
 	if noticeID == "" {
 		return fmt.Errorf("%w: task #%s notice has no receipt", channel.ErrOutcomeUnknown, r.TaskID)
 	}
-	msg := feishu.InboundMessage{
+	msg := channel.Input{
 		ConversationID: r.ConversationID,
 		ChatID:         r.ChatID,
 		MessageID:      noticeID,
-		SenderOpenID:   r.Requester,
+		ActorID:        r.Requester,
 		ChatType:       protocol.ParseChatType(r.ChatType),
 		Mentioned:      true,
 		Text:           "@" + r.Member + " " + prompt,
@@ -153,13 +152,13 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 	if ch == nil {
 		return FireReceipt{}, fmt.Errorf("channel cannot post schedule notice for #%s", f.ScheduleID)
 	}
-	if f.Channel != "feishu" || strings.HasPrefix(f.ConversationID, "console:") || f.ChatID == "console" {
-		return FireReceipt{}, fmt.Errorf("schedule %s does not target the Feishu channel", f.ScheduleID)
+	if f.Channel != g.name || strings.HasPrefix(f.ConversationID, "console:") || f.ChatID == "console" {
+		return FireReceipt{}, fmt.Errorf("schedule %s does not target channel %s", f.ScheduleID, g.name)
 	}
 	if f.ConversationID == "" || f.MessageID == "" || f.Prompt == "" || f.Member == "" || f.Requester == "" || f.ProjectID == "" {
 		return FireReceipt{}, fmt.Errorf("schedule %s has incomplete execution context", f.ScheduleID)
 	}
-	if err := g.coordinator.ValidateScheduled(ctx, f.ConversationID, f.ProjectID, f.Requester); err != nil {
+	if err := g.validateScheduled(ctx, f.ConversationID, f.ProjectID, f.Requester); err != nil {
 		return FireReceipt{}, err
 	}
 	noticeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -180,11 +179,11 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 		text = "@" + f.Member + " " + text
 	}
 	slog.Info(fmt.Sprintf("gateway: firing schedule #%s conversation=%s member=%s", f.ScheduleID, f.ConversationID, f.Member), "schedule", f.ScheduleID, "conversation", f.ConversationID, "member", f.Member)
-	msg := feishu.InboundMessage{
+	msg := channel.Input{
 		ConversationID: f.ConversationID,
 		ChatID:         f.ChatID,
 		MessageID:      noticeID,
-		SenderOpenID:   f.Requester,
+		ActorID:        f.Requester,
 		ChatType:       protocol.ParseChatType(f.ChatType),
 		Mentioned:      true,
 		Origin:         "schedule:" + f.ScheduleID,
@@ -213,12 +212,12 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 		}
 	}()
 	if g.gate != nil {
-		g.gate.Anchor(f.ConversationID, channel.Address{Channel: "feishu", Conversation: f.ConversationID, Message: noticeID})
+		g.gate.Anchor(f.ConversationID, channel.Address{Channel: g.name, Conversation: f.ConversationID, Message: noticeID})
 	}
 	ui := g.newTurnUI(ch, msg, false)
 	result, runErr := g.coordinator.Handle(ctx, turn.Request{
 		Source: turn.Source{
-			Channel:        "feishu",
+			Channel:        g.name,
 			ConversationID: f.ConversationID,
 			Origin:         msg.Origin,
 			MessageID:      noticeID,

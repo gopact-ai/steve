@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/conversation"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
@@ -31,18 +32,11 @@ import (
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
-	"github.com/gopact-ai/steve/internal/view"
+	"github.com/gopact-ai/steve/internal/turnapi"
+	"github.com/gopact-ai/steve/internal/work"
 )
 
-// UserError is safe to show on Feishu. Gateway replies Text verbatim.
-type UserError struct {
-	Text  string
-	Cause error
-}
-
-func (e UserError) Error() string { return e.Text }
-
-func (e UserError) Unwrap() error { return e.Cause }
+type UserError = turnapi.UserError
 
 // Runtime opens and closes the agent sessions turns run in.
 type Runtime interface {
@@ -86,54 +80,20 @@ type ModelProber interface {
 	ProbeAll(ctx context.Context) []models.Result
 }
 
-// Injected is what a turn actually gave the agent, kept so "what did it
-// see" can be answered from the record rather than recomputed from a
-// configuration that may since have changed.
-type Injected struct {
-	Project, Workspace          string
-	Agent, Node, Harness, Model string
-	Options                     map[string]string
-	Session                     string
-	NewSession                  bool
-	// InstructionsSent says the assembled instructions (identity, skills,
-	// memory) went in front of this turn's prompt: at session start or
-	// after an identity change. Instructions holds the text only when sent.
-	InstructionsSent  bool
-	Instructions      string
-	InstructionsBytes int
-	MCPServers        []string
-	Fingerprint       string
-	// Prompt is the text of this turn as sent, without the instructions.
-	Prompt string
-	// Sections is what the instructions sent this turn were made of.
-	Sections []capability.Section
-}
-
-type Result struct {
-	AgentID  string
-	Title    string
-	Text     string
-	Activity []string
-	Fields   []view.Field
-	// Injected is what the agent was given for this turn.
-	Injected *Injected
-	// Attempt is the attempt the turn ran as; its record holds the
-	// before and after snapshots.
-	Attempt string
-	// Recover marks a result whose card should offer to restore the
-	// just-archived session — the /clear confirmation.
-	Recover bool
-}
+type Injected = turnapi.Injected
+type Result = turnapi.Result
 
 type Coordinator struct {
 	*coordinatorState
 	text    i18n.Catalog
 	ownerID string
+	channel string
 }
 
 // coordinatorState owns shared execution state. Request-local views replace
 // the owner and text catalog; mutexes and runtime state are never copied.
 type coordinatorState struct {
+	work        *work.Engine
 	requestMu   sync.RWMutex
 	maintaining bool
 	executions  *execution.Registry
@@ -159,7 +119,7 @@ type coordinatorState struct {
 
 	// modes is how each conversation last reached Steve, for a tool call
 	// that has no request to read it from.
-	modes map[string]home.Mode
+	conversations *conversation.Controller
 	// memory is what Steve remembers, by scope.
 	memory     *memory.Service
 	schedules  *schedule.Store
@@ -198,7 +158,6 @@ type coordinatorState struct {
 
 	mu              sync.Mutex
 	preferenceLocks sync.Map // conversation/agent -> *sync.Mutex
-	lastSeen        map[string]time.Time
 	active          map[string]harness.Runner
 	sessionAdmissionState
 	cancelPending map[string]time.Time
@@ -208,6 +167,7 @@ type coordinatorState struct {
 // Deps is everything a Coordinator is built with. New refuses a Deps
 // missing anything Deps.required lists; every other field may be zero.
 type Deps struct {
+	Work      *work.Engine
 	Catalog   *agent.Catalog
 	Store     *state.Store
 	Assembler *capability.Assembler
@@ -315,7 +275,9 @@ func New(deps Deps) (*Coordinator, error) {
 		text:    deps.Text,
 		ownerID: deps.Identity.ConsoleOwner,
 		coordinatorState: &coordinatorState{
-			catalog: deps.Catalog, store: deps.Store, assembler: deps.Assembler, runtime: deps.Runtime,
+			work:          deps.Work,
+			conversations: &conversation.Controller{Store: deps.Store},
+			catalog:       deps.Catalog, store: deps.Store, assembler: deps.Assembler, runtime: deps.Runtime,
 			promptClock:       promptClock{timeout: deps.Timeout, source: deps.TimeoutSource, start: idle.WithTimeout},
 			autoResolveSource: deps.AutoResolveSource,
 			owners:            owners, home: deps.Home, homePath: homePath, skills: deps.Skills,
@@ -432,7 +394,7 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 		return Result{}, UserError{Text: c.text.T(i18n.HubMaintenance)}
 	}
 	ctx = i18n.WithLocale(ctx, c.text.Locale())
-	return c.handle(ctx, req)
+	return c.work.Run(ctx, req, c.handle)
 }
 
 func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
@@ -447,52 +409,27 @@ func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 	// ran, so the person who asked is no longer watching.
 	c.noteActivity(req.Source.ConversationID)
 	c.rememberMode(req)
-	selected, prompt, switchOnly, err := c.selectAgent(req.Source.ConversationID, req.Input)
-	if err != nil {
-		return Result{}, err
-	}
-	selected = c.recoveryAgent(req.Source.ConversationID, selected, req.Source.Origin)
-	if switchOnly {
-		return Result{AgentID: selected.ID, Text: c.text.T(i18n.Switched, selected.ID)}, nil
-	}
-	// Queueing is the default: a new message normally adds work after the
-	// running turn rather than replacing it. A leading "!" is the explicit
-	// interrupt — "stop that, do this instead" — so a correction is one
-	// deliberate gesture instead of the accidental fate of every message.
-	// "+" still queues for muscle memory from when interrupting was the
-	// default; it is now a no-op alias.
-	parsed := ParseInput(prompt)
-	prompt, req.Admission.Queue = parsed.Prompt, !parsed.Interrupt
-	cmd, rest := parsed.Command, parsed.Rest
-	if result, handled, err := c.commands().dispatch(ctx, req, selected, cmd, rest); handled {
-		return result, err
-	}
-	return c.prompt(ctx, req, selected, prompt)
+	return work.Dispatch(ctx, req, work.Flow{
+		Select: func(req turnapi.Request) (agent.Agent, string, bool, error) {
+			selected, prompt, switchOnly, err := c.selectAgent(req.Source.ConversationID, req.Input)
+			return c.recoveryAgent(req.Source.ConversationID, selected, req.Source.Origin), prompt, switchOnly, err
+		},
+		Parse: func(prompt string) (string, protocol.Command, string, bool) {
+			parsed := ParseInput(prompt)
+			return parsed.Prompt, parsed.Command, parsed.Rest, parsed.Interrupt
+		},
+		Switched: func(selected agent.Agent) Result {
+			return Result{AgentID: selected.ID, Text: c.text.T(i18n.Switched, selected.ID)}
+		},
+		Control: c.commands().dispatch,
+		Prompt:  c.prompt,
+	})
 }
 
-func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, string, bool, error) {
-	if c.catalog.Default().ID == "" {
-		return agent.Agent{}, "", false, UserError{Text: c.text.T(i18n.NoAgentConfigured)}
+func (c *Coordinator) selectAgent(id, input string) (agent.Agent, string, bool, error) {
+	selected, prompt, switchOnly, err := c.conversations.Select(c.catalog, id, input)
+	if err == conversation.ErrNoAgent {
+		err = UserError{Text: c.text.T(i18n.NoAgentConfigured)}
 	}
-	if selection, ok := c.catalog.Select(input); ok {
-		if err := c.store.SetActiveAgent(conversationID, selection.Agent.ID); err != nil {
-			return agent.Agent{}, "", false, err
-		}
-		return selection.Agent, selection.Prompt, selection.SwitchOnly, nil
-	}
-	fields := strings.Fields(strings.TrimSpace(input))
-	if len(fields) > 0 && (strings.HasPrefix(fields[0], "@") || fields[0] == string(protocol.CommandUse)) {
-		return agent.Agent{}, "", false, fmt.Errorf("unknown agent selection %q", fields[0])
-	}
-	conversation := c.store.Conversation(conversationID)
-	if conversation.ActiveAgent != "" {
-		if selected, ok := c.catalog.Resolve(conversation.ActiveAgent); ok {
-			return selected, strings.TrimSpace(input), false, nil
-		}
-	}
-	selected := c.catalog.Default()
-	if err := c.store.SetActiveAgent(conversationID, selected.ID); err != nil {
-		return agent.Agent{}, "", false, err
-	}
-	return selected, strings.TrimSpace(input), false, nil
+	return selected, prompt, switchOnly, err
 }

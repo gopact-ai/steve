@@ -126,7 +126,7 @@ func TestFeishuWorkWaitsForAVerifiedChannel(t *testing.T) {
 	settings.SetStartupRetry(&consoleapi.ChannelStartupRetry{Attempts: 1, LastError: "dial tcp: network is unreachable"})
 
 	// Before verification.
-	if err := gw.HandleMessage(feishu.InboundMessage{ConversationID: "oc_chat", ChatID: "oc_chat", MessageID: "om_waiting", SenderOpenID: "owner", ChatType: "p2p", Text: "waiting work", Mentioned: true}); err != nil {
+	if err := gw.HandleMessage(feishu.InboundMessage{ConversationID: "oc_chat", ChatID: "oc_chat", MessageID: "om_waiting", ActorID: "owner", ChatType: "p2p", Text: "waiting work", Mentioned: true}); err != nil {
 		t.Fatalf("accepting input before verification: %v", err)
 	}
 	ingress.Close()

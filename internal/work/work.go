@@ -66,7 +66,7 @@ type Service struct {
 }
 
 func (s *Service) Submit(ctx context.Context, p identity.Principal, input Request) (out Record, err error) {
-	if input.Key == "" || len(input.Key) > 512 || !strings.HasPrefix(input.Conversation, "console:") || input.Project == "" || strings.TrimSpace(input.Instruction) == "" || len(input.Instruction) > 16<<10 || len(input.Context) > 256<<10 || len(input.Context) > 0 && !json.Valid(input.Context) {
+	if input.Key == "" || len(input.Key) > 512 || (input.Conversation == "" || len(input.Conversation) > 512) || input.Project == "" || strings.TrimSpace(input.Instruction) == "" || len(input.Instruction) > 16<<10 || len(input.Context) > 256<<10 || len(input.Context) > 0 && !json.Valid(input.Context) {
 		return out, errors.New("work: stable key, conversation, project and bounded instruction/context are required")
 	}
 	var existing bool

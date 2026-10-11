@@ -11,7 +11,6 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -117,7 +116,7 @@ func TestDurableActionRejectedAcceptanceDoesNotConsumeRetryOrRecall(t *testing.T
 	id := g.registerTurn(msg)
 	g.setTurnCard(id, "card")
 	g.finishTurn(id, true)
-	action := feishu.CardAction{RequestID: id, MessageID: "card", ChatID: "chat", OpenID: "owner", Action: "turn_retry"}
+	action := channel.Action{RequestID: id, MessageID: "card", ChatID: "chat", ActorID: "owner", Action: "turn_retry"}
 	if _, err := book.DB().Exec(`CREATE TRIGGER reject_action BEFORE INSERT ON commands
 		WHEN NEW.kind='gateway-input' BEGIN SELECT RAISE(ABORT,'accept unavailable'); END`); err != nil {
 		t.Fatal(err)
@@ -310,9 +309,9 @@ func TestOrdinaryAcceptanceConflictsOnActorPayloadOrKind(t *testing.T) {
 	if err := g.HandleMessage(msg); err != nil {
 		t.Fatal(err)
 	}
-	for _, mutate := range []func(*feishu.InboundMessage){
-		func(m *feishu.InboundMessage) { m.Text = "different" },
-		func(m *feishu.InboundMessage) { m.SenderOpenID = "another" },
+	for _, mutate := range []func(*channel.Input){
+		func(m *channel.Input) { m.Text = "different" },
+		func(m *channel.Input) { m.ActorID = "another" },
 	} {
 		other := msg
 		mutate(&other)
@@ -338,7 +337,7 @@ func TestDurableHistoryCardReplaysItsOriginalAcceptanceOnly(t *testing.T) {
 	g.SetRecoveryLedger(book)
 	var workers recoveryTestWorkers
 	g.SetIngressLifetime(t.Context(), &workers, nil)
-	action := feishu.CardAction{RequestID: "thread", Action: "history_restore", MessageID: "finished-card", ChatID: "chat", OpenID: "owner"}
+	action := channel.Action{RequestID: "thread", Action: "history_restore", MessageID: "finished-card", ChatID: "chat", ActorID: "owner"}
 	for range 2 {
 		if toast := g.HandleCardAction(action); toast.Type != "success" {
 			t.Fatal(toast)
@@ -351,7 +350,7 @@ func TestDurableHistoryCardReplaysItsOriginalAcceptanceOnly(t *testing.T) {
 	if req := nextIngress(t, p); req.Input != "/history 1" || req.Source.ConversationID != "thread" || req.Source.MessageID != "finished-card" {
 		t.Fatal(req)
 	}
-	action.OpenID = "other"
+	action.ActorID = "other"
 	if toast := g.HandleCardAction(action); toast.Type != "error" {
 		t.Fatal("accepted card identity was overwritten")
 	}

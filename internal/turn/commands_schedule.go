@@ -81,7 +81,7 @@ func (c commands) schedulesCmd(req Request, rest string) Result {
 		if !ok || job.ConversationID != req.Source.ConversationID {
 			return Result{Title: title, Text: c.text.T(i18n.ScheduleUnknown, id)}
 		}
-		if req.Actor.ID == "" || (req.Actor.ID != job.Requester && req.Actor.ID != c.ownerID) {
+		if req.Actor.ID == "" || (req.Actor.ID != job.Requester && !c.isOwner(req)) {
 			return Result{Title: title, Text: c.text.T(i18n.ScheduleResolveForbidden)}
 		}
 		if err := c.schedules.ResolveFiring(id, verdict, req.Actor.ID); err != nil {
