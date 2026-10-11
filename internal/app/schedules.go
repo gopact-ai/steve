@@ -8,24 +8,16 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/console"
-	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/schedule"
 )
 
-type scheduledConsole interface {
-	EnqueueScheduled(context.Context, schedule.Firing) (console.Exchange, error)
-}
-type scheduledGateway interface {
-	FireSchedule(context.Context, gateway.Fire) (gateway.FireReceipt, error)
-}
 type scheduledCoordinator interface {
 	RotateTask(conversation, member, origin string)
 }
 
 // runScheduleDispatcher uses a durable firing as the handoff between the
 // clock and the channel's receiver. Sending is never the same as claiming.
-func runScheduleDispatcher(ctx context.Context, store *schedule.Store, page scheduledConsole, chat scheduledGateway, coordinator scheduledCoordinator) {
+func runScheduleDispatcher(ctx context.Context, store *schedule.Store, receivers schedule.ScheduleReceiver, coordinator scheduledCoordinator) {
 	dispatch := func(now time.Time) {
 		due, err := store.Due(now)
 		if err != nil {
@@ -36,7 +28,7 @@ func runScheduleDispatcher(ctx context.Context, store *schedule.Store, page sche
 			if err := store.BeginFiring(f.Key); err != nil {
 				continue
 			}
-			go dispatchFiring(ctx, store, page, chat, coordinator, f)
+			go dispatchFiring(ctx, store, receivers, coordinator, f)
 		}
 	}
 	dispatch(time.Now())
@@ -52,39 +44,11 @@ func runScheduleDispatcher(ctx context.Context, store *schedule.Store, page sche
 	}
 }
 
-func dispatchFiring(ctx context.Context, store *schedule.Store, page scheduledConsole, chat scheduledGateway, coordinator scheduledCoordinator, f schedule.Firing) {
+func dispatchFiring(ctx context.Context, store *schedule.Store, receivers schedule.ScheduleReceiver, coordinator scheduledCoordinator, f schedule.Firing) {
 	if coordinator != nil {
 		coordinator.RotateTask(f.ConversationID, f.Member, "schedule:"+f.ID)
 	}
-	var receipt string
-	var err error
-	switch f.Channel {
-	case "console":
-		if page == nil {
-			err = errors.New("console channel is not available")
-			break
-		}
-		var exchange console.Exchange
-		exchange, err = page.EnqueueScheduled(ctx, f)
-		if err == nil {
-			receipt = exchange.ID
-		}
-	case "feishu":
-		if chat == nil {
-			err = errors.New("Feishu channel is not available")
-			break
-		}
-		var accepted gateway.FireReceipt
-		accepted, err = chat.FireSchedule(ctx, gateway.Fire{
-			Channel: f.Channel, ProjectID: f.ProjectID, ScheduleID: f.ID, ConversationID: f.ConversationID,
-			ChatID: f.ChatID, ChatType: f.ChatType, MessageID: f.AnchorMessage, Requester: f.Requester, Member: f.Member, Prompt: f.Prompt,
-		})
-		if err == nil {
-			receipt = accepted.MessageID
-		}
-	default:
-		err = fmt.Errorf("schedule channel %q is not configured", f.Channel)
-	}
+	receipt, err := receivers.ReceiveSchedule(ctx, f)
 	if err == nil && receipt == "" {
 		err = fmt.Errorf("%w: empty schedule delivery receipt", channel.ErrOutcomeUnknown)
 	}

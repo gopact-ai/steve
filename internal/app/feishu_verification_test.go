@@ -150,7 +150,7 @@ func TestFeishuWorkWaitsForAVerifiedChannel(t *testing.T) {
 			if err := store.BeginFiring(f.Key); err != nil {
 				t.Fatal(err)
 			}
-			dispatchFiring(t.Context(), store, nil, gw, nil, f)
+			dispatchFiring(t.Context(), store, testScheduleReceivers(t, nil, gw), nil, f)
 		}
 	}
 	fire(at)
