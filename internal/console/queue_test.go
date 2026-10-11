@@ -126,14 +126,14 @@ func TestQueueDrainsWithoutAClientAndKeepsExchangeIDs(t *testing.T) {
 	// Another conversation has its own turn reservation.
 	other := enqueueForTest(t, s, "other", "independent")
 	parallel := nextCall(t, h)
-	if parallel.req.ConversationID != "console:other" {
-		t.Fatal(parallel.req.ConversationID)
+	if parallel.req.Source.ConversationID != "console:other" {
+		t.Fatal(parallel.req.Source.ConversationID)
 	}
 	parallel.finish <- nil
 	awaitExchange(t, s, other.ID)
 	one.finish <- nil
 	two := nextCall(t, h)
-	if two.req.Input != "second" || !two.req.Queue {
+	if two.req.Input != "second" || !two.req.Admission.Queue {
 		t.Fatalf("next = %+v", two.req)
 	}
 	two.finish <- nil
@@ -277,7 +277,7 @@ func TestSteerInterruptsAndKeepsTheRemainingQueue(t *testing.T) {
 		t.Fatalf("steer = %+v %v", e, err)
 	}
 	correction := nextCall(t, h)
-	if correction.req.Queue || !strings.HasPrefix(correction.req.Input, "!") || !strings.HasSuffix(correction.req.Input, "correction") {
+	if correction.req.Admission.Queue || !strings.HasPrefix(correction.req.Input, "!") || !strings.HasSuffix(correction.req.Input, "correction") {
 		t.Fatalf("interrupt prompt = %+v", correction.req)
 	}
 	select {

@@ -20,7 +20,14 @@ func TestTaskResumeDoesNotReplaceAnOutstandingGrantOnAnotherClick(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, id := range []string{"click-1", "click-2"} {
-		if _, err := c.Handle(t.Context(), Request{Channel: row.Transport, ConversationID: row.Channel, MessageID: id, Input: "/tasks resume " + row.ID}); err != nil {
+		if _, err := c.Handle(t.Context(), Request{
+			Source: Source{
+				Channel:        row.Transport,
+				ConversationID: row.Channel,
+				MessageID:      id,
+			},
+			Input: "/tasks resume " + row.ID,
+		}); err != nil {
 			t.Fatal(err)
 		}
 		if id == "click-1" {

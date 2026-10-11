@@ -46,10 +46,10 @@ func TestConsoleActsAsTheOwnerAndKeepsTheExchange(t *testing.T) {
 		t.Fatalf("reply = %+v err=%v", reply, err)
 	}
 	req := h.seen[0]
-	if req.ConversationID != "console:main" || req.SenderOpenID != "ou_owner" || !strings.HasPrefix(req.MessageID, AnchorMark) || req.ChatID != ChatID {
+	if req.Source.ConversationID != "console:main" || req.Actor.ID != "ou_owner" || !strings.HasPrefix(req.Source.MessageID, AnchorMark) || req.Reply.ChatID != ChatID {
 		t.Fatalf("request = %+v", req)
 	}
-	if req.ExchangeID == "" || req.MessageID != AnchorMark+req.ExchangeID || reply.ExchangeID != req.ExchangeID {
+	if req.Admission.ExchangeID == "" || req.Source.MessageID != AnchorMark+req.Admission.ExchangeID || reply.ExchangeID != req.Admission.ExchangeID {
 		t.Fatal("console request lost its exact durable exchange identity")
 	}
 	if _, err := s.Send(context.Background(), "console:main", "/boom"); err == nil {
@@ -61,7 +61,7 @@ func TestConsoleActsAsTheOwnerAndKeepsTheExchange(t *testing.T) {
 		t.Fatalf("replies = %+v", replies)
 	}
 	// Milestones from agents and notices for the console land here too.
-	id, err := (MessageSender{Console: s}).Send(context.Background(), channel.Address{Channel: "console", Conversation: req.ConversationID, Message: req.MessageID}, channel.Message{Content: "phase 1 done"})
+	id, err := (MessageSender{Console: s}).Send(context.Background(), channel.Address{Channel: "console", Conversation: req.Source.ConversationID, Message: req.Source.MessageID}, channel.Message{Content: "phase 1 done"})
 	if err != nil || id == "" {
 		t.Fatalf("milestone id = %q err=%v", id, err)
 	}
@@ -317,7 +317,7 @@ func TestConsoleResumesATaskAheadOfWhatWaits(t *testing.T) {
 	}
 	running.finish <- nil
 	call := nextCall(t, h)
-	if call.req.Input != "@claude continue: ship it" || call.req.ConversationID != "console:main" || call.req.ExpectedTask != tracked.ID || call.req.ResumeAdmission != admission {
+	if call.req.Input != "@claude continue: ship it" || call.req.Source.ConversationID != "console:main" || call.req.Admission.ExpectedTask != tracked.ID || call.req.Admission.ResumeAdmission != admission {
 		t.Fatalf("continuation = %+v", call.req)
 	}
 	call.finish <- nil

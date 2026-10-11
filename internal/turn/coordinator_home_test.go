@@ -47,7 +47,12 @@ func TestOwnerFirstTurnInjectsMemoryThenStops(t *testing.T) {
 	}
 	coordinator, store, runner := homeCoordinator(t, dir, "ou_me")
 	first, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "dm", Input: "hello", SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
+		Source: Source{
+			ConversationID: "dm",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "hello",
+		Actor: Actor{ID: "ou_me"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +68,12 @@ func TestOwnerFirstTurnInjectsMemoryThenStops(t *testing.T) {
 	}
 	upstream := store.Conversation("dm").Sessions["codex"].UpstreamID
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "dm", Input: "again", SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
+		Source: Source{
+			ConversationID: "dm",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "again",
+		Actor: Actor{ID: "ou_me"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +95,12 @@ func TestNewReloadsMemory(t *testing.T) {
 	}
 	coordinator, store, runner := homeCoordinator(t, dir, "ou_me")
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "dm", Input: "hello", SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
+		Source: Source{
+			ConversationID: "dm",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "hello",
+		Actor: Actor{ID: "ou_me"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +108,12 @@ func TestNewReloadsMemory(t *testing.T) {
 		t.Fatal("missing session before /new")
 	}
 	reset, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "dm", Input: "/new", SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
+		Source: Source{
+			ConversationID: "dm",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "/new",
+		Actor: Actor{ID: "ou_me"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +125,12 @@ func TestNewReloadsMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "dm", Input: "next", SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
+		Source: Source{
+			ConversationID: "dm",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "next",
+		Actor: Actor{ID: "ou_me"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +149,12 @@ func TestOwnerP2POpensHomeWorkspace(t *testing.T) {
 	}
 	coordinator, store, manager := homeCoordinatorWithManager(t, dir, "ou_me")
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "dm", Input: "hello", SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
+		Source: Source{
+			ConversationID: "dm",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "hello",
+		Actor: Actor{ID: "ou_me"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +190,12 @@ func TestExistingOwnerSessionInAnotherDirectoryIsStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = coordinator.Handle(t.Context(), Request{
-		ConversationID: "dm", Input: "hello", SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
+		Source: Source{
+			ConversationID: "dm",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "hello",
+		Actor: Actor{ID: "ou_me"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "/new") {
 		t.Fatalf("expected a stale-workspace refusal pointing at /new, got %v", err)
@@ -179,7 +214,12 @@ func TestOwnerFollowUpWritesPortrait(t *testing.T) {
 	runner.reply = "已记下，李总。\n\n===SOUL.md===\n# Soul\n你是李总的助手\n===USER.md===\n# User\n- 称呼：李总\n- 时区：Asia/Shanghai\n"
 	runner.activity = []string{`sed -n '1,120p' USER.md`}
 	result, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "dm", Input: "叫我李总，时区对的", SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
+		Source: Source{
+			ConversationID: "dm",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "叫我李总，时区对的",
+		Actor: Actor{ID: "ou_me"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +252,14 @@ func TestOwnerCanChatBeforeProvidingProfile(t *testing.T) {
 	for _, input := range []string{"你好", "帮我看看项目的测试命令"} {
 		runner.reply = "可以，我会按你的要求协助。"
 		runner.activity = []string{"read project instructions"}
-		result, err := coordinator.Handle(t.Context(), Request{ConversationID: "dm", Input: input, SenderOpenID: "ou_me", ChatType: protocol.ChatP2P})
+		result, err := coordinator.Handle(t.Context(), Request{
+			Source: Source{
+				ConversationID: "dm",
+				ChatType:       protocol.ChatP2P,
+			},
+			Input: input,
+			Actor: Actor{ID: "ou_me"},
+		})
 		if err != nil || result.Text != runner.reply {
 			t.Fatalf("ordinary conversation failed: %+v %v", result, err)
 		}
@@ -229,7 +276,14 @@ func TestOwnerCanChatBeforeProvidingProfile(t *testing.T) {
 		}
 	}
 	runner.reply = "已记下。\n===SOUL.md===\n# Soul\n你是用户的个人助手，偏好简洁准确的协作。\n===USER.md===\n# User\n- 称呼：李工\n- 回复偏好：简洁\n"
-	result, err := coordinator.Handle(t.Context(), Request{ConversationID: "dm", Input: "叫我李工，以后回复简洁一点，顺便看看项目的测试命令", SenderOpenID: "ou_me", ChatType: protocol.ChatP2P})
+	result, err := coordinator.Handle(t.Context(), Request{
+		Source: Source{
+			ConversationID: "dm",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "叫我李工，以后回复简洁一点，顺便看看项目的测试命令",
+		Actor: Actor{ID: "ou_me"},
+	})
 	if err != nil || result.Text != "已记下。" || home.NeedsInit(dir) {
 		t.Fatalf("later owner facts were not saved: %+v %v", result, err)
 	}
@@ -259,7 +313,12 @@ func TestOwnerFollowUpDoesNotScanLocalHistory(t *testing.T) {
 	}
 	for _, input := range []string{"你好", "叫我李总", "不允许扫描，叫我李总"} {
 		if _, err := coordinator.Handle(t.Context(), Request{
-			ConversationID: "dm", Input: input, SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
+			Source: Source{
+				ConversationID: "dm",
+				ChatType:       protocol.ChatP2P,
+			},
+			Input: input,
+			Actor: Actor{ID: "ou_me"},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +340,13 @@ func TestGuestOmitsMemoryAndPath(t *testing.T) {
 	}
 	coordinator, _, runner := homeCoordinator(t, dir, "ou_me")
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "grp", Input: "hello", SenderOpenID: "ou_me", ChatType: protocol.ChatGroup, Mentioned: true,
+		Source: Source{
+			ConversationID: "grp",
+			ChatType:       protocol.ChatGroup,
+			Mentioned:      true,
+		},
+		Input: "hello",
+		Actor: Actor{ID: "ou_me"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +354,13 @@ func TestGuestOmitsMemoryAndPath(t *testing.T) {
 		t.Fatalf("group leaked home: %v", runner.seen())
 	}
 	status, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "grp", Input: "/status", SenderOpenID: "ou_me", ChatType: protocol.ChatGroup, Mentioned: true,
+		Source: Source{
+			ConversationID: "grp",
+			ChatType:       protocol.ChatGroup,
+			Mentioned:      true,
+		},
+		Input: "/status",
+		Actor: Actor{ID: "ou_me"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -306,13 +377,25 @@ func TestGroupSendersShareFingerprint(t *testing.T) {
 	}
 	coordinator, store, runner := homeCoordinator(t, dir, "ou_me")
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "grp", Input: "one", SenderOpenID: "ou_a", ChatType: protocol.ChatGroup, Mentioned: true,
+		Source: Source{
+			ConversationID: "grp",
+			ChatType:       protocol.ChatGroup,
+			Mentioned:      true,
+		},
+		Input: "one",
+		Actor: Actor{ID: "ou_a"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	hash := store.Conversation("grp").Sessions["codex"].CapabilityHash
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "grp", Input: "two", SenderOpenID: "ou_b", ChatType: protocol.ChatGroup, Mentioned: true,
+		Source: Source{
+			ConversationID: "grp",
+			ChatType:       protocol.ChatGroup,
+			Mentioned:      true,
+		},
+		Input: "two",
+		Actor: Actor{ID: "ou_b"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +414,12 @@ func TestUnmentionedGroupAsksAgentToStaySilent(t *testing.T) {
 	}
 	coordinator, _, runner := homeCoordinator(t, dir, "ou_me")
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "grp", Input: "随便聊聊", SenderOpenID: "ou_a", ChatType: protocol.ChatGroup,
+		Source: Source{
+			ConversationID: "grp",
+			ChatType:       protocol.ChatGroup,
+		},
+		Input: "随便聊聊",
+		Actor: Actor{ID: "ou_a"},
 	}); err != nil {
 		t.Fatal(err)
 	}

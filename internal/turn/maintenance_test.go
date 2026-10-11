@@ -36,7 +36,16 @@ func TestMaintenanceRejectsAllChannelsAndCommandsUntilReleased(t *testing.T) {
 				owner = "ou_owner"
 			}
 			conversation := channel + input
-			_, err := c.Handle(t.Context(), Request{Channel: channel, Locale: "en", ConversationID: conversation, SenderOpenID: owner, ChatType: protocol.ChatP2P, Input: input})
+			_, err := c.Handle(t.Context(), Request{
+				Source: Source{
+					Channel:        channel,
+					ConversationID: conversation,
+					ChatType:       protocol.ChatP2P,
+				},
+				Locale: "en",
+				Actor:  Actor{ID: owner},
+				Input:  input,
+			})
 			var userError UserError
 			if !errors.As(err, &userError) {
 				t.Errorf("maintenance allowed %s %s: %v", channel, input, err)
@@ -59,11 +68,23 @@ func TestMaintenanceRejectsAllChannelsAndCommandsUntilReleased(t *testing.T) {
 		t.Fatal(err)
 	}
 	release()
-	if _, err := c.Handle(t.Context(), Request{Channel: "console", ConversationID: "still-sealed", Input: "/use worker"}); err == nil {
+	if _, err := c.Handle(t.Context(), Request{
+		Source: Source{
+			Channel:        "console",
+			ConversationID: "still-sealed",
+		},
+		Input: "/use worker",
+	}); err == nil {
 		t.Fatal("old release opened a newer seal")
 	}
 	second()
-	if _, err := c.Handle(t.Context(), Request{Channel: "console", ConversationID: "after", Input: "/use worker"}); err != nil {
+	if _, err := c.Handle(t.Context(), Request{
+		Source: Source{
+			Channel:        "console",
+			ConversationID: "after",
+		},
+		Input: "/use worker",
+	}); err != nil {
 		t.Fatalf("release did not restore admission: %v", err)
 	}
 }
@@ -91,7 +112,13 @@ func TestSealIdleRejectsCommandBeforeExecutionRegistryAdmission(t *testing.T) {
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	done := make(chan error, 1)
 	go func() {
-		_, err := c.Handle(t.Context(), Request{Channel: "console", ConversationID: "reset", Input: "/new"})
+		_, err := c.Handle(t.Context(), Request{
+			Source: Source{
+				Channel:        "console",
+				ConversationID: "reset",
+			},
+			Input: "/new",
+		})
 		done <- err
 	}()
 	select {

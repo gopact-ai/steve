@@ -170,7 +170,13 @@ func (c *Coordinator) Selectors(parent context.Context, conversationID, agentID 
 	if c.skillsUpdating() {
 		return Selectors{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
-	req := Request{ConversationID: conversationID, ChatType: protocol.ChatP2P, SenderOpenID: c.ownerOpenID}
+	req := Request{
+		Source: Source{
+			ConversationID: conversationID,
+			ChatType:       protocol.ChatP2P,
+		},
+		Actor: Actor{ID: c.ownerOpenID},
+	}
 	ctx, cancel := context.WithTimeout(parent, c.promptTimeout())
 	defer cancel()
 	_, workspace, err := c.resolveWorkspace(ctx, req, selected)
@@ -228,8 +234,8 @@ func (c *Coordinator) openForCommand(ctx context.Context, req Request, selected 
 	if err != nil {
 		return nil, err
 	}
-	saved := c.store.Conversation(req.ConversationID).Sessions[selected.ID]
-	saved.ConversationID = req.ConversationID
+	saved := c.store.Conversation(req.Source.ConversationID).Sessions[selected.ID]
+	saved.ConversationID = req.Source.ConversationID
 	_, workspace, err := c.resolveWorkspace(ctx, req, selected)
 	if err != nil {
 		return nil, err

@@ -30,7 +30,7 @@ func (d *stoppingRecoveryDriver) StopRetainedTask(_ context.Context, id string, 
 	if d.stopHook != nil {
 		d.once.Do(d.stopHook)
 	}
-	if id != "task-1" || req.ConversationID != "console:main" || req.MessageID != "web-e1" || req.SenderOpenID != "owner" {
+	if id != "task-1" || req.Source.ConversationID != "console:main" || req.Source.MessageID != "web-e1" || req.Actor.ID != "owner" {
 		return turn.Result{}, errors.New("stop targeted another execution")
 	}
 	return turn.Result{Text: "original task stopped", Attempt: id}, d.stopErr
@@ -744,7 +744,7 @@ func (d *cancelledTaskDriver) StopRetainedTask(_ context.Context, id string, req
 		d.explicit.Store(true)
 	}
 	d.stops.Add(1)
-	if id != "task-1" || req.ConversationID != "console:main" || req.MessageID != AnchorMark+d.exchange || req.SenderOpenID != "owner" {
+	if id != "task-1" || req.Source.ConversationID != "console:main" || req.Source.MessageID != AnchorMark+d.exchange || req.Actor.ID != "owner" {
 		return turn.Result{}, errors.New("stop targeted another execution")
 	}
 	if cancel || d.state(id) != task.StatePaused {

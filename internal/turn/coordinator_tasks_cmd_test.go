@@ -80,8 +80,13 @@ func TestResumeReplaysTheTaskThroughTheChannel(t *testing.T) {
 		cb.Resumer = func(r TaskResume) error { resumed <- r; return nil }
 	}))
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "chat", Input: "index the archive",
-		MessageID: "om_anchor", ChatID: "oc_chat", SenderOpenID: "ou_asker",
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "om_anchor",
+		},
+		Input: "index the archive",
+		Reply: ReplyContext{ChatID: "oc_chat"},
+		Actor: Actor{ID: "ou_asker"},
 	}); err != nil {
 		t.Fatalf("opening turn: %v", err)
 	}
@@ -89,7 +94,13 @@ func TestResumeReplaysTheTaskThroughTheChannel(t *testing.T) {
 		t.Fatalf("pause: %v", err)
 	}
 
-	if _, err := coordinator.Handle(t.Context(), Request{ConversationID: "chat", MessageID: "resume-control", Input: "/tasks resume"}); err != nil {
+	if _, err := coordinator.Handle(t.Context(), Request{
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "resume-control",
+		},
+		Input: "/tasks resume",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -170,7 +181,10 @@ func TestTaskCommandsCannotReachAnotherConversation(t *testing.T) {
 		t.Fatalf("opening turn: %v", err)
 	}
 
-	result, err := coordinator.Handle(t.Context(), Request{ConversationID: "other", Input: "/tasks cancel 1"})
+	result, err := coordinator.Handle(t.Context(), Request{
+		Source: Source{ConversationID: "other"},
+		Input:  "/tasks cancel 1",
+	})
 	if err != nil {
 		t.Fatalf("cross-conversation cancel: %v", err)
 	}
@@ -216,7 +230,13 @@ func TestResumeStopRefusalIsExplainedAndKeepsTheTaskPaused(t *testing.T) {
 	if _, err := tasks.SetAside("1", task.StatePaused); err != nil {
 		t.Fatal(err)
 	}
-	result, err := c.Handle(t.Context(), Request{ConversationID: "chat", MessageID: "resume-control", Input: "/tasks resume 1"})
+	result, err := c.Handle(t.Context(), Request{
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "resume-control",
+		},
+		Input: "/tasks resume 1",
+	})
 	var user UserError
 	if !errors.As(err, &user) || !strings.Contains(result.Text, "/tasks resume 1") {
 		t.Fatalf("stop refusal is not actionable: %q, %v", result.Text, err)

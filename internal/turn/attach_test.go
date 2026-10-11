@@ -35,7 +35,9 @@ func TestTurnGivesTheProjectADirectoryWhereTheAgentRuns(t *testing.T) {
 			Copies: map[string]project.Copy{node: {Path: here, Origin: project.OriginAdopted, State: project.CopyReady}}}})
 	}
 	selected := c.catalog.Default()
-	_, workspace, err := c.resolveWorkspace(t.Context(), Request{ConversationID: "thread"}, selected)
+	_, workspace, err := c.resolveWorkspace(t.Context(), Request{
+		Source: Source{ConversationID: "thread"},
+	}, selected)
 	if err != nil {
 		t.Fatalf("the turn was refused after the project was attached: %v", err)
 	}
@@ -59,7 +61,9 @@ func TestTurnWithoutAttachmentStillSaysWhereTheProjectIs(t *testing.T) {
 	if _, err := c.projects.Bind(t.Context(), "thread", "away", "owner"); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := c.resolveWorkspace(t.Context(), Request{ConversationID: "thread"}, c.catalog.Default())
+	_, _, err := c.resolveWorkspace(t.Context(), Request{
+		Source: Source{ConversationID: "thread"},
+	}, c.catalog.Default())
 	if err == nil || !strings.Contains(err.Error(), "away") {
 		t.Fatalf("a project nobody can reach was accepted: %v", err)
 	}

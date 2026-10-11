@@ -62,7 +62,7 @@ func TestQueuedMaterialsFreezeSelectionAndSurviveRestart(t *testing.T) {
 	one.finish <- nil
 	_ = awaitExchange(t, s, first.ID)
 	two := nextCall(t, &h.queueHandler)
-	if !strings.Contains(two.req.Input, "original line") || strings.Contains(two.req.Input, "second line") || strings.Contains(two.req.Input, "replacement") || two.req.ExpectedProject != "scratch" || two.req.Locale != "en" {
+	if !strings.Contains(two.req.Input, "original line") || strings.Contains(two.req.Input, "second line") || strings.Contains(two.req.Input, "replacement") || two.req.Admission.ExpectedProject != "scratch" || two.req.Locale != "en" {
 		t.Fatalf("unfrozen request %+v", two.req)
 	}
 	two.finish <- nil

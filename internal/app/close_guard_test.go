@@ -28,9 +28,18 @@ func (f cancelledRecovery) keepSession(t *testing.T) {
 func (f cancelledRecovery) command(t *testing.T, exchange, input string) (turn.Result, error) {
 	t.Helper()
 	return f.coordinator.Handle(t.Context(), turn.Request{
-		Channel: "console", ConversationID: cancelledRecoveryConversation, ChatID: console.ChatID,
-		MessageID: console.AnchorMark + exchange, ExchangeID: exchange, Input: input,
-		SenderOpenID: "owner", ChatType: protocol.ChatP2P, Mentioned: true, Locale: "en",
+		Source: turn.Source{
+			Channel:        "console",
+			ConversationID: cancelledRecoveryConversation,
+			MessageID:      console.AnchorMark + exchange,
+			ChatType:       protocol.ChatP2P,
+			Mentioned:      true,
+		},
+		Reply:     turn.ReplyContext{ChatID: console.ChatID},
+		Admission: turn.Admission{ExchangeID: exchange},
+		Input:     input,
+		Actor:     turn.Actor{ID: "owner"},
+		Locale:    "en",
 	})
 }
 

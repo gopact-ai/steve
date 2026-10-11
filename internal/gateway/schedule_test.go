@@ -53,7 +53,7 @@ func TestScheduleReceiptWaitsForProcessingAndPreservesContext(t *testing.T) {
 	done := make(chan outcome, 1)
 	go func() { r, err := g.FireSchedule(t.Context(), testFire()); done <- outcome{r, err} }()
 	req := <-p.started
-	if req.Channel != "feishu" || req.ExpectedProject != "original-project" || req.SenderOpenID != "original-owner" || req.Input != "@builder work" || req.Origin != "schedule:1" {
+	if req.Source.Channel != "feishu" || req.Admission.ExpectedProject != "original-project" || req.Actor.ID != "original-owner" || req.Input != "@builder work" || req.Source.Origin != "schedule:1" {
 		t.Fatalf("scheduled context drifted: %+v", req)
 	}
 	select {

@@ -682,13 +682,26 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 	stop := s.follow(ctx, conversation, work)
 	identity := &questionIdentity{base: consoleapi.PendingQuestion{Conversation: conversation, ExchangeID: exchange.ID, Project: exchange.ExpectedProject, Locale: exchange.Locale}}
 	result, err := s.coordinator.Handle(ctx, turn.Request{
-		Channel:        "console",
-		ConversationID: conversation, ChatID: ChatID, MessageID: AnchorMark + exchange.ID, Input: prompt, Queue: !isInterrupt(input),
-		ExchangeID:   exchange.ID,
-		SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true,
-		Origin: exchange.Origin, ExpectedProject: exchange.ExpectedProject, ExpectedTask: exchange.ExpectedTask,
-		ResumeAdmission: exchange.ResumeAdmission,
-		Locale:          exchange.Locale, Images: media,
+		Source: turn.Source{
+			Channel:        "console",
+			ConversationID: conversation,
+			MessageID:      AnchorMark + exchange.ID,
+			ChatType:       protocol.ChatP2P,
+			Mentioned:      true,
+			Origin:         exchange.Origin,
+		},
+		Reply: turn.ReplyContext{ChatID: ChatID},
+		Input: prompt,
+		Admission: turn.Admission{
+			Queue:           !isInterrupt(input),
+			ExchangeID:      exchange.ID,
+			ExpectedProject: exchange.ExpectedProject,
+			ExpectedTask:    exchange.ExpectedTask,
+			ResumeAdmission: exchange.ResumeAdmission,
+		},
+		Actor:  turn.Actor{ID: requester},
+		Locale: exchange.Locale,
+		Images: media,
 		OnTurnReady: func(taskID, attemptID string) {
 			identity.set(taskID, attemptID)
 			stream.Bind(taskID)

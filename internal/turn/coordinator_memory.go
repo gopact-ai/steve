@@ -41,7 +41,7 @@ func (c *Coordinator) memoryProject(ctx context.Context, conversationID string) 
 // into the first turn: only for the owner in private, only when the
 // project has any.
 func (c *Coordinator) projectMemory(ctx context.Context, conversationID string, req Request) []capability.Extra {
-	if injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) != home.ModeOwner {
+	if injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID) != home.ModeOwner {
 		return nil
 	}
 	id := c.memoryProject(ctx, conversationID)

@@ -17,17 +17,17 @@ type admittedRecoveryProbe struct {
 }
 
 func (p *admittedRecoveryProbe) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
-	if _, err := p.tasks.BeginTurn(req.ExpectedTask, "worker", "", task.TurnInput{
-		Address:      channel.Address{Channel: "feishu", Conversation: req.ConversationID, Message: req.MessageID},
-		Continuation: true, ResumeAdmission: req.ResumeAdmission, TurnID: req.MessageID,
+	if _, err := p.tasks.BeginTurn(req.Admission.ExpectedTask, "worker", "", task.TurnInput{
+		Address:      channel.Address{Channel: "feishu", Conversation: req.Source.ConversationID, Message: req.Source.MessageID},
+		Continuation: true, ResumeAdmission: req.Admission.ResumeAdmission, TurnID: req.Source.MessageID,
 	}); err != nil {
 		return turn.Result{}, err
 	}
 	if req.OnTurnReady != nil {
-		req.OnTurnReady(req.ExpectedTask, "original-attempt")
+		req.OnTurnReady(req.Admission.ExpectedTask, "original-attempt")
 	}
 	p.calls.Add(1)
-	_, err := p.tasks.Finish(req.ExpectedTask, task.OutcomeOK, task.Tokens{}, 0)
+	_, err := p.tasks.Finish(req.Admission.ExpectedTask, task.OutcomeOK, task.Tokens{}, 0)
 	return turn.Result{Text: "complete original result", Attempt: "original-attempt"}, err
 }
 

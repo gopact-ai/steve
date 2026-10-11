@@ -945,8 +945,8 @@ func TestTopicCommandSeedsThreadAndRoutesTask(t *testing.T) {
 	if len(processor.reqs) != 1 {
 		t.Fatalf("task did not run: %+v", processor.reqs)
 	}
-	if processor.reqs[0].ConversationID != "omt_new" {
-		t.Fatalf("conversation = %q, want the new thread", processor.reqs[0].ConversationID)
+	if processor.reqs[0].Source.ConversationID != "omt_new" {
+		t.Fatalf("conversation = %q, want the new thread", processor.reqs[0].Source.ConversationID)
 	}
 	if !strings.Contains(processor.reqs[0].Input, "重构登录模块") || strings.Contains(processor.reqs[0].Input, "/t") {
 		t.Fatalf("input = %q, want the bare task", processor.reqs[0].Input)
@@ -1119,10 +1119,10 @@ func TestGatewayReviveContinuesInterruptedTask(t *testing.T) {
 	// task's member, anchored on the notice message.
 	select {
 	case req := <-p.req:
-		if req.ConversationID != "omt_thread" || req.ChatID != "oc_1" || req.MessageID != "om_notice" {
+		if req.Source.ConversationID != "omt_thread" || req.Reply.ChatID != "oc_1" || req.Source.MessageID != "om_notice" {
 			t.Fatalf("resume request misrouted: %+v", req)
 		}
-		if req.SenderOpenID != "ou_user" || !strings.Contains(req.Input, "@codex") || !strings.Contains(req.Input, "长任务目标") {
+		if req.Actor.ID != "ou_user" || !strings.Contains(req.Input, "@codex") || !strings.Contains(req.Input, "长任务目标") {
 			t.Fatalf("resume prompt wrong: %+v", req)
 		}
 	case <-time.After(waitDeadline):

@@ -104,7 +104,14 @@ func TestAnOwnerTurnQueuedFromAnEndedToolCallStillGetsItsProjectMemory(t *testin
 
 	ctx, cancel := context.WithTimeout(queued, waitDeadline)
 	defer cancel()
-	if _, err := c.Handle(ctx, Request{ConversationID: conversation, Input: "continue", SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P}); err != nil {
+	if _, err := c.Handle(ctx, Request{
+		Source: Source{
+			ConversationID: conversation,
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "continue",
+		Actor: Actor{ID: memoryOwner},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	seen := runner.seen()

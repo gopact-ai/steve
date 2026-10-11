@@ -32,7 +32,7 @@ func requireRole(ctx context.Context, projects *project.Store, text i18n.Catalog
 }
 
 func (c *Coordinator) isOwner(req Request) bool {
-	return c.ownerOpenID != "" && req.SenderOpenID == c.ownerOpenID
+	return c.ownerOpenID != "" && req.Actor.ID == c.ownerOpenID
 }
 
 // held is an answer from a sealed project waiting for the owner. It lives
@@ -60,7 +60,7 @@ func (c *Coordinator) gateDisclosure(ctx context.Context, req Request, result Re
 	if result.Text == "" {
 		return result, nil
 	}
-	binding, ok, err := c.projects.Binding(ctx, req.ConversationID)
+	binding, ok, err := c.projects.Binding(ctx, req.Source.ConversationID)
 	if err != nil || !ok {
 		return result, nil
 	}
@@ -72,14 +72,14 @@ func (c *Coordinator) gateDisclosure(ctx context.Context, req Request, result Re
 		return result, nil // the owner is who approves; asking them to approve their own answer is theatre
 	}
 	attemptID, taskID := "", ""
-	if r, found, _ := c.attempts.LatestForTurn(ctx, req.MessageID); found {
+	if r, found, _ := c.attempts.LatestForTurn(ctx, req.Source.MessageID); found {
 		attemptID, taskID = r.ID, r.TaskID
 	}
 	id := fmt.Sprintf("disc-%d", time.Now().UnixNano()%1_000_000_007)
 	h := held{id: id, req: req, task: taskID, text: result.Text, result: result, at: time.Now()}
 	if err := c.projects.ProposeDisclosure(ctx, project.DisclosureRequest{
-		ID: id, Project: p.ID, TaskID: taskID, Attempt: attemptID, ConversationID: req.ConversationID,
-		Requester: req.SenderOpenID, Bytes: len(result.Text),
+		ID: id, Project: p.ID, TaskID: taskID, Attempt: attemptID, ConversationID: req.Source.ConversationID,
+		Requester: req.Actor.ID, Bytes: len(result.Text),
 	}); err != nil {
 		return Result{}, err
 	}
@@ -89,7 +89,7 @@ func (c *Coordinator) gateDisclosure(ctx context.Context, req Request, result Re
 	}
 	c.disclosures.byID[id] = h
 	c.disclosures.mu.Unlock()
-	slog.Info(fmt.Sprintf("turn: sealed answer for %s held as disclosure %s (%d chars)", req.ConversationID, id, len(result.Text)), "conversation", req.ConversationID, "project", p.ID, "attempt", result.Attempt)
+	slog.Info(fmt.Sprintf("turn: sealed answer for %s held as disclosure %s (%d chars)", req.Source.ConversationID, id, len(result.Text)), "conversation", req.Source.ConversationID, "project", p.ID, "attempt", result.Attempt)
 	return Result{AgentID: result.AgentID, Attempt: result.Attempt, Title: c.text.T(i18n.CardDisclosure),
 		Text: c.text.T(i18n.DisclosurePending, len([]rune(result.Text)), p.ID, protocol.CommandApprove, id)}, nil
 }

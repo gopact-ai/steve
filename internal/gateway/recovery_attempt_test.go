@@ -29,7 +29,13 @@ func attemptOwnerBook(t *testing.T) (*Gateway, *ledger.Ledger) {
 	if err := book.RecordCommand(t.Context(), "input", gatewayInputKind, "owner", raw); err != nil {
 		t.Fatal(err)
 	}
-	if err := rememberRecoveryAttempt(t.Context(), book, "input", "owner", turn.Request{ConversationID: "conversation", MessageID: "input-message", ExpectedTask: "original-task"}, "original-task", "original-attempt"); err != nil {
+	if err := rememberRecoveryAttempt(t.Context(), book, "input", "owner", turn.Request{
+		Source: turn.Source{
+			ConversationID: "conversation",
+			MessageID:      "input-message",
+		},
+		Admission: turn.Admission{ExpectedTask: "original-task"},
+	}, "original-task", "original-attempt"); err != nil {
 		t.Fatal(err)
 	}
 	return g, book
@@ -133,7 +139,12 @@ func TestGatewayAttemptOwnerRejectsMultipleAcceptedInputs(t *testing.T) {
 	if err := book.RecordCommand(t.Context(), "second", gatewayInputKind, "owner", input.Result); err != nil {
 		t.Fatal(err)
 	}
-	if err := rememberRecoveryAttempt(t.Context(), book, "second", "owner", turn.Request{ConversationID: "conversation", MessageID: "input-message"}, "original-task", "original-attempt"); err != nil {
+	if err := rememberRecoveryAttempt(t.Context(), book, "second", "owner", turn.Request{
+		Source: turn.Source{
+			ConversationID: "conversation",
+			MessageID:      "input-message",
+		},
+	}, "original-task", "original-attempt"); err != nil {
 		t.Fatal(err)
 	}
 	if owned, err := ownsOriginal(t, g, book); owned || err == nil {
@@ -236,7 +247,12 @@ func TestGatewayResumeAttemptOwnerRequiresItsNoticeAnchor(t *testing.T) {
 			if err := book.RecordCommand(context.Background(), "input/notice", "gateway-recovery-notice", "owner", json.RawMessage(`"input-message"`)); err != nil {
 				t.Fatal(err)
 			}
-			if err := rememberRecoveryAttempt(t.Context(), book, "input", "owner", turn.Request{ConversationID: "conversation", MessageID: "input-message"}, "original-task", "original-attempt"); err != nil {
+			if err := rememberRecoveryAttempt(t.Context(), book, "input", "owner", turn.Request{
+				Source: turn.Source{
+					ConversationID: "conversation",
+					MessageID:      "input-message",
+				},
+			}, "original-task", "original-attempt"); err != nil {
 				t.Fatal(err)
 			}
 			if broken {

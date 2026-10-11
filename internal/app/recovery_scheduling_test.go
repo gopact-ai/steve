@@ -56,7 +56,7 @@ type slowGatewayRecovery struct {
 
 func (p *slowGatewayRecovery) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
 	if req.OnTurnReady != nil {
-		req.OnTurnReady(req.ExpectedTask, "gateway-attempt")
+		req.OnTurnReady(req.Admission.ExpectedTask, "gateway-attempt")
 	}
 	close(p.entered)
 	select {

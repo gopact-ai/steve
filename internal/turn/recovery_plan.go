@@ -138,7 +138,7 @@ func (c *Coordinator) ResumeRetainedPlan(parent context.Context, identity Retain
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	var err error
-	c, err = c.forChannel(req.Channel)
+	c, err = c.forChannel(req.Source.Channel)
 	if err != nil {
 		return Result{}, err
 	}
@@ -150,17 +150,17 @@ func (c *Coordinator) ResumeRetainedPlan(parent context.Context, identity Retain
 		return Result{}, c.retainedBlocked("maintenance", i18n.RetainedTriedCoordinator, i18n.RetainedProblemCoordinatorBusy, c.text.T(i18n.RetainedReasonPlanPaused), i18n.RetainedAdviceAwaitHandover, nil)
 	}
 	tracked, ok := c.tasks.Get(identity.TaskID)
-	if !ok || tracked.Origin != "plan" || tracked.Channel != identity.Conversation || tracked.AnchorMessage != identity.MessageID || req.ConversationID != identity.Conversation || req.MessageID != identity.MessageID || tracked.Requester != "" && tracked.Requester != req.SenderOpenID || req.ExpectedProject != "" && req.ExpectedProject != tracked.ProjectID {
+	if !ok || tracked.Origin != "plan" || tracked.Channel != identity.Conversation || tracked.AnchorMessage != identity.MessageID || req.Source.ConversationID != identity.Conversation || req.Source.MessageID != identity.MessageID || tracked.Requester != "" && tracked.Requester != req.Actor.ID || req.Admission.ExpectedProject != "" && req.Admission.ExpectedProject != tracked.ProjectID {
 		return Result{}, c.retainedBlocked("plan-identity", i18n.RetainedTriedPlanSession, i18n.RetainedProblemPlanOwner, c.text.T(i18n.RetainedReasonPlanMismatch), i18n.RetainedAdviceCheckTaskRecord, nil)
 	}
 	ctx, cancel := context.WithTimeout(parent, planTimeout)
 	defer cancel()
 	ctx = agentexec.WithProgress(ctx, req.OnProgress)
 	driver := "plan/" + tracked.ID
-	if !c.beginTurn(req.ConversationID, driver, cancel) {
+	if !c.beginTurn(req.Source.ConversationID, driver, cancel) {
 		return Result{}, c.retainedBlocked("plan-busy", i18n.RetainedTriedPlanOccupancy, i18n.RetainedProblemPlanDriven, c.text.T(i18n.RetainedReasonAwaitObserver), i18n.RetainedAdviceCheckLater, nil)
 	}
-	defer c.clearActive(req.ConversationID, driver)
+	defer c.clearActive(req.Source.ConversationID, driver)
 	c.rememberMode(req)
 	runs, err := c.retainedPlanRuns(ctx)
 	if err != nil {

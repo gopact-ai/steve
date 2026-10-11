@@ -123,7 +123,13 @@ func TestChatTurnIsAnAttemptUnderTheCanonicalLock(t *testing.T) {
 	<-slow.started
 
 	// Another conversation, same default project: refused, with the holder named.
-	_, err := coordinator.Handle(t.Context(), Request{ConversationID: "other-chat", Input: "me too", MessageID: "om_2"})
+	_, err := coordinator.Handle(t.Context(), Request{
+		Source: Source{
+			ConversationID: "other-chat",
+			MessageID:      "om_2",
+		},
+		Input: "me too",
+	})
 	if err == nil || !strings.Contains(err.Error(), "codex") || !strings.Contains(err.Error(), "/project") {
 		t.Fatalf("second conversation = %v; want the busy refusal naming the holder", err)
 	}
@@ -144,12 +150,24 @@ func TestChatTurnIsAnAttemptUnderTheCanonicalLock(t *testing.T) {
 	if last.To != "bound" || len(last.Fencings) != 2 || last.Fencings[1].Key != "canonical:codex" {
 		t.Fatalf("final event = %+v", last)
 	}
-	if _, err := coordinator.Handle(t.Context(), Request{ConversationID: "other-chat", Input: "now?", MessageID: "om_3"}); err != nil {
+	if _, err := coordinator.Handle(t.Context(), Request{
+		Source: Source{
+			ConversationID: "other-chat",
+			MessageID:      "om_3",
+		},
+		Input: "now?",
+	}); err != nil {
 		t.Fatalf("turn after the lock was released: %v", err)
 	}
 	// A failing turn records a failed attempt.
 	manager.runners["codex"] = &fakeRunner{err: errBoom}
-	_, _ = coordinator.Handle(t.Context(), Request{ConversationID: "third", Input: "break", MessageID: "om_4"})
+	_, _ = coordinator.Handle(t.Context(), Request{
+		Source: Source{
+			ConversationID: "third",
+			MessageID:      "om_4",
+		},
+		Input: "break",
+	})
 	// The failing turn's task holds exactly one attempt, and it failed.
 	third := coordinator.tasks.List("third")
 	if len(third) != 1 {

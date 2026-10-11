@@ -72,10 +72,10 @@ type recoveryAttempt struct {
 // rememberRecoveryAttempt records the dispatch's admitted identity before
 // native input. It is a processing receipt, never another executable intent.
 func rememberRecoveryAttempt(ctx context.Context, book *ledger.Ledger, key, actor string, req turn.Request, taskID, attemptID string) error {
-	if taskID == "" || attemptID == "" || req.ExpectedTask != "" && req.ExpectedTask != taskID {
+	if taskID == "" || attemptID == "" || req.Admission.ExpectedTask != "" && req.Admission.ExpectedTask != taskID {
 		return errors.New("gateway dispatch returned another task or an empty attempt")
 	}
-	raw, err := json.Marshal(recoveryAttempt{InputID: key, TaskID: taskID, AttemptID: attemptID, Conversation: req.ConversationID, MessageID: req.MessageID})
+	raw, err := json.Marshal(recoveryAttempt{InputID: key, TaskID: taskID, AttemptID: attemptID, Conversation: req.Source.ConversationID, MessageID: req.Source.MessageID})
 	if err != nil {
 		return err
 	}
@@ -93,10 +93,10 @@ func recoverDispatchedAttempt(ctx context.Context, book *ledger.Ledger, key, act
 	var admitted recoveryAttempt
 	if !found || receipt.FinishedAt == nil || receipt.Error != "" || receipt.Kind != "gateway-input-attempt" || receipt.Actor != actor ||
 		json.Unmarshal(receipt.Result, &admitted) != nil || admitted.InputID != key || admitted.TaskID == "" || admitted.AttemptID == "" ||
-		admitted.Conversation != req.ConversationID || admitted.MessageID != req.MessageID || req.ExpectedTask != "" && admitted.TaskID != req.ExpectedTask {
+		admitted.Conversation != req.Source.ConversationID || admitted.MessageID != req.Source.MessageID || req.Admission.ExpectedTask != "" && admitted.TaskID != req.Admission.ExpectedTask {
 		return recoveredOutput{}, fmt.Errorf("%w: dispatch lacks its original admitted identity", channel.ErrOutcomeUnknown)
 	}
-	req.ExpectedTask = admitted.TaskID
+	req.Admission.ExpectedTask = admitted.TaskID
 	result, runErr := driver.ResumeRetainedChat(ctx, admitted.AttemptID, req)
 	if runErr != nil && result.Attempt == "" {
 		return recoveredOutput{}, runErr

@@ -47,13 +47,13 @@ type crashProbe struct {
 // admission probe replaces Handle; persistence and recovery use real owners.
 func (f *crashProbe) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
 	f.calls.Add(1)
-	_, err := f.tasks.BeginTurn(req.ExpectedTask, "worker", "node-a", task.TurnInput{
-		Address: req.Address(), ChatID: req.ChatID, ChatType: string(req.ChatType), Continuation: true,
+	_, err := f.tasks.BeginTurn(req.Admission.ExpectedTask, "worker", "node-a", task.TurnInput{
+		Address: req.Address(), ChatID: req.Reply.ChatID, ChatType: string(req.Source.ChatType), Continuation: true,
 	})
 	if err != nil {
 		return turn.Result{}, err
 	}
-	_, err = f.tasks.Finish(req.ExpectedTask, task.OutcomeOK, task.Tokens{}, 0)
+	_, err = f.tasks.Finish(req.Admission.ExpectedTask, task.OutcomeOK, task.Tokens{}, 0)
 	return turn.Result{Text: "unexpected new execution", AgentID: "worker"}, err
 }
 
@@ -226,7 +226,14 @@ func dropCrashAccounting(t *testing.T, f *crashProbe) {
 	}
 }
 func crashRequest(r attempt.Record) turn.Request {
-	return turn.Request{Channel: "console", ConversationID: crashConversation, MessageID: r.TurnID, SenderOpenID: "owner"}
+	return turn.Request{
+		Source: turn.Source{
+			Channel:        "console",
+			ConversationID: crashConversation,
+			MessageID:      r.TurnID,
+		},
+		Actor: turn.Actor{ID: "owner"},
+	}
 }
 
 func TestStartupBoundCompletionDoesNotCreateContinuation(t *testing.T) {
@@ -310,7 +317,7 @@ func TestStartupFeishuCompletionKeepsAcceptedRecoveryOwnerAcrossAccountingCrash(
 	}
 	rejectCrashAccounting(t, first)
 	req := crashRequest(r)
-	req.Channel = "feishu"
+	req.Source.Channel = "feishu"
 	if _, err := first.c.ResumeRetainedChat(first.ctx, r.ID, req); err == nil || !strings.Contains(err.Error(), "injected accounting crash") {
 		t.Fatalf("accounting fault was not injected: %v", err)
 	}

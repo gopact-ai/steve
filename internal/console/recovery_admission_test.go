@@ -71,8 +71,8 @@ func admissionRecoveryFixture(t *testing.T) (*Service, *ledger.Ledger, *queueHan
 
 func checkAdmissionRequest(t *testing.T, req turn.Request) {
 	t.Helper()
-	if req.Channel != "console" || req.ConversationID != "console:main" || req.MessageID != "web-e1" ||
-		req.ExchangeID != "e1" || req.SenderOpenID != "owner" || req.ExpectedProject != "project" || req.ExpectedTask != "task" {
+	if req.Source.Channel != "console" || req.Source.ConversationID != "console:main" || req.Source.MessageID != "web-e1" ||
+		req.Admission.ExchangeID != "e1" || req.Actor.ID != "owner" || req.Admission.ExpectedProject != "project" || req.Admission.ExpectedTask != "task" {
 		t.Errorf("proof requested for wrong identity: %+v", req)
 	}
 }

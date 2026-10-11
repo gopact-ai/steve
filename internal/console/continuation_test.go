@@ -26,7 +26,7 @@ func TestContinuationReceiptWaitsForParentAndRetriesOnlyUnadmittedWork(t *testin
 		t.Fatalf("queue acceptance reported delivery: %v", err)
 	}
 	first := nextCall(t, h)
-	if first.req.ExpectedTask != "parent" {
+	if first.req.Admission.ExpectedTask != "parent" {
 		t.Fatal("lost parent binding")
 	}
 	id := s.Queue("main")[0].ID
@@ -44,7 +44,7 @@ func TestContinuationReceiptWaitsForParentAndRetriesOnlyUnadmittedWork(t *testin
 		t.Fatalf("unadmitted continuation could not retry: %v", err)
 	}
 	second := nextCall(t, h)
-	if second.req.MessageID != first.req.MessageID || second.req.ExpectedTask != "parent" || second.req.Input != first.req.Input {
+	if second.req.Source.MessageID != first.req.Source.MessageID || second.req.Admission.ExpectedTask != "parent" || second.req.Input != first.req.Input {
 		t.Fatal("retry changed identity or lost the child answer")
 	}
 	if found, err := restored.ContinuationReceipt("main", "parent", "deliver:child"); !found || !errors.Is(err, channel.ErrDeliveryQueued) {
@@ -99,7 +99,7 @@ func TestProjectTransferRetainsRejectedContinuationAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := nextCall(t, h)
-	if call.req.ExpectedTask != "origin~parent" || call.req.Input != "@worker complete original answer" {
+	if call.req.Admission.ExpectedTask != "origin~parent" || call.req.Input != "@worker complete original answer" {
 		t.Fatalf("migration lost input or binding: %+v", call.req)
 	}
 	call.finish <- nil
@@ -128,7 +128,7 @@ func TestRecoveredContinuationRequestKeepsExpectedTask(t *testing.T) {
 	s := New(turntest.IdleCoordinator{}, "owner", nil)
 	r := exchangeRecovery{s: s, exchange: Exchange{ID: "e", Conversation: "console:c", ExpectedTask: "original-parent", ExpectedProject: "p"}}
 	req := r.request("owner", &questionIdentity{})
-	if req.ExpectedTask != "original-parent" {
+	if req.Admission.ExpectedTask != "original-parent" {
 		t.Fatal("restart dropped parent task binding")
 	}
 }

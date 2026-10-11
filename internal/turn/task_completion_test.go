@@ -86,7 +86,11 @@ func TestCompleteTaskThenChatKeepsNativeContextAndNeverResumesClosedRoot(t *test
 	if resumes != 0 {
 		t.Fatal("closed task was scheduled for resume")
 	}
-	if _, err := coordinator.Handle(t.Context(), Request{ConversationID: "chat", Input: "old continuation", ExpectedTask: "1"}); !errors.Is(err, task.ErrContinuationUnavailable) {
+	if _, err := coordinator.Handle(t.Context(), Request{
+		Source:    Source{ConversationID: "chat"},
+		Input:     "old continuation",
+		Admission: Admission{ExpectedTask: "1"},
+	}); !errors.Is(err, task.ErrContinuationUnavailable) {
 		t.Fatalf("old continuation: %v", err)
 	}
 	if _, err := handle(coordinator, t.Context(), "next work"); err != nil {
@@ -114,7 +118,10 @@ func TestCompleteTaskChecksConversationEvenOnRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		result, err := coordinator.Handle(t.Context(), Request{ConversationID: "foreign", Input: "/tasks complete 1"})
+		result, err := coordinator.Handle(t.Context(), Request{
+			Source: Source{ConversationID: "foreign"},
+			Input:  "/tasks complete 1",
+		})
 		if err == nil || !strings.Contains(result.Text, "no task #1") {
 			t.Fatalf("ownership: %+v %v", result, err)
 		}
@@ -163,7 +170,14 @@ func TestDisclosurePersistenceErrorDoesNotRewriteSuccessfulAgentOutcome(t *testi
 	if _, err := book.DB().Exec(`CREATE TRIGGER reject_disclosure BEFORE INSERT ON operations WHEN NEW.kind='disclosure-request' BEGIN SELECT RAISE(ABORT, 'disclosure unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	result, err := c.Handle(t.Context(), Request{ConversationID: "chat", SenderOpenID: "guest", Input: "work", MessageID: "sealed-turn"})
+	result, err := c.Handle(t.Context(), Request{
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "sealed-turn",
+		},
+		Actor: Actor{ID: "guest"},
+		Input: "work",
+	})
 	if err == nil || !strings.Contains(err.Error(), "disclosure unavailable") || result.Text != "" {
 		t.Fatalf("disclosure failure was hidden or answer leaked: %+v %v", result, err)
 	}

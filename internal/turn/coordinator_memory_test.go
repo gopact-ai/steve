@@ -33,7 +33,13 @@ func memoryCoordinator(t *testing.T, opts ...testOption) *Coordinator {
 
 // arrive is a message reaching conversation from sender in chatType.
 func arrive(c *Coordinator, conversation, sender string, chatType protocol.ChatType) {
-	c.rememberMode(Request{ConversationID: conversation, SenderOpenID: sender, ChatType: chatType})
+	c.rememberMode(Request{
+		Source: Source{
+			ConversationID: conversation,
+			ChatType:       chatType,
+		},
+		Actor: Actor{ID: sender},
+	})
 }
 
 // seedFact writes text into scope directly, bypassing the agent rules.
@@ -232,7 +238,13 @@ func TestProjectMemoryOfAnUnboundConversationWithoutAHomeProjectIsTheDefaultProj
 	c := memoryCoordinator(t)
 	seedFact(t, c, memory.ProjectScope("alpha"), "tests run with -race")
 	arrive(c, "chat", memoryOwner, protocol.ChatP2P)
-	owner := Request{ConversationID: "chat", SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P}
+	owner := Request{
+		Source: Source{
+			ConversationID: "chat",
+			ChatType:       protocol.ChatP2P,
+		},
+		Actor: Actor{ID: memoryOwner},
+	}
 	if got := c.projectMemory(t.Context(), "chat", owner); len(got) != 1 || got[0].Name != "memory:project:alpha" {
 		t.Fatalf("unbound conversation got %+v", got)
 	}
@@ -241,7 +253,13 @@ func TestProjectMemoryOfAnUnboundConversationWithoutAHomeProjectIsTheDefaultProj
 func TestProjectMemoryIsInjectedForTheOwnerInPrivateWhenTheProjectHasAny(t *testing.T) {
 	c := memoryCoordinator(t)
 	bind(t, c, "chat", "beta")
-	owner := Request{ConversationID: "chat", SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P}
+	owner := Request{
+		Source: Source{
+			ConversationID: "chat",
+			ChatType:       protocol.ChatP2P,
+		},
+		Actor: Actor{ID: memoryOwner},
+	}
 	if got := c.projectMemory(t.Context(), "chat", owner); got != nil {
 		t.Fatalf("empty project injected %+v", got)
 	}
@@ -251,8 +269,20 @@ func TestProjectMemoryIsInjectedForTheOwnerInPrivateWhenTheProjectHasAny(t *test
 		t.Fatalf("owner in private got %+v", got)
 	}
 	for name, req := range map[string]Request{
-		"owner in a group": {ConversationID: "chat", SenderOpenID: memoryOwner, ChatType: protocol.ChatGroup},
-		"guest in private": {ConversationID: "chat", SenderOpenID: "guest", ChatType: protocol.ChatP2P},
+		"owner in a group": {
+			Source: Source{
+				ConversationID: "chat",
+				ChatType:       protocol.ChatGroup,
+			},
+			Actor: Actor{ID: memoryOwner},
+		},
+		"guest in private": {
+			Source: Source{
+				ConversationID: "chat",
+				ChatType:       protocol.ChatP2P,
+			},
+			Actor: Actor{ID: "guest"},
+		},
 	} {
 		if got := c.projectMemory(t.Context(), "chat", req); got != nil {
 			t.Fatalf("%s got %+v", name, got)

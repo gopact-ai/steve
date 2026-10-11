@@ -96,7 +96,9 @@ func TestDiscardConversationRetiresOnlyItsPlanRunsAndBinding(t *testing.T) {
 	}
 	history := c.plans.Revisions(runs[0].PlanID)
 	completedBefore, _ := readDiscardRun(t, book, completed.ID)
-	if _, err := c.commands().tasksCmd(t.Context(), Request{ConversationID: root.Channel}, "cancel "+root.ID); err != nil {
+	if _, err := c.commands().tasksCmd(t.Context(), Request{
+		Source: Source{ConversationID: root.Channel},
+	}, "cancel "+root.ID); err != nil {
 		t.Fatal(err)
 	}
 	if tracked, _ := c.tasks.Get(root.ID); tracked.State != task.StateCancelled {

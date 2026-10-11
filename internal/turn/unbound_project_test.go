@@ -36,8 +36,8 @@ func hear(t *testing.T, c *Coordinator, req Request) {
 	if _, err := c.Handle(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
-	if _, bound, err := c.projects.Binding(t.Context(), req.ConversationID); err != nil || bound {
-		t.Fatalf("/status left %s bound=%v err=%v", req.ConversationID, bound, err)
+	if _, bound, err := c.projects.Binding(t.Context(), req.Source.ConversationID); err != nil || bound {
+		t.Fatalf("/status left %s bound=%v err=%v", req.Source.ConversationID, bound, err)
 	}
 }
 
@@ -54,17 +54,45 @@ func TestUnboundConversationReadsAsTheProjectItsFirstTurnBinds(t *testing.T) {
 		seen bool
 		want string
 	}{
-		{"owner in a group", Request{Channel: "feishu", ConversationID: "oc_group", SenderOpenID: memoryOwner, ChatType: protocol.ChatGroup}, true, "alpha"},
-		{"guest in private", Request{Channel: "feishu", ConversationID: "oc_guest", SenderOpenID: "guest", ChatType: protocol.ChatP2P}, true, "alpha"},
-		{"owner in private", Request{Channel: "feishu", ConversationID: "oc_owner", SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P}, true, "home"},
-		{"new console conversation", Request{Channel: "console", ConversationID: "console:new", SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P}, false, "home"},
+		{"owner in a group", Request{
+			Source: Source{
+				Channel:        "feishu",
+				ConversationID: "oc_group",
+				ChatType:       protocol.ChatGroup,
+			},
+			Actor: Actor{ID: memoryOwner},
+		}, true, "alpha"},
+		{"guest in private", Request{
+			Source: Source{
+				Channel:        "feishu",
+				ConversationID: "oc_guest",
+				ChatType:       protocol.ChatP2P,
+			},
+			Actor: Actor{ID: "guest"},
+		}, true, "alpha"},
+		{"owner in private", Request{
+			Source: Source{
+				Channel:        "feishu",
+				ConversationID: "oc_owner",
+				ChatType:       protocol.ChatP2P,
+			},
+			Actor: Actor{ID: memoryOwner},
+		}, true, "home"},
+		{"new console conversation", Request{
+			Source: Source{
+				Channel:        "console",
+				ConversationID: "console:new",
+				ChatType:       protocol.ChatP2P,
+			},
+			Actor: Actor{ID: memoryOwner},
+		}, false, "home"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.seen {
 				hear(t, c, tc.req)
 			}
-			read := c.ProjectOf(t.Context(), tc.req.ConversationID)
-			context, err := c.Context(t.Context(), tc.req.ConversationID)
+			read := c.ProjectOf(t.Context(), tc.req.Source.ConversationID)
+			context, err := c.Context(t.Context(), tc.req.Source.ConversationID)
 			if err != nil || context.Project == nil || context.Project.Bound {
 				t.Fatalf("context: %+v err=%v", context.Project, err)
 			}
@@ -86,7 +114,14 @@ func TestUnboundConversationReadsAsTheProjectItsFirstTurnBinds(t *testing.T) {
 // arrives. A restart forgets what was heard.
 func TestUnheardChannelConversationReadsAsNoProject(t *testing.T) {
 	before := unboundCoordinator(t)
-	hear(t, before, Request{Channel: "feishu", ConversationID: "oc_heard", SenderOpenID: memoryOwner, ChatType: protocol.ChatGroup})
+	hear(t, before, Request{
+		Source: Source{
+			Channel:        "feishu",
+			ConversationID: "oc_heard",
+			ChatType:       protocol.ChatGroup,
+		},
+		Actor: Actor{ID: memoryOwner},
+	})
 	seedFact(t, before, memory.ProjectScope("alpha"), "alpha fact")
 	c := unboundCoordinator(t, onLedger(ledgerOf(t, before)), withDeps(func(d *Deps) {
 		d.Store, d.Projects, d.Memory = before.store, before.projects, before.memory
@@ -158,7 +193,14 @@ func TestConsoleSetupBeforeAnyLineIsTheOwners(t *testing.T) {
 					got = s.Name
 				}
 			}
-			first := c.projectMemory(t.Context(), tc.id, Request{Channel: "console", ConversationID: tc.id, SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P})
+			first := c.projectMemory(t.Context(), tc.id, Request{
+				Source: Source{
+					Channel:        "console",
+					ConversationID: tc.id,
+					ChatType:       protocol.ChatP2P,
+				},
+				Actor: Actor{ID: memoryOwner},
+			})
 			want := ""
 			if len(first) == 1 {
 				want = first[0].Name
@@ -176,13 +218,29 @@ func TestConsoleSetupBeforeAnyLineIsTheOwners(t *testing.T) {
 // the project its next line binds, and keeps the owner's memory.
 func TestRestoreTapKeepsHowAConversationArrives(t *testing.T) {
 	c := unboundCoordinator(t)
-	owner := Request{Channel: "feishu", ConversationID: "oc_owner", SenderOpenID: memoryOwner, ChatType: protocol.ChatP2P, Mentioned: true}
+	owner := Request{
+		Source: Source{
+			Channel:        "feishu",
+			ConversationID: "oc_owner",
+			ChatType:       protocol.ChatP2P,
+			Mentioned:      true,
+		},
+		Actor: Actor{ID: memoryOwner},
+	}
 	reset := owner
 	reset.Input = "/new"
 	if _, err := c.Handle(t.Context(), reset); err != nil {
 		t.Fatal(err)
 	}
-	tap := Request{Channel: "feishu", ConversationID: "oc_owner", SenderOpenID: memoryOwner, Mentioned: true, Input: "/history 1"}
+	tap := Request{
+		Source: Source{
+			Channel:        "feishu",
+			ConversationID: "oc_owner",
+			Mentioned:      true,
+		},
+		Actor: Actor{ID: memoryOwner},
+		Input: "/history 1",
+	}
 	// Whether there is anything to restore does not matter here.
 	_, _ = c.Handle(t.Context(), tap)
 	read := c.ProjectOf(t.Context(), "oc_owner")

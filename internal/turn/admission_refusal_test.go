@@ -16,8 +16,19 @@ import (
 // project, an execution whose stop was never confirmed.
 func seedUnconfirmedWriter(t *testing.T, c *Coordinator, req Request) Result {
 	t.Helper()
-	other := Request{Channel: "console", ConversationID: "console:other", SenderOpenID: "owner", ChatType: protocol.ChatP2P, ChatID: "console", Mentioned: true, Input: "earlier work", MessageID: "other-1"}
-	if _, err := c.projects.Bind(t.Context(), other.ConversationID, "codex", "owner"); err != nil {
+	other := Request{
+		Source: Source{
+			Channel:        "console",
+			ConversationID: "console:other",
+			ChatType:       protocol.ChatP2P,
+			Mentioned:      true,
+			MessageID:      "other-1",
+		},
+		Actor: Actor{ID: "owner"},
+		Reply: ReplyContext{ChatID: "console"},
+		Input: "earlier work",
+	}
+	if _, err := c.projects.Bind(t.Context(), other.Source.ConversationID, "codex", "owner"); err != nil {
 		t.Fatal(err)
 	}
 	earlier, err := c.Handle(t.Context(), other)
@@ -27,7 +38,7 @@ func seedUnconfirmedWriter(t *testing.T, c *Coordinator, req Request) Result {
 	if err := c.attempts.MarkUnsettled(t.Context(), earlier.Attempt, "test", harness.ErrStopUnconfirmed, nil); err != nil {
 		t.Fatal(err)
 	}
-	if other.ConversationID == req.ConversationID {
+	if other.Source.ConversationID == req.Source.ConversationID {
 		t.Fatal("the unconfirmed writer must be another conversation's")
 	}
 	return earlier
@@ -41,17 +52,17 @@ func TestTurnOnAnOpenAttemptIsRefusedInWords(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c, tasks, _ := taskCoordinatorOn(t, &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "must not run"}}}, withOwner("owner"), withChannelOwner("feishu", "owner"))
 			req := tc.req
-			tracked, err := tasks.Create(task.Task{Goal: "earlier", Channel: req.ConversationID, Transport: req.Channel, Member: "codex", Requester: "owner", ProjectID: "codex", ChatID: req.ChatID, ChatType: string(req.ChatType)})
+			tracked, err := tasks.Create(task.Task{Goal: "earlier", Channel: req.Source.ConversationID, Transport: req.Source.Channel, Member: "codex", Requester: "owner", ProjectID: "codex", ChatID: req.Reply.ChatID, ChatType: string(req.Source.ChatType)})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := tasks.BeginTurn(tracked.ID, "codex", "laptop", task.TurnInput{Address: req.Address(), ChatID: req.ChatID, ChatType: string(req.ChatType)}); err != nil {
+			if _, err := tasks.BeginTurn(tracked.ID, "codex", "laptop", task.TurnInput{Address: req.Address(), ChatID: req.Reply.ChatID, ChatType: string(req.Source.ChatType)}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := c.projects.Bind(t.Context(), req.ConversationID, "codex", "owner"); err != nil {
+			if _, err := c.projects.Bind(t.Context(), req.Source.ConversationID, "codex", "owner"); err != nil {
 				t.Fatal(err)
 			}
-			req.Input, req.MessageID = "hello", "m1"
+			req.Input, req.Source.MessageID = "hello", "m1"
 			_, err = c.Handle(t.Context(), req)
 			var refusal UserError
 			if !errors.As(err, &refusal) {
@@ -62,8 +73,8 @@ func TestTurnOnAnOpenAttemptIsRefusedInWords(t *testing.T) {
 					t.Errorf("refusal %q does not say %q", refusal.Text, want)
 				}
 			}
-			if got := strings.Contains(refusal.Text, c.text.T(i18n.RecoveryRetry)); got != (req.Channel == "console") {
-				t.Errorf("recovery control for channel %s: %q", req.Channel, refusal.Text)
+			if got := strings.Contains(refusal.Text, c.text.T(i18n.RecoveryRetry)); got != (req.Source.Channel == "console") {
+				t.Errorf("recovery control for channel %s: %q", req.Source.Channel, refusal.Text)
 			}
 			if strings.Contains(refusal.Text, "admit turn") || strings.Contains(refusal.Text, "open attempt") {
 				t.Errorf("refusal %q is the internal error", refusal.Text)
@@ -82,10 +93,10 @@ func TestTurnBehindAnUnconfirmedWriterIsRefusedInWords(t *testing.T) {
 			req := tc.req
 			earlier := seedUnconfirmedWriter(t, c, req)
 			seen := len(runner.seen())
-			if _, err := c.projects.Bind(t.Context(), req.ConversationID, "codex", "owner"); err != nil {
+			if _, err := c.projects.Bind(t.Context(), req.Source.ConversationID, "codex", "owner"); err != nil {
 				t.Fatal(err)
 			}
-			req.Input, req.MessageID = "hello", "m1"
+			req.Input, req.Source.MessageID = "hello", "m1"
 			_, err := c.Handle(t.Context(), req)
 			var refusal UserError
 			if !errors.As(err, &refusal) {
@@ -106,7 +117,7 @@ func TestTurnBehindAnUnconfirmedWriterIsRefusedInWords(t *testing.T) {
 			if !errors.Is(err, attempt.ErrStopConfirmationRequired) {
 				t.Errorf("lost stop classification: %v", err)
 			}
-			if req.Channel == "feishu" && (strings.Contains(refusal.Text, c.text.T(i18n.RecoveryRetry)) || strings.Contains(refusal.Text, "/tasks cancel")) {
+			if req.Source.Channel == "feishu" && (strings.Contains(refusal.Text, c.text.T(i18n.RecoveryRetry)) || strings.Contains(refusal.Text, "/tasks cancel")) {
 				t.Errorf("inaccessible control: %q", refusal.Text)
 			}
 			if strings.Contains(refusal.Text, "open attempt") || strings.Contains(refusal.Text, "stop confirmation") || strings.Contains(refusal.Text, "may still be writing") {

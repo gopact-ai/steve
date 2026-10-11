@@ -15,7 +15,7 @@ import (
 )
 
 func (c commands) skillsCmd(ctx context.Context, req Request, selected agent.Agent, rest string) (Result, error) {
-	if injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) != home.ModeOwner {
+	if injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID) != home.ModeOwner {
 		return Result{AgentID: selected.ID, Text: c.text.T(i18n.SkillsOwnerOnly)}, nil
 	}
 	if c.skills.Map == nil {

@@ -72,7 +72,7 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	var channelErr error
-	c, channelErr = c.forChannel(req.Channel)
+	c, channelErr = c.forChannel(req.Source.Channel)
 	if channelErr != nil {
 		return RelocationPlan{}, channelErr
 	}
@@ -84,16 +84,16 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 		return RelocationPlan{}, err
 	}
 	tracked, ok := c.tasks.Get(r.TaskID)
-	if !ok || (!attempt.Relocatable(r) && !attempt.PreparingRelocation(r)) || tracked.Channel != req.ConversationID || r.TurnID != req.MessageID {
+	if !ok || (!attempt.Relocatable(r) && !attempt.PreparingRelocation(r)) || tracked.Channel != req.Source.ConversationID || r.TurnID != req.Source.MessageID {
 		return RelocationPlan{}, errors.New("original chat execution does not match this conversation")
 	}
-	if tracked.Requester != "" && tracked.Requester != req.SenderOpenID {
+	if tracked.Requester != "" && tracked.Requester != req.Actor.ID {
 		return RelocationPlan{}, errors.New("original requester is required")
 	}
 	if err := c.tasks.CheckExecution(*r.Execution); err != nil {
 		return RelocationPlan{}, err
 	}
-	if err := c.require(ctx, r.Project, req.SenderOpenID, project.RoleWrite); err != nil {
+	if err := c.require(ctx, r.Project, req.Actor.ID, project.RoleWrite); err != nil {
 		return RelocationPlan{}, err
 	}
 	if req.Relocation == nil || strings.TrimSpace(req.Relocation.Input) == "" || len(req.Relocation.Input)+len(req.Relocation.History) > 256<<10 {
@@ -104,7 +104,7 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 		if err != nil {
 			return RelocationPlan{}, err
 		}
-		if p.Target.ID != r.ID || p.Owner != req.SenderOpenID || p.InputDigest != relocationRequestDigest(req) {
+		if p.Target.ID != r.ID || p.Owner != req.Actor.ID || p.InputDigest != relocationRequestDigest(req) {
 			return RelocationPlan{}, errors.New("prepared relocation belongs to another plan or input")
 		}
 		return RelocationPlan{ID: p.ID, AttemptID: p.SourceID, TargetNodeID: r.Node, Checkpoint: p.Checkpoint, Approved: true}, nil
@@ -130,7 +130,7 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 		return RelocationPlan{}, err
 	}
 	for _, cached := range existing {
-		if cached.SourceRevision == r.Revision && cached.TaskEpoch == r.Execution.Epoch && cached.Checkpoint == base && cached.Owner == req.SenderOpenID && cached.InputDigest == relocationRequestDigest(req) {
+		if cached.SourceRevision == r.Revision && cached.TaskEpoch == r.Execution.Epoch && cached.Checkpoint == base && cached.Owner == req.Actor.ID && cached.InputDigest == relocationRequestDigest(req) {
 			target, _, targetErr := c.relocationTarget(ctx, r, cached.Target.Node)
 			if targetErr == nil && relocationDigest(target) == cached.TargetConfigHash {
 				return describeRelocation(c.text, cached, manifest.CreatedAt, proof, probeErr, len(cached.UnknownActions) == 0 && undispatchedStopped(r, proof, attempt.RetainedSessionID(tracked.Channel, tracked.ID, r.Agent))), nil
@@ -164,10 +164,10 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 		unknown = append(unknown, checkpoint.ExternalAction{ID: "native-effects/" + r.ID, Description: c.text.T(i18n.RelocationUnknownEffects), ReconcileRef: r.ID})
 	}
 	prompt := relocationPrompt(r, base, req.Relocation)
-	intent := attempt.RelocationIntent{SourceID: r.ID, SourceRevision: r.Revision, TaskEpoch: r.Execution.Epoch, Checkpoint: base, Owner: req.SenderOpenID, CreatedAt: time.Now().UTC(),
+	intent := attempt.RelocationIntent{SourceID: r.ID, SourceRevision: r.Revision, TaskEpoch: r.Execution.Epoch, Checkpoint: base, Owner: req.Actor.ID, CreatedAt: time.Now().UTC(),
 		TargetConfigHash: relocationDigest(selected), Prompt: prompt, InputDigest: relocationRequestDigest(req), UnknownActions: unknown,
 		Target: attempt.Spec{ID: newID, TaskID: r.TaskID, TurnID: r.TurnID, Kind: r.Kind, Project: r.Project, Node: selected.Node, Harness: r.Harness, Agent: r.Agent,
-			Slots: candidate.Slots, Region: candidate.Region, Workspace: workspace, Scope: attempt.ScopePathSet, Base: base, By: req.SenderOpenID, Requires: r.Requires,
+			Slots: candidate.Slots, Region: candidate.Region, Workspace: workspace, Scope: attempt.ScopePathSet, Base: base, By: req.Actor.ID, Requires: r.Requires,
 			Execution: r.Execution, ExecutionGeneration: attempt.SessionExecutionEpoch(r) + 1, NativeCommandID: "relocation/" + newID, Preferences: &attempt.SessionPreferences{Model: selected.Model, Options: selected.Options}}}
 	if r.Preferences != nil {
 		intent.Target.Preferences.ModelLabel = r.Preferences.ModelLabel
@@ -217,7 +217,7 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 	ctx = turnContext(ctx)
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
-	c, err = c.forChannel(req.Channel)
+	c, err = c.forChannel(req.Source.Channel)
 	if err != nil {
 		return Result{}, err
 	}
@@ -237,10 +237,10 @@ func (c *Coordinator) relocateChat(ctx context.Context, planID, choice string, r
 	// admission while it is opening its native session.
 	turnCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	if !c.beginTurn(req.ConversationID, old.Agent, cancel) {
+	if !c.beginTurn(req.Source.ConversationID, old.Agent, cancel) {
 		return Result{}, errors.New("original conversation is busy")
 	}
-	defer c.clearActive(req.ConversationID, old.Agent)
+	defer c.clearActive(req.Source.ConversationID, old.Agent)
 	ctx = turnCtx
 	admitted, proof, resume, err := c.relocationPreparation(ctx, p, old)
 	if err != nil {
@@ -249,7 +249,7 @@ func (c *Coordinator) relocateChat(ctx context.Context, planID, choice string, r
 	if resume {
 		return c.resumeRetainedChat(ctx, p.Target.ID, req, true)
 	}
-	approval := relocationApproval(p, choice, req.SenderOpenID, proof)
+	approval := relocationApproval(p, choice, req.Actor.ID, proof)
 	selected, candidate, err := c.verifyRelocationTarget(ctx, p, old)
 	if err != nil {
 		return Result{}, err
@@ -319,7 +319,7 @@ func (c *Coordinator) relocateChat(ctx context.Context, planID, choice string, r
 	if err != nil {
 		return Result{}, err
 	}
-	c.setRunner(req.ConversationID, r.Agent, runner)
+	c.setRunner(req.Source.ConversationID, r.Agent, runner)
 	spent := &turnSpend{}
 	req.OnProgress = spent.wrap(req.OnProgress, r.Agent)
 	t := &retainedTurn{c: c, req: req, record: r, spent: spent, injected: &Injected{Project: r.Project, Workspace: r.Workspace.Path, Agent: r.Agent, Node: r.Node, Harness: r.Harness, Model: selected.Model, Options: selected.Options, Session: runner.ID(), NewSession: true, Prompt: p.Prompt}}

@@ -119,7 +119,7 @@ func TestRecoveryUsesOriginalExchangeAndDoesNotReplayItsPrompt(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{})
 	driver := &recoveryDriver{resume: func(ctx context.Context, id string, req turn.Request) (turn.Result, error) {
-		if id != "attempt-1" || req.MessageID != "web-e1" || req.ConversationID != "console:main" {
+		if id != "attempt-1" || req.Source.MessageID != "web-e1" || req.Source.ConversationID != "console:main" {
 			t.Errorf("recovery changed identity: %+v", req)
 		}
 		close(started)

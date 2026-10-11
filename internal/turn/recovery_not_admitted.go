@@ -17,9 +17,9 @@ func (c *Coordinator) ConfirmNeverAdmitted(ctx context.Context, req Request) (bo
 	if c.maintaining {
 		return false, errors.New("never-admitted recovery proof is unavailable")
 	}
-	if req.Channel != "console" || !strings.HasPrefix(req.ConversationID, consolePrefix) ||
-		req.ExchangeID == "" || req.MessageID != "web-"+req.ExchangeID ||
-		c.ownerOpenID == "" || req.SenderOpenID != c.ownerOpenID {
+	if req.Source.Channel != "console" || !strings.HasPrefix(req.Source.ConversationID, consolePrefix) ||
+		req.Admission.ExchangeID == "" || req.Source.MessageID != "web-"+req.Admission.ExchangeID ||
+		c.ownerOpenID == "" || req.Actor.ID != c.ownerOpenID {
 		return false, errors.New("never-admitted proof requires the original console input and owner")
 	}
 	// Keep the live turn-slot exclusion across the committed read. This is
@@ -30,12 +30,12 @@ func (c *Coordinator) ConfirmNeverAdmitted(ctx context.Context, req Request) (bo
 	if err != nil || !confirmed {
 		return false, err
 	}
-	if tracked.Transport != req.Channel || tracked.Channel != req.ConversationID || tracked.Requester != req.SenderOpenID ||
-		tracked.Origin != req.Origin || (req.ExpectedTask != "" && tracked.ID != req.ExpectedTask) ||
-		(req.ExpectedProject != "" && tracked.ProjectID != req.ExpectedProject) {
+	if tracked.Transport != req.Source.Channel || tracked.Channel != req.Source.ConversationID || tracked.Requester != req.Actor.ID ||
+		tracked.Origin != req.Source.Origin || (req.Admission.ExpectedTask != "" && tracked.ID != req.Admission.ExpectedTask) ||
+		(req.Admission.ExpectedProject != "" && tracked.ProjectID != req.Admission.ExpectedProject) {
 		return false, errors.New("never-admitted accounting belongs to another input owner")
 	}
-	if c.cancels[sessionKey(req.ConversationID, tracked.Member)] != nil {
+	if c.cancels[sessionKey(req.Source.ConversationID, tracked.Member)] != nil {
 		return false, nil
 	}
 	return true, nil

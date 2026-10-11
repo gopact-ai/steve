@@ -58,7 +58,7 @@ func TestStartupContinuationPersistsBeforeDrainAndDeduplicatesAfterRestart(t *te
 		t.Fatal(err)
 	}
 	call := nextCall(t, h)
-	if call.req.ExpectedTask != "parent" || call.req.Input != "@worker original prompt" {
+	if call.req.Admission.ExpectedTask != "parent" || call.req.Input != "@worker original prompt" {
 		t.Fatalf("lost original binding/input: %+v", call.req)
 	}
 	call.finish <- nil
