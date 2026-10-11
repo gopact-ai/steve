@@ -21,11 +21,11 @@ type applicationMCPTx struct{ tx *ledger.Tx }
 const localMCPRuntimeKind = "agent-mcp-local-runtime"
 
 func configureApplicationMCPStore(ctx context.Context, gate *agentmcp.Server, book *ledger.Ledger, environment *Environment) error {
+	runtime := identity.RandomID()
+	if err := book.Update(ctx, func(tx *ledger.Tx) error { return tx.PutBinding(localMCPRuntimeKind, "active", runtime) }); err != nil {
+		return err
+	}
 	if environment == nil {
-		runtime := identity.RandomID()
-		if err := book.Update(ctx, func(tx *ledger.Tx) error { return tx.PutBinding(localMCPRuntimeKind, "active", runtime) }); err != nil {
-			return err
-		}
 		if err := gate.SetLocalExecutionRuntime(runtime); err != nil {
 			return err
 		}

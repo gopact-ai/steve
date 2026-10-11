@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/events"
 	"github.com/gopact-ai/steve/internal/ingress"
@@ -120,6 +121,14 @@ func (s *Service) observeAdmissionTx(tx *ledger.Tx, changes []consoleChange) err
 				if found && record.Exchange == row.ID {
 					causation = record.Request.Causation
 					record.Outcome = &work.Result{Exchange: row.ID, State: string(row.State), Task: row.ExpectedTask, Attempt: row.Receipt.AttemptID, Output: row.Receipt.Text, Error: row.Receipt.Error}
+					if row.Receipt.AttemptID != "" {
+						execution, err := attempt.GetTx(tx, row.Receipt.AttemptID)
+						if err == nil {
+							record.Outcome.Task = execution.TaskID
+						} else if !errors.Is(err, attempt.ErrNotFound) {
+							return err
+						}
+					}
 					if err := tx.PutBinding(work.RecordKind, record.ID, record); err != nil {
 						return err
 					}
