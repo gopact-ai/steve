@@ -52,6 +52,10 @@ jobs:
           go-version-file: go.mod
       - name: Agent process groups
         run: go test -race -count=1 ./internal/procgroup/
+      - name: Installed peer discovery and stable stop capability
+        run: go test -race -count=1 ./internal/nodebootstrap/ ./internal/peerstop/
+      - name: MCP broker socket fixtures under default Darwin TMPDIR
+        run: go test -race -count=1 -run '^(TestARefusedLaunch|TestLaunchingAReleased|TestAStoppedBroker|TestMCPBindingKeepsSecrets|TestExternalBrokerHolds|TestWorkspaceChangeApplies|TestBroker)' ./internal/node/
       - name: Agent process group stops
         run: go test -race -count=1 -run '^(TestKillProcessGroupReapsDescendants|TestHostConfirmsStopOnlyAfterTheAgentsGroupIsGone|TestHostDoesNotConfirmAStopWhileAHiddenMemberRuns|TestHostRestartsWhileAnExitedAgentsGroupCannotBeEnded|TestHostCloseKillsAnAgentWhoseExitCannotBeWatched|TestLocalTransportDoesNotPassOnAnInheritedMark|TestHostStopWaitsOnlyBrieflyForAnExitedAgentsGroup|TestHostEndsAnExitedAgentsGroupWhileAMemberHoldsItsOutput|TestHostEndsAnAgentWhoseProcessGroupCannotBeIdentified|TestLocalProcessReapsAnAgentWhoseExitCannotBeWatchedOnlyBetweenKills|TestLocalProcessTellsTheExitCodeOfAnAgentWhoseExitCannotBeWatched)$' ./internal/acphost/
       - name: Owned ACP terminals and recovery

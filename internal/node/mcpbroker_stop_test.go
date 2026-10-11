@@ -57,7 +57,7 @@ func TestBrokerClosesItsSocketWhenAcceptFails(t *testing.T) {
 	close(fail)
 	testHookSocketListener = func(l net.Listener) net.Listener { return failAccepting(l, fail) }
 	t.Cleanup(func() { testHookSocketListener = nil })
-	socket := filepath.Join(t.TempDir(), "mcp.sock")
+	socket := filepath.Join(brokerTempDir(t), "mcp.sock")
 	err := NewBroker(BrokerConfig{Socket: socket}).Serve(t.Context())
 	if !errors.Is(err, syscall.EINVAL) {
 		t.Fatalf("Serve returned %v, want the accept failure", err)
@@ -88,7 +88,7 @@ func TestAStoppedBrokerRefusesBinds(t *testing.T) {
 		}
 	}
 	t.Run("its socket failed", func(t *testing.T) {
-		notDir := filepath.Join(t.TempDir(), "file")
+		notDir := filepath.Join(brokerTempDir(t), "file")
 		if err := os.WriteFile(notDir, nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -102,7 +102,7 @@ func TestAStoppedBrokerRefusesBinds(t *testing.T) {
 	t.Run("its context ended", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		broker := NewBroker(BrokerConfig{Socket: filepath.Join(t.TempDir(), "mcp.sock"), MCPServers: servers})
+		broker := NewBroker(BrokerConfig{Socket: filepath.Join(brokerTempDir(t), "mcp.sock"), MCPServers: servers})
 		if err := broker.Serve(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -120,12 +120,7 @@ func TestBrokerKeepsAcceptingThroughATemporaryAcceptFailure(t *testing.T) {
 		return listener
 	}
 	t.Cleanup(func() { testHookSocketListener = nil })
-	// This test's name makes t.TempDir too long for a socket path.
-	dir, err := os.MkdirTemp("", "broker")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := brokerTempDir(t)
 	socket := filepath.Join(dir, "mcp.sock")
 	broker := NewBroker(BrokerConfig{Socket: socket})
 	started := make(chan error, 1)

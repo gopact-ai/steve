@@ -46,7 +46,7 @@ func TestReverseMCPPicksItsFirstPortFromTheStableRange(t *testing.T) {
 // from the stable range, and a remembered port that is taken still stops
 // the broker rather than moving it.
 func TestPluginBrokerPicksItsFirstPortFromTheStableRange(t *testing.T) {
-	dir := t.TempDir()
+	dir := brokerTempDir(t)
 	portFile := filepath.Join(dir, "mcp.port")
 	broker := NewBroker(BrokerConfig{Socket: filepath.Join(dir, "mcp.sock"), PortFile: portFile, StrictPort: true})
 	ctx, cancel := context.WithCancel(t.Context())
@@ -99,7 +99,7 @@ func TestPluginBrokerProxyReleasesItsPortBeforeDone(t *testing.T) {
 // stops the proxy before it returns, even though its caller's context is
 // still live.
 func TestBrokerServeFailureReleasesTheProxyPort(t *testing.T) {
-	dir := t.TempDir()
+	dir := brokerTempDir(t)
 	notDir := filepath.Join(dir, "file")
 	if err := os.WriteFile(notDir, nil, 0o600); err != nil {
 		t.Fatal(err)

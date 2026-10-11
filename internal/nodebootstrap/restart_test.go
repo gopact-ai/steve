@@ -672,3 +672,27 @@ func TestPeerUpgradeAndRestartFindAndStopThePeerAlike(t *testing.T) {
 		}
 	}
 }
+
+// A different executable may open and even flock this installation's lock.
+// The lock's recorded PID and a peer-shaped argv do not make it this peer.
+func TestPeerRestartDoesNotStopAnotherExecutableHoldingItsLock(t *testing.T) {
+	requirePeerPlatform(t)
+	home, _ := layoutPeer(t)
+	other, _ := layoutPeer(t)
+	start := exec.Command("bash", "-c", `nohup "$OTHER/.steve-peer/bin/steve" peer --config "$HOME/.steve-peer/config.json" >/dev/null 2>&1 </dev/null & echo $!`)
+	start.Env = append(os.Environ(), "HOME="+home, "OTHER="+other, "STEVE_NODEBOOTSTRAP_STUB=1", lockingStub)
+	out, err := start.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := strings.TrimSpace(string(out))
+	t.Cleanup(func() { _ = exec.Command("kill", "-KILL", pid).Run() })
+	awaitGatewayLock(t, home, pid)
+	report, err := runRestart(t, home, RestartSpec{}, lockingStub)
+	if exitCode(err) != 31 || strings.Contains(report, "Stopping peer process") {
+		t.Fatalf("unrelated lock holder was accepted: %v\n%s", err, report)
+	}
+	if exec.Command("kill", "-0", pid).Run() != nil {
+		t.Fatal("unrelated lock holder was stopped")
+	}
+}

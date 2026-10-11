@@ -128,32 +128,11 @@ exited_on_lock() {
 // peerLocateSection sets running to the pids of the peer this
 // installation runs, or to nothing when it runs none, and exits 29 when
 // it cannot look.
-const peerLocateSection = `# Only this account's peer started from this installation is stopped; the
-# link session the coordinator holds open is replaced from its side. A
-# process is this installation's peer when it holds the installation's
-# gateway lock, whatever command line it was started with, when its
-# command line starts with the installed program's path, as the state
-# directory is spelled or as it resolves, or when it starts with
-# ./bin/steve and its working directory is this installation. The pid in
-# the gateway lock is tried first and taken only when it passes that test:
-# the lock keeps the pid after its peer exits, and the number may since
-# belong to another installation's peer, which holds its own lock. Then
-# the program path is searched for, and last a relative launch. Another
-# account's peer, and this account's peer under a different state
-# directory, are left alone. Missing the process would leave it holding
-# the gateway lock, and the program started next would exit on it.
-#
-# Whether a pid holds the gateway lock is read from /proc/locks, by the
-# pid and the lock's inode, and without /proc from the write lock lsof
-# reports on the lock. Where neither tells, the pid is not taken for the
-# lock's holder.
-#
-# A search that cannot be made is not a search that found nothing: without
-# pgrep, ps, or lsof where there is no /proc, with a pgrep that fails, or
-# with a gateway lock that cannot be read, the script exits 29 before it
-# stops or starts anything. Taking the peer for stopped would start a
-# second one beside it, or stop one that cannot start again over a lock it
-# cannot open.
+const peerLocateSection = `# A recorded lock PID is only a candidate, never proof of ownership.
+# Canonical executable paths handle /var -> /private/var and home aliases.
+# Darwin lsof's lock field does not reliably report flock ownership; use
+# the executable plus peer invocation instead. Identified automatic restarts
+# use peer-stop's stable handle protocol, not this manual compatibility path.
 unlocatable() {
   echo "$1; nothing was stopped or started." >&2
   exit 29
@@ -171,9 +150,7 @@ fi
 peer_search() {
   pgrep -u "$(id -u)" -f "$1" || [ $? -eq 1 ]
 }
-pattern=$(printf '%s' "$state_dir/bin/steve peer " | sed 's#[][\.*^$+?(){}|]#\\&#g')
 state_real=$(cd "$state_dir" && pwd -P)
-pattern_real=$(printf '%s' "$state_real/bin/steve peer " | sed 's#[][\.*^$+?(){}|]#\\&#g')
 process_dir() {
   if [ -r "/proc/$1/cwd" ]; then
     readlink "/proc/$1/cwd" 2>/dev/null
@@ -181,35 +158,59 @@ process_dir() {
     lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1
   fi
 }
+canonical_program() {
+  [ -f "$1" ] || return 1
+  directory=$(dirname "$1")
+  base=$(basename "$1")
+  physical=$(cd "$directory" && pwd -P) || return 1
+  printf '%s/%s\n' "$physical" "$base"
+}
+installed_program="$state_real/bin/steve"
 installation_peer() {
+  owner=$(ps -o uid= -p "$1" 2>/dev/null | tr -d ' ') || return 1
+  [ "$owner" = "$(id -u)" ] || return 1
   line=$(ps -o command= -p "$1" 2>/dev/null) || return 1
-  if printf '%s\n' "$line" | grep -q -e "^$pattern" -e "^$pattern_real"; then return 0; fi
-  printf '%s\n' "$line" | grep -q '^\./bin/steve peer ' || return 1
-  case "$(process_dir "$1")" in
-    "$state_real"|"$state_dir") return 0 ;;
+  if [ ! -d /proc/self ]; then
+    executable=$(lsof -a -p "$1" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)
+    [ "$(canonical_program "$executable")" = "$installed_program" ] || return 1
+  fi
+  case "$line" in
+    *' --config '*) config=${line#* --config }; config=${config%% --*} ;;
+    *) return 1 ;;
+  esac
+  case "$config" in
+    /*) ;;
+    *) config="$(process_dir "$1")/$config" ;;
+  esac
+  [ "$(canonical_program "$config")" = "$state_real/config.json" ] || return 1
+  case "$line" in
+    /*' peer '*)
+      program=${line%% peer *}
+      [ "$(canonical_program "$program")" = "$installed_program" ] && return 0
+      ;;
+    './bin/steve peer '*)
+      [ "$(process_dir "$1")" = "$state_real" ] && return 0
+      ;;
+    './steve peer '*|'steve peer '*)
+      # This fallback is used only for the PID recorded by the installation.
+      # Opening gateway.lock alone does not establish a peer's identity.
+      if [ ! -d /proc/self ]; then
+        return 0
+      else
+        [ "$(readlink "/proc/$1/exe" 2>/dev/null)" = "$installed_program" ] && return 0
+      fi
+      ;;
   esac
   return 1
 }
-holds_lock() {
-  if [ -r /proc/locks ]; then
-    inode=$(ls -di "$lock_file" 2>/dev/null | awk '{ print $1 }')
-    [ -n "$inode" ] || return 1
-    awk -v pid="$1" -v inode="$inode" '$2 == "FLOCK" && $5 == (pid "") && split($6, id, ":") == 3 && id[3] == (inode "") { held = 1 } END { exit !held }' /proc/locks
-  else
-    lsof -F pl -- "$lock_file" 2>/dev/null | awk -v pid="$1" '/^p/ { process = substr($0, 2) } /^lW/ && process == (pid "") { held = 1 } END { exit !held }'
-  fi
-}
 running=""
 locked=$(head -n 1 "$lock_file" 2>/dev/null | tr -dc '0-9')
-if [ -n "$locked" ] && kill -0 "$locked" 2>/dev/null && { holds_lock "$locked" || installation_peer "$locked"; }; then
+if [ -n "$locked" ] && kill -0 "$locked" 2>/dev/null && installation_peer "$locked"; then
   running="$locked"
 fi
 if [ -z "$running" ]; then
-  running=$(peer_search "^$pattern|^$pattern_real") || unlocatable 'Looking for the peer process with pgrep failed'
-fi
-if [ -z "$running" ]; then
-  relative=$(peer_search '^\./bin/steve peer ') || unlocatable 'Looking for the peer process with pgrep failed'
-  for candidate in $relative; do
+  candidates=$(peer_search '^/.*steve peer |^\./bin/steve peer ') || unlocatable 'Looking for the peer process with pgrep failed'
+  for candidate in $candidates; do
     if installation_peer "$candidate"; then running="${running:+$running }$candidate"; fi
   done
 fi

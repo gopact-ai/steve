@@ -47,11 +47,31 @@ func startGroup(t *testing.T, carried, mark, script string, args ...string) (*ex
 
 // orphan starts a group whose leader leaves a member behind and is reaped, as
 // an agent is once the node that started it is gone. It returns the member.
+func TestMarkedMemberHelper(t *testing.T) {
+	if os.Getenv("PROCGROUP_TEST_MEMBER") != "1" {
+		return
+	}
+	for {
+		time.Sleep(time.Hour)
+	}
+}
+
 func orphan(t *testing.T, carried, mark string) (int, Identity, string) {
+	return orphanProgram(t, carried, mark, os.Args[0], "-test.run=^TestMarkedMemberHelper$")
+}
+
+func orphanProgram(t *testing.T, carried, mark, program string, extra ...string) (int, Identity, string) {
 	t.Helper()
 	arg, file := pause(), filepath.Join(t.TempDir(), "member")
-	cmd, id := startGroup(t, carried, mark, `sleep "$1" </dev/null >/dev/null 2>&1 & echo $! > "$2"`, arg, file)
-	endMember(t, file, arg)
+	argv := append([]string{program}, extra...)
+	argv = append(argv, arg)
+	cmd, id := startGroup(t, carried, mark, `file="$1"; shift; PROCGROUP_TEST_MEMBER=1 "$@" </dev/null >/dev/null 2>&1 & echo $! > "$file"`, append([]string{file}, argv...)...)
+	t.Cleanup(func() {
+		raw, _ := os.ReadFile(file)
+		if member, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil && member > 0 && cmdlineIs(member, argv...) {
+			_ = syscall.Kill(member, syscall.SIGKILL)
+		}
+	})
 	if err := cmd.Wait(); err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +82,11 @@ func orphan(t *testing.T, carried, mark string) (int, Identity, string) {
 	member, err := strconv.Atoi(strings.TrimSpace(string(raw)))
 	if err != nil {
 		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); !cmdlineIs(member, argv...); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the group member did not exec its program")
+		}
 	}
 	if !running(member) {
 		t.Fatal("the group left no member running")
@@ -201,6 +226,24 @@ func TestSettleEndsAMarkedGroupItsLeaderLeft(t *testing.T) {
 	}
 	if running(member) {
 		t.Fatal("the stop was confirmed while a member still ran")
+	}
+}
+
+// Some Darwin releases expose a system executable's argv without its
+// environment. In that case ownership remains unproved and no signal is sent.
+func TestSettleSystemMemberRequiresReadableMark(t *testing.T) {
+	member, id, _ := orphanProgram(t, "m", "m", "/bin/sleep")
+	readable := carriesMark(member, "m")
+	signals := 0
+	err := settle(id, here(t), here(t), time.Second, counting(&signals))
+	if readable {
+		if err != nil || running(member) {
+			t.Fatalf("readable mark: %v, running=%v", err, running(member))
+		}
+	} else {
+		if !errors.Is(err, ErrUnproven) || signals != 0 || !running(member) {
+			t.Fatalf("unreadable mark: %v, signals=%d, running=%v", err, signals, running(member))
+		}
 	}
 }
 
