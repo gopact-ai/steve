@@ -157,7 +157,12 @@ Capability invocations are created through `/services/client/invoke` with `key`,
 need their own explicit capability delegation as well as the client's permission.
 Private Console ACP executions use `steve_client_capabilities`,
 `steve_client_invoke` and `steve_client_result`. The bridge fixes the original
-task/attempt/epoch/process generation itself. Shared-channel and delegated
+task/attempt/epoch/process generation itself. Standalone hub executions also
+pin the opaque native session and the current hub activation. Restarting a hub
+invalidates the old activation's tool calls and pending client dispatch; a new
+turn can retain conversation history only after the original execution settled.
+Node executions retain their authenticated node/session identity and execution
+epoch. Shared-channel and delegated
 sessions cannot use these private capabilities. Dispatch rereads the original
 execution and live lease, so an ended attempt cannot cause a later native effect.
 

@@ -9,12 +9,40 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/durable"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
 type applicationMCPStore struct{ book *ledger.Ledger }
 type applicationMCPTx struct{ tx *ledger.Tx }
+
+const localMCPRuntimeKind = "agent-mcp-local-runtime"
+
+func configureApplicationMCPStore(ctx context.Context, gate *agentmcp.Server, book *ledger.Ledger, environment *Environment) error {
+	if environment == nil {
+		runtime := identity.RandomID()
+		if err := book.Update(ctx, func(tx *ledger.Tx) error { return tx.PutBinding(localMCPRuntimeKind, "active", runtime) }); err != nil {
+			return err
+		}
+		if err := gate.SetLocalExecutionRuntime(runtime); err != nil {
+			return err
+		}
+	}
+	return gate.SetStore(newApplicationMCPStore(book), mcpStoreFailure(environment))
+}
+
+func checkLocalMCPRuntime(tx *ledger.Tx, runtime string) error {
+	current, found, err := durable.Get[string](tx, localMCPRuntimeKind, "active")
+	if err != nil {
+		return err
+	}
+	if !found || runtime == "" || current != runtime {
+		return agentmcp.ErrGrantDenied
+	}
+	return nil
+}
 
 func newApplicationMCPStore(book *ledger.Ledger) agentmcp.Store {
 	return &applicationMCPStore{book: book}
@@ -69,6 +97,13 @@ func (t applicationMCPTx) Authorize(binding agentmcp.Binding, scope agentmcp.Gra
 }
 
 func (t applicationMCPTx) check(binding agentmcp.Binding, scope agentmcp.GrantScope, retained bool) error {
+	if scope.NodeID == "" {
+		if err := checkLocalMCPRuntime(t.tx, scope.LocalRuntime); err != nil {
+			return err
+		}
+	} else if scope.LocalRuntime != "" {
+		return agentmcp.ErrGrantDenied
+	}
 	record, err := t.record(scope)
 	if err != nil {
 		return err

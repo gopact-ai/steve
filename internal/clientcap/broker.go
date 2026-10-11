@@ -53,10 +53,11 @@ type Request struct {
 
 // Execution is fixed by the ACP tool bridge, never supplied by an HTTP caller.
 type Execution struct {
-	Task       string `json:"task"`
-	Attempt    string `json:"attempt"`
-	Epoch      uint64 `json:"epoch"`
-	Generation uint64 `json:"generation"`
+	Task         string `json:"task"`
+	Attempt      string `json:"attempt"`
+	Epoch        uint64 `json:"epoch"`
+	Generation   uint64 `json:"generation"`
+	LocalRuntime string `json:"local_runtime,omitempty"`
 }
 type Invocation struct {
 	ID               string          `json:"id"`

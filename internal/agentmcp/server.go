@@ -191,6 +191,7 @@ type Server struct {
 	styles              map[string]string
 	effects             map[string]bool
 	store               Store
+	localRuntime        string
 	storeErr            error
 	onFailure           func(error)
 	interims            map[string]bool

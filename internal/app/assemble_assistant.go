@@ -61,6 +61,13 @@ func checkClientExecution(tx *ledger.Tx, owner string, call clientcap.Invocation
 	if r.State != attempt.Running || r.Unsettled || r.SessionSettled == nil || *r.SessionSettled || r.TaskID != e.Task || r.Execution == nil || r.Execution.Epoch != e.Epoch || attempt.SessionExecutionEpoch(r) != e.Generation {
 		return identity.ErrDenied
 	}
+	if r.Node == "" {
+		if err := checkLocalMCPRuntime(tx, e.LocalRuntime); err != nil {
+			return identity.ErrDenied
+		}
+	} else if e.LocalRuntime != "" {
+		return identity.ErrDenied
+	}
 	t, found, err := task.GetTx(tx, e.Task)
 	if err != nil {
 		return err
@@ -89,7 +96,7 @@ func (c *clientCapabilityTools) authorize(ctx context.Context, tx *ledger.Tx, bi
 	if err := agentmcp.AuthorizeContext(ctx, applicationMCPTx{tx}); err != nil {
 		return err
 	}
-	call := clientcap.Invocation{Request: clientcap.Request{Conversation: bind.ConversationID}, Execution: &clientcap.Execution{Task: scope.TaskID, Attempt: scope.AttemptID, Epoch: scope.TaskEpoch, Generation: scope.ExecutionGeneration}}
+	call := clientcap.Invocation{Request: clientcap.Request{Conversation: bind.ConversationID}, Execution: &clientcap.Execution{Task: scope.TaskID, Attempt: scope.AttemptID, Epoch: scope.TaskEpoch, Generation: scope.ExecutionGeneration, LocalRuntime: scope.LocalRuntime}}
 	return checkClientExecution(tx, c.services.Identity.OwnerID, call)
 }
 func (c *clientCapabilityTools) Available(ctx context.Context, bind agentmcp.Binding) ([]clientcap.Registration, error) {
@@ -103,7 +110,7 @@ func (c *clientCapabilityTools) Invoke(ctx context.Context, bind agentmcp.Bindin
 	if !ok {
 		return clientcap.Invocation{}, identity.ErrDenied
 	}
-	call, err := c.services.Clients.Submit(ctx, identity.Principal{Owner: true}, clientcap.Request{Key: input.Key, Client: input.Client, Capability: input.Capability, Conversation: bind.ConversationID, Arguments: input.Arguments}, &clientcap.Execution{Task: scope.TaskID, Attempt: scope.AttemptID, Epoch: scope.TaskEpoch, Generation: scope.ExecutionGeneration}, func(tx *ledger.Tx) error { return c.authorize(ctx, tx, bind) })
+	call, err := c.services.Clients.Submit(ctx, identity.Principal{Owner: true}, clientcap.Request{Key: input.Key, Client: input.Client, Capability: input.Capability, Conversation: bind.ConversationID, Arguments: input.Arguments}, &clientcap.Execution{Task: scope.TaskID, Attempt: scope.AttemptID, Epoch: scope.TaskEpoch, Generation: scope.ExecutionGeneration, LocalRuntime: scope.LocalRuntime}, func(tx *ledger.Tx) error { return c.authorize(ctx, tx, bind) })
 	call.Token = ""
 	return call, err
 }

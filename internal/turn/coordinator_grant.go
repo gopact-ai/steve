@@ -5,14 +5,13 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 type executionGate interface {
 	BindExecution(context.Context, agentmcp.Binding, agentmcp.GrantScope) error
 }
 
-// bindExecutionGate runs only after the node session identity is committed.
+// bindExecutionGate runs only after the native session identity is committed.
 // Handshake metadata may be pending, but no tool call gets an empty-session
 // grant. Retained sessions validate the same fixed grant again after handoff.
 func (c *Coordinator) bindExecutionGate(ctx context.Context, conversation, id string) error {
@@ -24,7 +23,7 @@ func (c *Coordinator) bindExecutionGate(ctx context.Context, conversation, id st
 	if err != nil {
 		return err
 	}
-	if !nodewire.IsManagedSession(r.Session) || r.Execution == nil {
+	if r.Session == "" || r.Execution == nil {
 		return nil
 	}
 	if saved := c.store.Conversation(conversation).Sessions[r.Agent]; saved.AgentToken == "" {
