@@ -89,7 +89,15 @@ func retainedPlanFixture(t *testing.T) (*Coordinator, *retainedPlanSupervisor, R
 	}
 	sup.proposed = plan.Plan{TaskID: tracked.ID, Goal: tracked.Goal, By: "llm:worker", Steps: []plan.Step{{ID: "work", Goal: "original step", Agent: "worker", Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "no side effects"}}}}
 	identity := RetainedPlan{TaskID: tracked.ID, Conversation: tracked.Channel, MessageID: "web-original-plan", AttemptID: record.ID, ProjectID: "p"}
-	return c, sup, identity, Request{Channel: "console", ConversationID: tracked.Channel, MessageID: identity.MessageID, SenderOpenID: "owner", ExpectedProject: "p"}
+	return c, sup, identity, Request{
+		Source: Source{
+			Channel:        "console",
+			ConversationID: tracked.Channel,
+			MessageID:      identity.MessageID,
+		},
+		Actor:     Actor{ID: "owner"},
+		Admission: Admission{ExpectedProject: "p"},
+	}
 }
 
 func TestRetainedPlanDiscoversInitialPlanningAndPreservesOriginalTask(t *testing.T) {
@@ -168,7 +176,7 @@ func TestRetainedPlanThatMeetsUnavailableCoordinationStaysRetained(t *testing.T)
 
 func TestRetainedPlanRejectsDifferentExchangeBeforeExecution(t *testing.T) {
 	c, sup, identity, req := retainedPlanFixture(t)
-	req.MessageID = "web-another-exchange"
+	req.Source.MessageID = "web-another-exchange"
 	if _, err := c.ResumeRetainedPlan(t.Context(), identity, req); err == nil || sup.resumedPlanning != 0 || sup.executed != 0 {
 		t.Fatalf("another exchange consumed the plan: %v", err)
 	}
@@ -186,7 +194,16 @@ func TestRulePlanStoreFailureRecoversFrozenPlanInOriginalTask(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			req := Request{Channel: "console", ConversationID: "console:rule", MessageID: "web-rule-original", ChatID: "console", SenderOpenID: "owner", ExpectedProject: "p"}
+			req := Request{
+				Source: Source{
+					Channel:        "console",
+					ConversationID: "console:rule",
+					MessageID:      "web-rule-original",
+				},
+				Reply:     ReplyContext{ChatID: "console"},
+				Actor:     Actor{ID: "owner"},
+				Admission: Admission{ExpectedProject: "p"},
+			}
 			_, err := c.commands().planCmd(t.Context(), req, "release original goal")
 			var blocked *agentexec.RecoveryBlocked
 			if !errors.As(err, &blocked) {
@@ -198,7 +215,7 @@ func TestRulePlanStoreFailureRecoversFrozenPlanInOriginalTask(t *testing.T) {
 			c = restartCoordinator(t, c, c.catalog, c.store, c.assembler, c.runtime, time.Minute,
 				withDeps(func(d *Deps) { d.Plans = plans }), withCallbacks(func(cb *Callbacks) { cb.Supervisor = changed }))
 			items, err := c.RetainedPlans(t.Context())
-			if err != nil || len(items) != 1 || items[0].AttemptID != "" || items[0].PlanID != "" || items[0].MessageID != req.MessageID {
+			if err != nil || len(items) != 1 || items[0].AttemptID != "" || items[0].PlanID != "" || items[0].MessageID != req.Source.MessageID {
 				t.Fatalf("pure planned task disappeared: %+v %v", items, err)
 			}
 			before := len(c.tasks.List(""))

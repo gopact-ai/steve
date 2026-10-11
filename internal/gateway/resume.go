@@ -217,11 +217,24 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 	}
 	ui := g.newTurnUI(ch, msg, false)
 	result, runErr := g.coordinator.Handle(ctx, turn.Request{
-		Channel: "feishu", ConversationID: f.ConversationID, Input: text, Origin: msg.Origin,
-		MessageID: noticeID, ChatID: f.ChatID, CardID: ui.cardID, SenderOpenID: f.Requester,
-		ChatType: protocol.ParseChatType(f.ChatType), Mentioned: true, ExpectedProject: f.ProjectID,
-		OnProgress: ui.progress, OnPhase: ui.setPhase,
-		OnAskUser: func(ctx context.Context, q view.Question) (view.Answer, error) { return g.askQuestion(ctx, ui, q) },
+		Source: turn.Source{
+			Channel:        "feishu",
+			ConversationID: f.ConversationID,
+			Origin:         msg.Origin,
+			MessageID:      noticeID,
+			ChatType:       protocol.ParseChatType(f.ChatType),
+			Mentioned:      true,
+		},
+		Input: text,
+		Reply: turn.ReplyContext{
+			ChatID: f.ChatID,
+			CardID: ui.cardID,
+		},
+		Actor:      turn.Actor{ID: f.Requester},
+		Admission:  turn.Admission{ExpectedProject: f.ProjectID},
+		OnProgress: ui.progress,
+		OnPhase:    ui.setPhase,
+		OnAskUser:  func(ctx context.Context, q view.Question) (view.Answer, error) { return g.askQuestion(ctx, ui, q) },
 		OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 			return g.askPermission(ctx, ui, ask)
 		},

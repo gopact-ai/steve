@@ -27,6 +27,7 @@ import (
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -256,7 +257,7 @@ func TestRecoveryCaptureRequiresExactDriverAndTheCurrentOwner(t *testing.T) {
 		t.Fatal("maintenance authorized recovery I/O")
 	}
 	c.maintaining = false
-	owners, err := newChannelOwners("different-owner", nil)
+	owners, err := identity.NewOwners(identity.Configuration{ConsoleOwner: "different-owner", NativeOwners: nil})
 	c.owners = owners
 	if err != nil {
 		t.Fatal(err)
@@ -775,7 +776,7 @@ func TestRecoveryResolverSinkRechecksOwnerMaintenanceAndExactConflictAfterPublic
 			switch mode {
 			case "owner":
 				var err error
-				c.owners, err = newChannelOwners("different-owner", nil)
+				c.owners, err = identity.NewOwners(identity.Configuration{ConsoleOwner: "different-owner", NativeOwners: nil})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -872,7 +873,14 @@ func TestRecoveryFinalizingInputWaitsAndRefreshesOnlyBeforeCanonicalAdmission(t 
 	selected := agent.Agent{ID: "worker", Node: ws.Node, Harness: "mock"}
 	waiting := make(chan struct{})
 	var once sync.Once
-	req := Request{ConversationID: "console:queued", MessageID: "queued-turn", SenderOpenID: "owner", OnStage: func(view.Stage) { once.Do(func() { close(waiting) }) }}
+	req := Request{
+		Source: Source{
+			ConversationID: "console:queued",
+			MessageID:      "queued-turn",
+		},
+		Actor:   Actor{ID: "owner"},
+		OnStage: func(view.Stage) { once.Do(func() { close(waiting) }) },
+	}
 	spec, _, err := c.turnSpec(scope.Context(), req, selected, tracked.ID, project.Binding{ProjectID: p.ID}, ws)
 	if err != nil {
 		t.Fatal(err)
@@ -945,7 +953,7 @@ func TestRecoveryResolverAdmittedWALSurvivesTaskCancelAndOwnerChangeWithoutNewAu
 	if err != nil || land.State != artifact.LandCommitted {
 		t.Fatalf("source cancel abandoned admitted resolver WAL: %+v %v", land, err)
 	}
-	c.owners, err = newChannelOwners("new-owner", nil)
+	c.owners, err = identity.NewOwners(identity.Configuration{ConsoleOwner: "new-owner", NativeOwners: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1534,12 +1542,19 @@ func TestRecoveryWaitingRefreshUpdatesEveryLifecycleSessionInput(t *testing.T) {
 	}
 	defer scope.Finish(nil)
 	ready := make(chan struct{}, 1)
-	req := Request{ConversationID: cached.ConversationID, MessageID: "waiting-native", SenderOpenID: "owner", OnStage: func(view.Stage) {
-		select {
-		case ready <- struct{}{}:
-		default:
-		}
-	}}
+	req := Request{
+		Source: Source{
+			ConversationID: cached.ConversationID,
+			MessageID:      "waiting-native",
+		},
+		Actor: Actor{ID: "owner"},
+		OnStage: func(view.Stage) {
+			select {
+			case ready <- struct{}{}:
+			default:
+			}
+		},
+	}
 	selected := agent.Agent{ID: "worker", Node: ws.Node, Harness: "mock"}
 	spec, candidate, err := c.turnSpec(scope.Context(), req, selected, tracked.ID, project.Binding{ProjectID: p.ID}, ws)
 	if err != nil {
@@ -1672,7 +1687,7 @@ func TestRecoveryCommittedSinkAcknowledgementDoesNotRequireFreshOwner(t *testing
 			}
 			switch mode {
 			case "owner":
-				c.owners, err = newChannelOwners("next-owner", nil)
+				c.owners, err = identity.NewOwners(identity.Configuration{ConsoleOwner: "next-owner", NativeOwners: nil})
 				if err != nil {
 					t.Fatal(err)
 				}

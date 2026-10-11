@@ -119,7 +119,7 @@ func TestFeishuWorkWaitsForAVerifiedChannel(t *testing.T) {
 		&ledgerValues{attempts: attempt.New(book)},
 		&executionValues{coordinator: coordinator, gw: gw, catalogText: i18n.New(i18n.LocaleEN), intents: intent.New(book)},
 		&readModelValues{}, &consoleValues{cons: cons, reconciliations: ingress},
-		&administrationValues{channelSettings: settings}, &delegationValues{gate: gate},
+		&administrationValues{channelSettings: settings}, &delegationValues{gate: gate, taskChannels: testTaskChannels(t, cons, gw, book, coordinator)},
 	); err != nil {
 		t.Fatal(err)
 	}

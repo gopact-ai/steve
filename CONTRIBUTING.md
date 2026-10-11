@@ -2,6 +2,13 @@
 
 All changes go through a pull request. CI must be green before merging.
 
+Complete a coherent change batch before running the full suites and fleet gates.
+During implementation, use formatting and compilation as needed. New tests should
+assert a requirement or reproduce a concrete failure, with expected behavior
+derived independently of the implementation. Reuse existing regression coverage;
+do not add tests merely to mirror forwarding code or increase coverage. Rerun
+affected checks when subsequent changes or failures invalidate their evidence.
+
 Changes to delegation, landing, timeouts, snapshots, or node channels must also
 pass `make e2e-fleet` in the disposable fleet lab and the live-fleet client
 below before merging. Paste the complete output

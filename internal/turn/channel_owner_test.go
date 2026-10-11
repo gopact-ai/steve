@@ -13,6 +13,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/permission"
 
 	"github.com/gopact-ai/steve/internal/agent"
@@ -34,16 +35,24 @@ func TestChannelOwnerControlsProjectPermissionsWithoutCrossChannelPrivilege(t *t
 		channel, sender string
 		allowed         bool
 	}{{"feishu", "ou_im_owner", true}, {"console", "console-owner", true}, {"feishu", "console-owner", false}, {"console", "ou_im_owner", false}, {"unknown", "console-owner", false}} {
-		req := Request{Channel: test.channel, ConversationID: fmt.Sprintf("%s-%s", test.channel, test.sender), SenderOpenID: test.sender, Input: "/grant worker target write", ChatType: protocol.ChatP2P}
+		req := Request{
+			Source: Source{
+				Channel:        test.channel,
+				ConversationID: fmt.Sprintf("%s-%s", test.channel, test.sender),
+				ChatType:       protocol.ChatP2P,
+			},
+			Actor: Actor{ID: test.sender},
+			Input: "/grant worker target write",
+		}
 		_, err := c.Handle(t.Context(), req)
 		if (err == nil) != test.allowed {
 			t.Errorf("channel=%s sender=%s allowed=%t err=%v", test.channel, test.sender, test.allowed, err)
 		}
-		if req.SenderOpenID != test.sender {
+		if req.Actor.ID != test.sender {
 			t.Fatal("native sender identity was rewritten")
 		}
 	}
-	if c.ownerOpenID != "console-owner" {
+	if c.ownerID != "console-owner" {
 		t.Fatal("channel request changed the baseline owner")
 	}
 }
@@ -64,7 +73,17 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 	c, _, runner := homeCoordinator(t, dir, "console-owner", onLedger(book), withChannelOwner("feishu", "ou_im_owner"))
 	tasks := c.tasks
 	c.artifacts.SetExecution(c.executions)
-	result, err := c.Handle(t.Context(), Request{Channel: "feishu", ConversationID: "oc-native", SenderOpenID: "ou_im_owner", ChatType: protocol.ChatP2P, Input: "hello", MessageID: "om-native", ChatID: "oc-native"})
+	result, err := c.Handle(t.Context(), Request{
+		Source: Source{
+			Channel:        "feishu",
+			ConversationID: "oc-native",
+			ChatType:       protocol.ChatP2P,
+			MessageID:      "om-native",
+		},
+		Actor: Actor{ID: "ou_im_owner"},
+		Input: "hello",
+		Reply: ReplyContext{ChatID: "oc-native"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +99,15 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 	if record, err := c.attempts.Get(t.Context(), result.Attempt); err != nil || record.By != "ou_im_owner" {
 		t.Fatalf("attempt lost native actor: %+v %v", record, err)
 	}
-	_, err = c.Handle(t.Context(), Request{Channel: "feishu", ConversationID: "oc-group", SenderOpenID: "ou_im_owner", ChatType: protocol.ChatGroup, Input: "/use codex"})
+	_, err = c.Handle(t.Context(), Request{
+		Source: Source{
+			Channel:        "feishu",
+			ConversationID: "oc-group",
+			ChatType:       protocol.ChatGroup,
+		},
+		Actor: Actor{ID: "ou_im_owner"},
+		Input: "/use codex",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +118,7 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 
 func TestChannelOwnerRegistrationIsExplicitAndKeepsTheConsoleBaseline(t *testing.T) {
 	owners := map[string]string{"feishu": "ou_first"}
-	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Timeout, d.ChannelOwners = time.Minute, owners }), withOwner("console-owner"))
+	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Timeout, d.Identity.NativeOwners = time.Minute, owners }), withOwner("console-owner"))
 	if _, err := c.forChannel("slack"); err == nil {
 		t.Fatal("unregistered channel borrowed console identity")
 	}
@@ -100,7 +127,7 @@ func TestChannelOwnerRegistrationIsExplicitAndKeepsTheConsoleBaseline(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if native.localized(i18n.LocaleEN).ownerOpenID != "ou_first" || c.ownerOpenID != "console-owner" {
+	if native.localized(i18n.LocaleEN).ownerID != "ou_first" || c.ownerID != "console-owner" {
 		t.Fatal("registration changed after New or replaced the Console baseline")
 	}
 }
@@ -122,7 +149,16 @@ func TestNativeChannelOwnerKeepsACPApprovalAndQuestionCallbacks(t *testing.T) {
 	defer manager.Stop()
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 10*time.Second, withOwner("console-owner"), withChannelOwner("feishu", "ou_im_owner"))
 	asks := 0
-	result, err := c.Handle(t.Context(), Request{Channel: "feishu", ConversationID: "oc-native", SenderOpenID: "ou_im_owner", ChatType: protocol.ChatP2P, Input: "perm askme", MessageID: "om-native", ChatID: "oc-native",
+	result, err := c.Handle(t.Context(), Request{
+		Source: Source{
+			Channel:        "feishu",
+			ConversationID: "oc-native",
+			ChatType:       protocol.ChatP2P,
+			MessageID:      "om-native",
+		},
+		Actor: Actor{ID: "ou_im_owner"},
+		Input: "perm askme",
+		Reply: ReplyContext{ChatID: "oc-native"},
 		OnAsk: func(_ context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 			asks++
 			return permission.Choose(true, ask.Options), nil
@@ -151,7 +187,16 @@ func TestConcurrentChannelOwnersAndLocalesRemainRequestLocal(t *testing.T) {
 				channel, owner, locale = "feishu", "ou_im_owner", "en"
 			}
 			conversation := fmt.Sprintf("channel-%d", n)
-			_, err := c.Handle(t.Context(), Request{Channel: channel, Locale: locale, ConversationID: conversation, SenderOpenID: owner, ChatType: protocol.ChatP2P, Input: fmt.Sprintf("/grant worker reader-%d read", n)})
+			_, err := c.Handle(t.Context(), Request{
+				Source: Source{
+					Channel:        channel,
+					ConversationID: conversation,
+					ChatType:       protocol.ChatP2P,
+				},
+				Locale: locale,
+				Actor:  Actor{ID: owner},
+				Input:  fmt.Sprintf("/grant worker reader-%d read", n),
+			})
 			if err != nil {
 				t.Error(err)
 			}
@@ -161,30 +206,30 @@ func TestConcurrentChannelOwnersAndLocalesRemainRequestLocal(t *testing.T) {
 		}(n)
 	}
 	wg.Wait()
-	if c.ownerOpenID != "console-owner" || c.text.Locale() != i18n.LocaleZH {
+	if c.ownerID != "console-owner" || c.text.Locale() != i18n.LocaleZH {
 		t.Fatal("request modified baseline identity or catalog")
 	}
-	role, err := c.projects.Access(t.Context(), "worker", "console-owner", c.ownerOpenID)
+	role, err := c.projects.Access(t.Context(), "worker", "console-owner", c.ownerID)
 	if err != nil || role != project.RoleAdmin {
 		t.Fatalf("baseline owner changed %s %v", role, err)
 	}
 }
 
 func TestChannelOwnersResolveBaselineAndRegisteredChannels(t *testing.T) {
-	owners, err := newChannelOwners("console-owner", map[string]string{"feishu": "ou_im_owner"})
+	owners, err := identity.NewOwners(identity.Configuration{ConsoleOwner: "console-owner", NativeOwners: map[string]string{"feishu": "ou_im_owner"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for channel, want := range map[string]string{"": "console-owner", "console": "console-owner", "feishu": "ou_im_owner"} {
-		if got, err := owners.of(channel); err != nil || got != want {
+		if got, err := owners.Owner(channel); err != nil || got != want {
 			t.Errorf("owner of %q = %q, %v; want %q", channel, got, err, want)
 		}
 	}
-	if _, err := owners.of("slack"); err == nil {
+	if _, err := owners.Owner("slack"); err == nil {
 		t.Error("an unregistered channel resolved to an owner")
 	}
 	for _, channel := range []string{"", "console", " feishu"} {
-		if _, err := newChannelOwners("console-owner", map[string]string{channel: "someone"}); err == nil {
+		if _, err := identity.NewOwners(identity.Configuration{ConsoleOwner: "console-owner", NativeOwners: map[string]string{channel: "someone"}}); err == nil {
 			t.Errorf("registered an owner for channel %q", channel)
 		}
 	}

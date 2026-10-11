@@ -98,7 +98,7 @@ func TestRetainedChatCarriesTheForceStopRevision(t *testing.T) {
 	if _, err := c.attempts.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	items, err := c.RetainedChatsFor(t.Context(), req.ConversationID, req.MessageID)
+	items, err := c.RetainedChatsFor(t.Context(), req.Source.ConversationID, req.Source.MessageID)
 	if err != nil || len(items) != 1 || items[0].ForceStopRevision != 1 {
 		t.Fatalf("chat confirmation lost current revision: %+v %v", items, err)
 	}

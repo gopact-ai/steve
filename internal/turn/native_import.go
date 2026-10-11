@@ -14,7 +14,7 @@ import (
 // may already have frozen the source history in an isolated snapshot; no runtime
 // starts until admission. ImportNativeSession repeats these checks at binding.
 func (c *Coordinator) PreflightNativeImport(ctx context.Context, conversation, projectID string, selected agent.Agent) (string, error) {
-	if err := c.require(ctx, projectID, c.ownerOpenID, project.RoleWrite); err != nil {
+	if err := c.require(ctx, projectID, c.ownerID, project.RoleWrite); err != nil {
 		return "", err
 	}
 	binding, exists, err := c.projects.Binding(ctx, conversation)
@@ -50,7 +50,7 @@ func (c *Coordinator) ImportNativeSession(ctx context.Context, conversation, pro
 	c.cancels[key] = &turnEntry{cancel: cancel, done: make(chan struct{})}
 	c.mu.Unlock()
 	defer c.clearActive(conversation, selected.ID)
-	if err := c.require(ctx, projectID, c.ownerOpenID, project.RoleWrite); err != nil {
+	if err := c.require(ctx, projectID, c.ownerID, project.RoleWrite); err != nil {
 		return err
 	}
 	workspace, err := c.projects.Materialize(ctx, project.Request{Project: projectID, Node: selected.Node})

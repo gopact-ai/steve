@@ -22,7 +22,7 @@ func (a *AbandonControl) AbandonAttempt(ctx context.Context, id, requester strin
 	c := a.coordinator
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
-	owner, err := c.owners.of("console")
+	owner, err := c.owners.Owner("console")
 	if err != nil {
 		return attempt.Record{}, err
 	}

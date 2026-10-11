@@ -46,7 +46,12 @@ func TestPromptReportsItsPreparationSteps(t *testing.T) {
 	var running bool
 	var afterRunning []view.Stage
 	request := func(message string) Request {
-		return Request{ConversationID: "chat", MessageID: message, Input: message,
+		return Request{
+			Source: Source{
+				ConversationID: "chat",
+				MessageID:      message,
+			},
+			Input: message,
 			OnPhase: func(p view.Phase) {
 				mu.Lock()
 				defer mu.Unlock()

@@ -56,7 +56,12 @@ func TestOwnerSkillsEnableDisableAndDrift(t *testing.T) {
 func TestGuestCannotManageSkills(t *testing.T) {
 	coordinator, _, _, _ := skillsCoordinator(t)
 	result, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "grp", Input: "/skills enable remind", SenderOpenID: "ou_me", ChatType: protocol.ChatGroup,
+		Source: Source{
+			ConversationID: "grp",
+			ChatType:       protocol.ChatGroup,
+		},
+		Input: "/skills enable remind",
+		Actor: Actor{ID: "ou_me"},
 	})
 	if err != nil || !strings.Contains(result.Text, i18n.New(i18n.LocaleZH).T(i18n.SkillsOwnerOnly)) {
 		t.Fatalf("guest = %#v, %v", result, err)
@@ -192,6 +197,11 @@ func skillsCoordinator(t *testing.T) (*Coordinator, *state.Store, *liveCounter, 
 func ownerHandle(t *testing.T, c *Coordinator, input string) (Result, error) {
 	t.Helper()
 	return c.Handle(t.Context(), Request{
-		ConversationID: "dm", Input: input, SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
+		Source: Source{
+			ConversationID: "dm",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: input,
+		Actor: Actor{ID: "ou_me"},
 	})
 }

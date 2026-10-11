@@ -37,7 +37,14 @@ func TestTaskControlRequiresMatchingTransport(t *testing.T) {
 				if explicit {
 					input += " " + tracked.ID
 				}
-				result, _ := c.Handle(t.Context(), Request{Channel: "console", ConversationID: tracked.Channel, Locale: "en", Input: input})
+				result, _ := c.Handle(t.Context(), Request{
+					Source: Source{
+						Channel:        "console",
+						ConversationID: tracked.Channel,
+					},
+					Locale: "en",
+					Input:  input,
+				})
 				if after, _ := tasks.Get(tracked.ID); !reflect.DeepEqual(before, after) {
 					t.Errorf("cross-transport %s changed task: before=%+v after=%+v", verb, before, after)
 				}
@@ -69,7 +76,13 @@ func TestTaskControlFindsOnlyItsTransportInSharedConversation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := c.Handle(t.Context(), Request{Channel: transport, ConversationID: "same", Input: "/tasks pause"}); err != nil {
+			if _, err := c.Handle(t.Context(), Request{
+				Source: Source{
+					Channel:        transport,
+					ConversationID: "same",
+				},
+				Input: "/tasks pause",
+			}); err != nil {
 				t.Fatal(err)
 			}
 			if got, _ := c.tasks.Get(own.ID); got.State != task.StatePaused {

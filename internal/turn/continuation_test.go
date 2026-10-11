@@ -24,7 +24,10 @@ func TestContinuationCannotCreateAnotherTaskOrResumeAPausedOne(t *testing.T) {
 				t.Fatal(err)
 			}
 			c := buildCoordinator(t, withDeps(func(d *Deps) { d.Tasks, d.Node = store, "hub" }))
-			req := Request{ConversationID: parent.Channel, ExpectedTask: parent.ID}
+			req := Request{
+				Source:    Source{ConversationID: parent.Channel},
+				Admission: Admission{ExpectedTask: parent.ID},
+			}
 			_, err = c.beginTask(req, agent.Agent{ID: "worker"}, "child done", project.Binding{}, "/work")
 			if err == nil {
 				t.Fatal("stale continuation was accepted")
@@ -53,7 +56,10 @@ func TestContinuationPreservesScheduledParentLineage(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Tasks, d.Node = store, "hub" }))
-	id, err := c.beginTask(Request{ConversationID: parent.Channel, ExpectedTask: parent.ID}, agent.Agent{ID: "worker"}, "child done", project.Binding{}, "/work")
+	id, err := c.beginTask(Request{
+		Source:    Source{ConversationID: parent.Channel},
+		Admission: Admission{ExpectedTask: parent.ID},
+	}, agent.Agent{ID: "worker"}, "child done", project.Binding{}, "/work")
 	if err != nil || id != parent.ID {
 		t.Fatalf("lost scheduled lineage: id=%s err=%v", id, err)
 	}

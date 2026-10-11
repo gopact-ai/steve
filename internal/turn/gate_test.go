@@ -129,7 +129,10 @@ func TestCoordinatorSkipsGateWhenHarnessLacksHTTPMCP(t *testing.T) {
 func TestCoordinatorMintsDistinctTokensPerConversation(t *testing.T) {
 	coordinator, _, _, _, store := gateCoordinator(t, true)
 	for _, conversation := range []string{"chat-a", "chat-b"} {
-		if _, err := coordinator.Handle(t.Context(), Request{ConversationID: conversation, Input: "hi"}); err != nil {
+		if _, err := coordinator.Handle(t.Context(), Request{
+			Source: Source{ConversationID: conversation},
+			Input:  "hi",
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}

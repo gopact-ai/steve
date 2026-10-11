@@ -82,7 +82,15 @@ func TestTwoConversationsContinueTheSharedRecoveryThroughRealTurnLifecycle(t *te
 		if _, err := c.projects.Bind(t.Context(), conversation, p.ID, "owner"); err != nil {
 			t.Fatal(err)
 		}
-		result, err := c.Handle(t.Context(), Request{Channel: "console", ConversationID: conversation, MessageID: fmt.Sprintf("web-copy-%d", n), SenderOpenID: "owner", Input: "@worker continue this project"})
+		result, err := c.Handle(t.Context(), Request{
+			Source: Source{
+				Channel:        "console",
+				ConversationID: conversation,
+				MessageID:      fmt.Sprintf("web-copy-%d", n),
+			},
+			Actor: Actor{ID: "owner"},
+			Input: "@worker continue this project",
+		})
 		if err != nil {
 			t.Fatalf("continuation %d: %+v %v", n, result, err)
 		}
@@ -148,7 +156,15 @@ func TestConcurrentConversationsWaitForTheSharedRecoveryWriter(t *testing.T) {
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
-		_, err := c.Handle(ctx, Request{Channel: "console", ConversationID: "console:first", MessageID: "web-first", SenderOpenID: "owner", Input: "@worker first"})
+		_, err := c.Handle(ctx, Request{
+			Source: Source{
+				Channel:        "console",
+				ConversationID: "console:first",
+				MessageID:      "web-first",
+			},
+			Actor: Actor{ID: "owner"},
+			Input: "@worker first",
+		})
 		first <- err
 	}()
 	select {
@@ -162,14 +178,23 @@ func TestConcurrentConversationsWaitForTheSharedRecoveryWriter(t *testing.T) {
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
-		_, err := c.Handle(ctx, Request{Channel: "console", ConversationID: "console:second", MessageID: "web-second", SenderOpenID: "owner", Input: "@worker second", OnStage: func(stage view.Stage) {
-			if stage == view.StageAwaitSnapshot {
-				select {
-				case waiting <- struct{}{}:
-				default:
+		_, err := c.Handle(ctx, Request{
+			Source: Source{
+				Channel:        "console",
+				ConversationID: "console:second",
+				MessageID:      "web-second",
+			},
+			Actor: Actor{ID: "owner"},
+			Input: "@worker second",
+			OnStage: func(stage view.Stage) {
+				if stage == view.StageAwaitSnapshot {
+					select {
+					case waiting <- struct{}{}:
+					default:
+					}
 				}
-			}
-		}})
+			},
+		})
 		second <- err
 	}()
 	select {

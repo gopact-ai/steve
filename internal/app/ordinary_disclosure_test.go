@@ -43,7 +43,7 @@ func TestOrdinarySealedDisclosureNotificationKeepsExecutionIdentity(t *testing.T
 			f := openCrashProbe(t, t.TempDir(), func(o *turntest.Options) {
 				o.DefaultProject = "p"
 				if mode == "sealed-guest" {
-					o.ChannelOwners = map[string]string{"feishu": "different-security-owner"}
+					o.Identity.NativeOwners = map[string]string{"feishu": "different-security-owner"}
 				}
 			})
 			defer f.close(t)

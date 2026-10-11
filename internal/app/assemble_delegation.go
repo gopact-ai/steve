@@ -41,6 +41,10 @@ func assembleDelegation(life lifetime, input inputAssembly, boot runtimeAssembly
 	view := projection.View()
 	admin := page.Admin()
 	cons := page.Console()
+	taskChannels, err := assembleTaskChannels(cons, gw, book, work.Coordinator(), work.CatalogText())
+	if err != nil {
+		return nil, err
+	}
 
 	// The messaging server's port is remembered across restarts only so it
 	// rarely moves. A moved port is not a configuration change: session
@@ -108,7 +112,7 @@ func assembleDelegation(life lifetime, input inputAssembly, boot runtimeAssembly
 		delegation.RegisterIdle = nodes.RegisterIdle
 		delegation.SetObserver(delegateObserver(ctx, boot.NodeName(), admin, view, cons))
 		gate.SetDelegator(delegation)
-		wireDelegateDelivery(delegation, cons, gw)
+		wireDelegateDelivery(delegation, taskChannels)
 		messaging = messagingCallbacks{
 			AgentGate: gate,
 			AfterTurn: func(taskID string) { delegation.Flush(ctx, taskID) },
@@ -137,10 +141,11 @@ func assembleDelegation(life lifetime, input inputAssembly, boot runtimeAssembly
 			}
 		})
 	}
-	return &delegationValues{gate: gate, messaging: messaging, recoverRetainedDelegates: recoverRetainedDelegates, reconcileDeliveries: reconcileDeliveries}, nil
+	return &delegationValues{gate: gate, messaging: messaging, taskChannels: taskChannels, recoverRetainedDelegates: recoverRetainedDelegates, reconcileDeliveries: reconcileDeliveries}, nil
 }
 
 type delegationAssembly interface {
+	TaskChannels() *taskChannelRegistry
 	Gate() *agentmcp.Server
 	Messaging() messagingCallbacks
 	RecoverRetainedDelegates() func(context.Context) error
@@ -156,6 +161,7 @@ type messagingCallbacks struct {
 }
 
 type delegationValues struct {
+	taskChannels             *taskChannelRegistry
 	gate                     *agentmcp.Server
 	messaging                messagingCallbacks
 	recoverRetainedDelegates func(context.Context) error
@@ -163,6 +169,8 @@ type delegationValues struct {
 }
 
 func (v *delegationValues) Gate() *agentmcp.Server { return v.gate }
+
+func (v *delegationValues) TaskChannels() *taskChannelRegistry { return v.taskChannels }
 
 // startMessaging serves the messaging MCP server, when there is one. Its
 // tools reach the coordinator, so it starts only once assembly is done.

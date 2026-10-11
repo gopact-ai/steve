@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
@@ -166,7 +167,7 @@ func TestRecoveryPreapplyRetryKeepsPendingWhenAuthorityOrTransactionIsRefused(t 
 			switch mode {
 			case "owner":
 				var err error
-				f.c.owners, err = newChannelOwners("different-owner", nil)
+				f.c.owners, err = identity.NewOwners(identity.Configuration{ConsoleOwner: "different-owner", NativeOwners: nil})
 				if err != nil {
 					t.Fatal(err)
 				}

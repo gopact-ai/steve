@@ -39,7 +39,13 @@ func credentialTurn(t *testing.T) (*chatTurn, *continuityGate, state.Session) {
 	t.Helper()
 	g := &continuityGate{denied: "revoked-token"}
 	c, _, _, _, _ := gateCoordinator(t, true, withCallbacks(func(cb *Callbacks) { cb.AgentGate = g }))
-	req := Request{ConversationID: "chat", Input: "continue", MessageID: "next"}
+	req := Request{
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "next",
+		},
+		Input: "continue",
+	}
 	selected := c.catalog.Default()
 	binding, workspace, err := c.resolveWorkspace(t.Context(), req, selected)
 	if err != nil {

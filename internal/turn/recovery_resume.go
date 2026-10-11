@@ -141,7 +141,7 @@ func (c *Coordinator) ResumeRetainedChat(parent context.Context, id string, req 
 }
 
 func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req Request, turnOwned bool) (result Result, err error) {
-	c, err = c.forChannel(req.Channel)
+	c, err = c.forChannel(req.Source.Channel)
 	if err != nil {
 		return Result{}, err
 	}
@@ -177,15 +177,15 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	ctx, cancel := context.WithCancel(clock)
 	defer cancel()
 	if !turnOwned {
-		if !c.beginTurn(req.ConversationID, record.Agent, cancel) {
+		if !c.beginTurn(req.Source.ConversationID, record.Agent, cancel) {
 			return Result{}, c.retainedBlocked("busy", i18n.RetainedTriedSessionOccupancy, i18n.RetainedProblemSessionBusy, c.text.T(i18n.RetainedReasonOneDriver), i18n.RetainedAdviceAwaitDriver, nil)
 		}
-		defer c.clearActive(req.ConversationID, record.Agent)
+		defer c.clearActive(req.Source.ConversationID, record.Agent)
 	}
 	defer func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if entry := c.cancels[sessionKey(req.ConversationID, record.Agent)]; entry != nil {
+		if entry := c.cancels[sessionKey(req.Source.ConversationID, record.Agent)]; entry != nil {
 			entry.err = err
 		}
 	}()
@@ -213,12 +213,12 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	}
 	record = refreshed
 	knownRetained = true
-	if err := c.bindExecutionGate(ctx, req.ConversationID, record.ID); err != nil {
+	if err := c.bindExecutionGate(ctx, req.Source.ConversationID, record.ID); err != nil {
 		return Result{}, err
 	}
 	settled = observed.Command != nil && observed.Command.Settled && (observed.Command.State == nodewire.SessionCommandCompleted || observed.Command.State == nodewire.SessionCommandCancelled)
 	scope.AdoptRetained()
-	c.setRunner(req.ConversationID, record.Agent, runner)
+	c.setRunner(req.Source.ConversationID, record.Agent, runner)
 	spent := &turnSpend{resetIdle: touch}
 	req.OnProgress = spent.wrap(req.OnProgress, record.Agent)
 	req.phase(view.PhaseRunning)
@@ -233,7 +233,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	if errors.As(runErr, &detached) {
 		return Result{}, c.retainedBlocked("observer-detached", i18n.RetainedTriedObserve, i18n.RetainedProblemObserverLost, c.text.T(i18n.RetainedReasonKeepUntilVerified), i18n.RetainedAdviceReconnect, runErr)
 	}
-	if saved := c.store.Conversation(req.ConversationID).Sessions[record.Agent]; saved.UpstreamID == record.Session {
+	if saved := c.store.Conversation(req.Source.ConversationID).Sessions[record.Agent]; saved.UpstreamID == record.Session {
 		saved.Tainted = false
 		saved.InstructionsApplied = true
 		if err := c.store.SaveSession(saved); err != nil {
@@ -274,10 +274,10 @@ func (c *Coordinator) retainedChatRecord(parent context.Context, id string, req 
 		return attempt.Record{}, err
 	}
 	tracked, ok := c.tasks.Get(record.TaskID)
-	if !ok || record.Kind != attempt.KindChat || tracked.Channel != req.ConversationID || record.TurnID != req.MessageID {
+	if !ok || record.Kind != attempt.KindChat || tracked.Channel != req.Source.ConversationID || record.TurnID != req.Source.MessageID {
 		return attempt.Record{}, c.retainedBlocked("identity", i18n.RetainedTriedTaskSession, i18n.RetainedProblemIdentity, c.text.T(i18n.RetainedReasonIDMismatch), i18n.RetainedAdviceCheckTaskRecord, nil)
 	}
-	if tracked.Requester != "" && tracked.Requester != req.SenderOpenID {
+	if tracked.Requester != "" && tracked.Requester != req.Actor.ID {
 		return attempt.Record{}, errors.New("retained execution belongs to another requester")
 	}
 	c.rememberMode(req)

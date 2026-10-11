@@ -24,8 +24,17 @@ func TestBeginTaskPersistsAnchor(t *testing.T) {
 	runner := &fakeRunner{reply: "ok"}
 	coordinator, tasks := taskCoordinator(t, runner)
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "chat", Input: "干活", MessageID: "om_1", ChatID: "oc_1",
-		ChatType: protocol.ChatGroup, Mentioned: true, CardID: "om_card_1",
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "om_1",
+			ChatType:       protocol.ChatGroup,
+			Mentioned:      true,
+		},
+		Input: "干活",
+		Reply: ReplyContext{
+			ChatID: "oc_1",
+			CardID: "om_card_1",
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -41,8 +50,14 @@ func TestBeginTaskPersistsAnchor(t *testing.T) {
 	}
 	// The next turn refreshes the anchor to the newest exchange.
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "chat", Input: "接着", MessageID: "om_2", ChatID: "oc_1",
-		ChatType: protocol.ChatGroup, Mentioned: true,
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "om_2",
+			ChatType:       protocol.ChatGroup,
+			Mentioned:      true,
+		},
+		Input: "接着",
+		Reply: ReplyContext{ChatID: "oc_1"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +138,13 @@ func TestCrashResumeE2E(t *testing.T) {
 	c1 := newCoordinatorIn(t, map[string]string{"mock": workspace}, catalog, store1, capability.NewAssembler(nil), manager1, 30*time.Second, onLedger(book), withTasks(tasks1, "n1"))
 	c1.artifacts.SetExecution(c1.executions)
 	result, err := c1.Handle(context.Background(), Request{
-		ConversationID: "chat", Input: "hello", MessageID: "om_1", ChatID: "oc_1", ChatType: protocol.ChatGroup,
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "om_1",
+			ChatType:       protocol.ChatGroup,
+		},
+		Input: "hello",
+		Reply: ReplyContext{ChatID: "oc_1"},
 	})
 	if err != nil || !strings.Contains(result.Text, "echo:") {
 		t.Fatalf("first turn = %#v, %v", result, err)
@@ -164,7 +185,13 @@ func TestCrashResumeE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err = c2.Handle(context.Background(), Request{
-		ConversationID: "chat", Input: "继续任务", MessageID: "om_2", ChatID: "oc_1", ChatType: protocol.ChatGroup,
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "om_2",
+			ChatType:       protocol.ChatGroup,
+		},
+		Input: "继续任务",
+		Reply: ReplyContext{ChatID: "oc_1"},
 	})
 	if err != nil || !strings.Contains(result.Text, "echo:") {
 		t.Fatalf("resumed turn = %#v, %v", result, err)
@@ -193,8 +220,12 @@ func TestOnboardingTurnRunsUnderAClosedTaskWithAnExecutionToken(t *testing.T) {
 	runner := &fakeRunner{reply: "ok"}
 	coordinator, tasks := taskCoordinator(t, runner)
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "steve:onboard:ou_x", Input: "自我介绍", SenderOpenID: "ou_x",
-		ChatType: protocol.ChatP2P,
+		Source: Source{
+			ConversationID: "steve:onboard:ou_x",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "自我介绍",
+		Actor: Actor{ID: "ou_x"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +263,14 @@ func TestOnboardingTurnRunsUnderAClosedTaskWithAnExecutionToken(t *testing.T) {
 func TestFailedOnboardingTurnKeepsItsTaskForTheRetry(t *testing.T) {
 	runner := &fakeRunner{err: errors.New("agent unavailable")}
 	coordinator, tasks := taskCoordinator(t, runner)
-	req := Request{ConversationID: "steve:onboard:ou_x", Input: "自我介绍", SenderOpenID: "ou_x", ChatType: protocol.ChatP2P}
+	req := Request{
+		Source: Source{
+			ConversationID: "steve:onboard:ou_x",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "自我介绍",
+		Actor: Actor{ID: "ou_x"},
+	}
 	if _, err := coordinator.Handle(t.Context(), req); err == nil {
 		t.Fatal("expected the onboarding turn to fail")
 	}
@@ -264,7 +302,12 @@ func TestIncompleteProfileOnlyInterceptsHomeProject(t *testing.T) {
 				t.Fatal(err)
 			}
 			result, err := coordinator.Handle(t.Context(), Request{
-				ConversationID: "chat", Input: "don't scan; explain the project", SenderOpenID: "owner", ChatType: protocol.ChatP2P,
+				Source: Source{
+					ConversationID: "chat",
+					ChatType:       protocol.ChatP2P,
+				},
+				Input: "don't scan; explain the project",
+				Actor: Actor{ID: "owner"},
 			})
 			if err != nil {
 				t.Fatal(err)

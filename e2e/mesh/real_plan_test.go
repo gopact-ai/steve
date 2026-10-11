@@ -178,7 +178,12 @@ func TestRealClaudePlansRealCodexExecutesOnTheNodes(t *testing.T) {
 		"每台机器各自在自己的工作目录里做，不需要互相拷贝文件。" +
 		"Go 在 /usr/local/go/bin/go。验证用命令，不要用 none。"
 	result, err := coordinator.Handle(ctx, turn.Request{
-		ConversationID: "chat", MessageID: "om_real", ChatID: "oc_real", Input: goal,
+		Source: turn.Source{
+			ConversationID: "chat",
+			MessageID:      "om_real",
+		},
+		Reply: turn.ReplyContext{ChatID: "oc_real"},
+		Input: goal,
 	})
 	elapsed := time.Since(started).Round(time.Second)
 	if err != nil {
@@ -290,7 +295,11 @@ func TestRealClaudeDelegatesToTheNodeThatCan(t *testing.T) {
 
 	started := time.Now()
 	result, err := coordinator.Handle(ctx, turn.Request{
-		ConversationID: "chat", MessageID: "om_deleg", ChatID: "oc_deleg",
+		Source: turn.Source{
+			ConversationID: "chat",
+			MessageID:      "om_deleg",
+		},
+		Reply: turn.ReplyContext{ChatID: "oc_deleg"},
 		Input: "你在 hub 上，这台机器没有内网访问（internal-net）。" +
 			"需要在有 internal-net 能力的机器上、它自己的工作目录里创建文件 staged.txt，内容只有一行 STAGED。" +
 			"你自己做不到，请用 steve_delegate 工具把这件事交给能做的 agent（requires 填 [\"internal-net\"]），" +

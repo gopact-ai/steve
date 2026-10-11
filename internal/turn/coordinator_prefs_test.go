@@ -252,7 +252,9 @@ func TestRefusedExplicitPreferencesBlockInputWithoutLosingContext(t *testing.T) 
 	rt.runner.(*recoveryConfigurable).refused = true
 	before := c.store.Conversation("chat")
 	selected, _ := c.catalog.Resolve("grok")
-	turn := &chatTurn{c: c, req: Request{ConversationID: "chat"}, selected: selected}
+	turn := &chatTurn{c: c, req: Request{
+		Source: Source{ConversationID: "chat"},
+	}, selected: selected}
 	if _, err := turn.arm(t.Context(), &lifecycle.Execution{Session: rt.runner, Record: attempt.Record{}}); err == nil {
 		t.Fatal("unapplied preferences accepted")
 	}

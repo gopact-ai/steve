@@ -74,7 +74,10 @@ func TestSettledErrorAtDeadlineKeepsAdjacentSessionAvailable(t *testing.T) {
 	if runner.aborts.Load() != 0 || runner.cancels.Load() != 0 {
 		t.Fatal("settled deadline response tore down shared host")
 	}
-	result, err := c.Handle(t.Context(), Request{ConversationID: "neighbor", Input: "neighbor"})
+	result, err := c.Handle(t.Context(), Request{
+		Source: Source{ConversationID: "neighbor"},
+		Input:  "neighbor",
+	})
 	if err != nil || result.Text != "neighbor still available" {
 		t.Fatalf("neighbor session lost: %+v %v", result, err)
 	}

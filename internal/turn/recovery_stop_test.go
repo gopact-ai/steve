@@ -18,10 +18,10 @@ import (
 func TestStopRetainedTaskRequiresPhysicalSettlementAndOriginalIdentity(t *testing.T) {
 	c, _, _, r, req := retainedChatFixture(t)
 	for _, change := range []func(*Request){
-		func(r *Request) { r.MessageID = "web-other" },
-		func(r *Request) { r.ConversationID = "console:other" },
-		func(r *Request) { r.SenderOpenID = "other" },
-		func(r *Request) { r.ExpectedProject = "other" },
+		func(r *Request) { r.Source.MessageID = "web-other" },
+		func(r *Request) { r.Source.ConversationID = "console:other" },
+		func(r *Request) { r.Actor.ID = "other" },
+		func(r *Request) { r.Admission.ExpectedProject = "other" },
 	} {
 		wrong := req
 		change(&wrong)
@@ -89,7 +89,7 @@ func TestRetainedChatsCarryTheTaskState(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		items, err := c.RetainedChatsFor(t.Context(), req.ConversationID, req.MessageID)
+		items, err := c.RetainedChatsFor(t.Context(), req.Source.ConversationID, req.Source.MessageID)
 		if err != nil || len(items) != 1 || items[0].TaskID != r.TaskID || items[0].TaskState != want {
 			t.Fatalf("retained chats with the task %s = %+v, %v; want its one execution carrying that state", want, items, err)
 		}

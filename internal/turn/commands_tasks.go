@@ -138,7 +138,7 @@ func (c commands) taskTarget(req Request, id string, verb taskVerb) (task.Task, 
 		// Background work may have no conversation to scope. It still
 		// belongs to its recorded transport; missing transport is not
 		// permission for a console or chat adapter to claim the task.
-		if !ok || tracked.Transport != req.Channel || tracked.Channel != "" && tracked.Channel != req.ConversationID {
+		if !ok || tracked.Transport != req.Source.Channel || tracked.Channel != "" && tracked.Channel != req.Source.ConversationID {
 			return task.Task{}, false
 		}
 		return tracked, true
@@ -146,8 +146,8 @@ func (c commands) taskTarget(req Request, id string, verb taskVerb) (task.Task, 
 	// List is newest first, so the bare verb acts on what the user most
 	// plausibly has in mind — the thing they were just talking about.
 	var completed task.Task
-	for _, candidate := range c.tasks.List(req.ConversationID) {
-		if candidate.Transport != req.Channel {
+	for _, candidate := range c.tasks.List(req.Source.ConversationID) {
+		if candidate.Transport != req.Source.Channel {
 			continue
 		}
 		if verb == taskComplete {
@@ -238,14 +238,14 @@ func (c commands) taskPickUp(ctx context.Context, req Request, title string, tra
 		result.Text = c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))
 		return result, nil
 	}
-	identity := req.MessageID
-	if req.ExchangeID != "" {
-		identity = req.ExchangeID
+	identity := req.Source.MessageID
+	if req.Admission.ExchangeID != "" {
+		identity = req.Admission.ExchangeID
 	}
 	if identity == "" {
 		return result, fmt.Errorf("durable resume requires a stable control input identity")
 	}
-	id := fmt.Sprintf("task-resume:%x", sha256.Sum256([]byte(req.Channel+"\x00"+req.ConversationID+"\x00"+identity)))
+	id := fmt.Sprintf("task-resume:%x", sha256.Sum256([]byte(req.Source.Channel+"\x00"+req.Source.ConversationID+"\x00"+identity)))
 	admission := task.ResumeAdmission{ID: id, TaskID: tracked.ID, Epoch: tracked.ExecutionEpoch + 1}
 	if tracked.ResumeGrant.Admission.ID == id {
 		// Replaying the control cannot renew a consumed or revoked grant.
@@ -301,7 +301,7 @@ func (c commands) taskPickUp(ctx context.Context, req Request, title string, tra
 // whole point of a task outliving its turn, so it is a command rather than
 // something only the debug API can see.
 func (c commands) tasksList(req Request, title string) Result {
-	all := c.tasks.List(req.ConversationID)
+	all := c.tasks.List(req.Source.ConversationID)
 	if len(all) == 0 {
 		return Result{Title: title, Text: c.text.T(i18n.TasksEmpty)}
 	}

@@ -18,7 +18,7 @@ import (
 // ends the agent's context but leaves its session on the agent's side, so an
 // archived record is a live handle rather than a receipt.
 func (c commands) historyCmd(req Request, selected agent.Agent, rest string) (Result, error) {
-	conversationID := req.ConversationID
+	conversationID := req.Source.ConversationID
 	archived := c.store.ArchivedSessions(conversationID, selected.ID)
 	rest = strings.TrimSpace(rest)
 	if rest == "" {

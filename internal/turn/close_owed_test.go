@@ -79,8 +79,26 @@ var ownerChannels = []struct {
 	name string
 	req  Request
 }{
-	{"console", Request{Channel: "console", ConversationID: "console:owed", SenderOpenID: "owner", ChatType: protocol.ChatP2P, ChatID: "console", Mentioned: true}},
-	{"feishu", Request{Channel: "feishu", ConversationID: "oc_owed", SenderOpenID: "owner", ChatType: protocol.ChatP2P, ChatID: "oc_owed", Mentioned: true}},
+	{"console", Request{
+		Source: Source{
+			Channel:        "console",
+			ConversationID: "console:owed",
+			ChatType:       protocol.ChatP2P,
+			Mentioned:      true,
+		},
+		Actor: Actor{ID: "owner"},
+		Reply: ReplyContext{ChatID: "console"},
+	}},
+	{"feishu", Request{
+		Source: Source{
+			Channel:        "feishu",
+			ConversationID: "oc_owed",
+			ChatType:       protocol.ChatP2P,
+			Mentioned:      true,
+		},
+		Actor: Actor{ID: "owner"},
+		Reply: ReplyContext{ChatID: "oc_owed"},
+	}},
 }
 
 // startOwedSession runs one turn in req's conversation, so it holds the
@@ -88,14 +106,14 @@ var ownerChannels = []struct {
 // ran.
 func startOwedSession(t *testing.T, c *Coordinator, req Request, id string) (state.Session, Result) {
 	t.Helper()
-	req.Input, req.MessageID = "hello", "m1"
+	req.Input, req.Source.MessageID = "hello", "m1"
 	first, err := c.Handle(t.Context(), req)
 	if err != nil {
 		t.Fatalf("first turn: %v", err)
 	}
-	session, ok := c.store.Conversation(req.ConversationID).Sessions["codex"]
+	session, ok := c.store.Conversation(req.Source.ConversationID).Sessions["codex"]
 	if !ok || session.UpstreamID != id {
-		t.Fatalf("the first turn left the session %+v", c.store.Conversation(req.ConversationID))
+		t.Fatalf("the first turn left the session %+v", c.store.Conversation(req.Source.ConversationID))
 	}
 	return session, first
 }
@@ -118,7 +136,7 @@ func TestResetLetsGoOfASessionItsNodeCannotBeReachedFor(t *testing.T) {
 			}
 			sessions.err = &nodewire.SessionNotDispatched{Cause: errors.New("dial node-b: connection refused")}
 			req := tc.req
-			req.Input, req.MessageID = "/new", "m2"
+			req.Input, req.Source.MessageID = "/new", "m2"
 			result, err := c.Handle(t.Context(), req)
 			if err != nil {
 				t.Fatalf("/new with its node unreachable: %v", err)
@@ -129,10 +147,10 @@ func TestResetLetsGoOfASessionItsNodeCannotBeReachedFor(t *testing.T) {
 			if want := []sessionClose{{place: harness.Placement{Node: session.NodeID, Harness: session.HarnessID}, id: "ns_owed"}}; !reflect.DeepEqual(sessions.closes, want) {
 				t.Fatalf("closes %+v, want %+v", sessions.closes, want)
 			}
-			if live, ok := c.store.Conversation(req.ConversationID).Sessions["codex"]; ok {
+			if live, ok := c.store.Conversation(req.Source.ConversationID).Sessions["codex"]; ok {
 				t.Fatalf("the session is still live: %+v", live)
 			}
-			archived := c.store.ArchivedSessions(req.ConversationID, "codex")
+			archived := c.store.ArchivedSessions(req.Source.ConversationID, "codex")
 			if len(archived) != 1 || archived[0].UpstreamID != "ns_owed" {
 				t.Fatalf("archived %+v", archived)
 			}
@@ -148,7 +166,7 @@ func TestResetLetsGoOfASessionItsNodeCannotBeReachedFor(t *testing.T) {
 			}
 			// The conversation starts over in a session of its own.
 			sessions.err = nil
-			req.Input, req.MessageID = "again", "m3"
+			req.Input, req.Source.MessageID = "again", "m3"
 			if _, err := c.Handle(t.Context(), req); err != nil {
 				t.Fatalf("the turn after /new: %v", err)
 			}
@@ -199,11 +217,11 @@ func TestResetKeepsTheSessionWhenTheCloseMayHaveLanded(t *testing.T) {
 			}
 			startOwedSession(t, c, req, opened)
 			if tc.change != nil {
-				tc.change(t, c, req.ConversationID)
+				tc.change(t, c, req.Source.ConversationID)
 			}
 			sessions.err = tc.failure
-			before := c.store.Conversation(req.ConversationID).Sessions["codex"]
-			req.Input, req.MessageID = "/new", "m2"
+			before := c.store.Conversation(req.Source.ConversationID).Sessions["codex"]
+			req.Input, req.Source.MessageID = "/new", "m2"
 			_, err := c.Handle(t.Context(), req)
 			if err == nil {
 				t.Fatal("/new reported success for a close that may have landed")
@@ -217,10 +235,10 @@ func TestResetKeepsTheSessionWhenTheCloseMayHaveLanded(t *testing.T) {
 			if len(sessions.closes) != 1 || sessions.closes[0].id != before.UpstreamID {
 				t.Fatalf("closes %+v, want one of %s", sessions.closes, before.UpstreamID)
 			}
-			if live, ok := c.store.Conversation(req.ConversationID).Sessions["codex"]; !ok || live.UpstreamID != before.UpstreamID {
-				t.Fatalf("the session went: %+v", c.store.Conversation(req.ConversationID))
+			if live, ok := c.store.Conversation(req.Source.ConversationID).Sessions["codex"]; !ok || live.UpstreamID != before.UpstreamID {
+				t.Fatalf("the session went: %+v", c.store.Conversation(req.Source.ConversationID))
 			}
-			if got := c.store.ArchivedSessions(req.ConversationID, "codex"); len(got) != 0 {
+			if got := c.store.ArchivedSessions(req.Source.ConversationID, "codex"); len(got) != 0 {
 				t.Fatalf("archived %+v", got)
 			}
 			if got := c.store.OwedCloses(); len(got) != 0 {

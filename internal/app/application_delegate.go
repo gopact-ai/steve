@@ -10,10 +10,8 @@ import (
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/delegate"
-	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
-	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -75,22 +73,11 @@ func wireDelegateRecovery(delegation *delegate.Service, cons *console.Service) {
 // wireDelegateDelivery sends a child's result back into its parent's
 // conversation as a message — the page's queue or the chat — instead of
 // the parent polling for it; a turn's end delivers what ended meanwhile.
-func wireDelegateDelivery(delegation *delegate.Service, cons *console.Service, gw *gateway.Gateway) {
-	delegation.SetReplaySafeDelivery(func(parent task.Task) bool {
-		return parent.Transport == "console"
-	})
-	delegation.SetDeliveryReceipt(func(parent task.Task, key string) (bool, error) {
-		if parent.Transport == "console" {
-			return cons.ContinuationReceipt(parent.Channel, parent.ID, key)
-		}
-		return false, nil
-	})
+func wireDelegateDelivery(delegation *delegate.Service, channels *taskChannelRegistry) {
+	delegation.SetReplaySafeDelivery(channels.ReplaySafe)
+	delegation.SetDeliveryReceipt(channels.ContinuationReceipt)
 	delegation.SetDeliverer(func(ctx context.Context, d delegate.Delivery) error {
-		return routeTask(d.Transport, func() error {
-			return cons.ContinueTask(ctx, d.Conversation, d.ParentTask, d.Key, d.Member, d.Notice(), d.Prompt())
-		}, func() error {
-			return gw.DeliverConfirmed(gateway.Revival{TaskID: d.ParentTask, Member: d.Member, ConversationID: d.Conversation, ChatID: d.ChatID, MessageID: d.Anchor, Requester: d.Requester, ChatType: d.ChatType}, d.Notice(), d.Prompt(), func(err error) { delegation.ConfirmDelivery(d, err) })
-		})
+		return channels.Deliver(ctx, d, func(err error) { delegation.ConfirmDelivery(d, err) })
 	})
 }
 

@@ -99,7 +99,7 @@ func (a recoveryAdmissionAttempts) Open(ctx context.Context, spec attempt.Spec) 
 		if err := a.turn.c.tasks.SetPendingTurnWorkspace(ctx, *fresh.Execution, fresh.TurnID, ws.Path); err != nil {
 			return record, err
 		}
-		if a.turn.req.ExpectedTask == "" {
+		if a.turn.req.Admission.ExpectedTask == "" {
 			if fresh.WorkspaceRecovery == nil {
 				a.waitingAttempts.passes = snapshotPasses
 				a.waitingAttempts.limit = snapshotWaitLimit

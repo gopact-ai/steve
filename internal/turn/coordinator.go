@@ -8,23 +8,21 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
-	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/nodewire"
-	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -35,62 +33,6 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
-
-type Request struct {
-	Locale         string
-	Channel        string
-	ConversationID string
-	Input          string
-	SenderOpenID   string
-	ChatType       protocol.ChatType
-	Mentioned      bool
-	// MessageID and ChatID anchor the turn in the channel, so an
-	// interrupted task can be resumed and delivered after a restart.
-	MessageID string
-	ChatID    string
-	// ExchangeID is set by the console adapter for the exact durable input
-	// being handled. Other channel message identities are not queue authority.
-	ExchangeID string
-	// CardID is the platform's own card opened for this turn, journaled
-	// so a crash can recall it instead of leaving a forever-running card.
-	CardID     string
-	Images     []harness.Media
-	OnProgress func(view.Progress)
-	OnAskUser  acphost.AskUserFunc
-	// OnTurnReady binds human requests to the admitted task and attempt.
-	OnTurnReady func(taskID, attemptID string)
-	// Origin marks a prompt Steve sent on the user's behalf rather than one
-	// they typed — a schedule firing, say. It rides onto the task so
-	// unattended work stays recognisable after the fact.
-	Origin string
-	// Relocation is the original input and scoped history from its adapter.
-	Relocation *RelocationContext
-	// ExpectedProject fences an unattended submission to its creation-time project.
-	ExpectedProject string
-	// ExpectedTask binds an automatic continuation to its original task.
-	ExpectedTask    string
-	ResumeAdmission task.ResumeAdmission
-	// Queue makes this prompt wait for the running turn instead of
-	// interrupting it: "also do this after" rather than "stop, do this".
-	Queue   bool
-	OnPhase func(view.Phase)
-	// OnStage reports which preparation step is running while the turn is
-	// still waking, so a long start says what it is waiting on.
-	OnStage func(view.Stage)
-	OnAsk   permission.AskFunc
-}
-
-func (r Request) phase(p view.Phase) {
-	if r.OnPhase != nil {
-		r.OnPhase(p)
-	}
-}
-
-func (r Request) stage(s view.Stage) {
-	if r.OnStage != nil {
-		r.OnStage(s)
-	}
-}
 
 // UserError is safe to show on Feishu. Gateway replies Text verbatim.
 type UserError struct {
@@ -185,8 +127,8 @@ type Result struct {
 
 type Coordinator struct {
 	*coordinatorState
-	text        i18n.Catalog
-	ownerOpenID string
+	text    i18n.Catalog
+	ownerID string
 }
 
 // coordinatorState owns shared execution state. Request-local views replace
@@ -204,7 +146,7 @@ type coordinatorState struct {
 	// setting never interrupts a live turn. Nil never hands a merge
 	// conflict to an agent unasked.
 	autoResolveSource func() bool
-	owners            channelOwners
+	owners            identity.Owners
 	home              home.Loader
 	homePath          string
 	skills            *skills.Live
@@ -280,13 +222,11 @@ type Deps struct {
 	// handed to an agent without anyone asking; nil never does.
 	AutoResolveSource func() bool
 	Text              i18n.Catalog
-	// Owner is the baseline owner identity; ChannelOwners registers each
-	// trusted non-console adapter's native owner.
-	Owner         string
-	ChannelOwners map[string]string
-	Home          home.Loader
-	Skills        *skills.Live
-	Projects      *project.Store
+	// Identity is the configured authority shared by input adapters and execution.
+	Identity identity.Configuration
+	Home     home.Loader
+	Skills   *skills.Live
+	Projects *project.Store
 	// DefaultProject binds a conversation that has never chosen;
 	// HomeProject, when set, binds the owner's DM instead.
 	DefaultProject string
@@ -363,7 +303,7 @@ func New(deps Deps) (*Coordinator, error) {
 	if missing := absent(deps.required()); len(missing) > 0 {
 		return nil, fmt.Errorf("turn: missing dependencies: %s", strings.Join(missing, ", "))
 	}
-	owners, err := newChannelOwners(deps.Owner, deps.ChannelOwners)
+	owners, err := identity.NewOwners(deps.Identity)
 	if err != nil {
 		return nil, fmt.Errorf("turn: %w", err)
 	}
@@ -372,8 +312,8 @@ func New(deps Deps) (*Coordinator, error) {
 		homePath = dir.Path
 	}
 	return &Coordinator{
-		text:        deps.Text,
-		ownerOpenID: deps.Owner,
+		text:    deps.Text,
+		ownerID: deps.Identity.ConsoleOwner,
 		coordinatorState: &coordinatorState{
 			catalog: deps.Catalog, store: deps.Store, assembler: deps.Assembler, runtime: deps.Runtime,
 			promptClock:       promptClock{timeout: deps.Timeout, source: deps.TimeoutSource, start: idle.WithTimeout},
@@ -451,7 +391,7 @@ func injectionMode(chatType protocol.ChatType, sender, owner string) home.Mode {
 }
 
 func (c *Coordinator) listenPrefix(req Request) string {
-	if req.ChatType != protocol.ChatGroup || req.Mentioned {
+	if req.Source.ChatType != protocol.ChatGroup || req.Source.Mentioned {
 		return ""
 	}
 	locale := home.LocaleZH
@@ -477,7 +417,7 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	var err error
-	c, err = c.forChannel(req.Channel)
+	c, err = c.forChannel(req.Source.Channel)
 	if err != nil {
 		return Result{}, err
 	}
@@ -497,7 +437,7 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 
 func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 	c.mu.Lock()
-	retiring := c.retiring[req.ConversationID]
+	retiring := c.retiring[req.Source.ConversationID]
 	c.mu.Unlock()
 	if retiring {
 		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel), Cause: ErrConversationBusy}
@@ -505,13 +445,13 @@ func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 	// Every arriving message is evidence that someone is present. The
 	// offline reminder reads exactly this: nothing arrived while the turn
 	// ran, so the person who asked is no longer watching.
-	c.noteActivity(req.ConversationID)
+	c.noteActivity(req.Source.ConversationID)
 	c.rememberMode(req)
-	selected, prompt, switchOnly, err := c.selectAgent(req.ConversationID, req.Input)
+	selected, prompt, switchOnly, err := c.selectAgent(req.Source.ConversationID, req.Input)
 	if err != nil {
 		return Result{}, err
 	}
-	selected = c.recoveryAgent(req.ConversationID, selected, req.Origin)
+	selected = c.recoveryAgent(req.Source.ConversationID, selected, req.Source.Origin)
 	if switchOnly {
 		return Result{AgentID: selected.ID, Text: c.text.T(i18n.Switched, selected.ID)}, nil
 	}
@@ -522,7 +462,7 @@ func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 	// "+" still queues for muscle memory from when interrupting was the
 	// default; it is now a no-op alias.
 	parsed := ParseInput(prompt)
-	prompt, req.Queue = parsed.Prompt, !parsed.Interrupt
+	prompt, req.Admission.Queue = parsed.Prompt, !parsed.Interrupt
 	cmd, rest := parsed.Command, parsed.Rest
 	if result, handled, err := c.commands().dispatch(ctx, req, selected, cmd, rest); handled {
 		return result, err
@@ -555,8 +495,4 @@ func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, st
 		return agent.Agent{}, "", false, err
 	}
 	return selected, strings.TrimSpace(input), false, nil
-}
-
-func (r Request) Address() channel.Address {
-	return channel.Address{Channel: r.Channel, Conversation: r.ConversationID, Message: r.MessageID}
 }

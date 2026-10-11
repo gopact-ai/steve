@@ -62,7 +62,11 @@ func TestAutoPlanDecomposesAndPlacesAcrossTheFleet(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	result, err := coordinator.Handle(ctx, turn.Request{
-		ConversationID: "chat", MessageID: "om_auto", ChatID: "oc_auto",
+		Source: turn.Source{
+			ConversationID: "chat",
+			MessageID:      "om_auto",
+		},
+		Reply: turn.ReplyContext{ChatID: "oc_auto"},
 		Input: "/plan get the release out the door",
 	})
 	if err != nil {

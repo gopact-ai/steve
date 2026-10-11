@@ -17,7 +17,14 @@ func TestFirstConversationContinuesAfterIdentityGeneration(t *testing.T) {
 	}
 	c, store, runner := homeCoordinator(t, dir, "owner")
 	runner.reply = "你好，资料已记下。\n===SOUL.md===\n# Soul\n你是帮助用户维护项目的可靠助手。\n===USER.md===\n# User\n- 称呼：李工\n- 时区：Asia/Shanghai\n"
-	req := Request{ConversationID: "dm", Input: "你好", SenderOpenID: "owner", ChatType: protocol.ChatP2P}
+	req := Request{
+		Source: Source{
+			ConversationID: "dm",
+			ChatType:       protocol.ChatP2P,
+		},
+		Input: "你好",
+		Actor: Actor{ID: "owner"},
+	}
 	first, err := c.Handle(t.Context(), req)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +75,14 @@ func TestIdentityEditRefreshesTheConversationSession(t *testing.T) {
 				t.Fatal(err)
 			}
 			c, store, _ := homeCoordinator(t, dir, "owner")
-			req := Request{ConversationID: "dm", Input: "hello", SenderOpenID: "owner", ChatType: protocol.ChatP2P}
+			req := Request{
+				Source: Source{
+					ConversationID: "dm",
+					ChatType:       protocol.ChatP2P,
+				},
+				Input: "hello",
+				Actor: Actor{ID: "owner"},
+			}
 			first, err := c.Handle(t.Context(), req)
 			if err != nil {
 				t.Fatal(err)
@@ -110,7 +124,14 @@ func TestIdentityRefreshAfterReopeningSessionState(t *testing.T) {
 				t.Fatal(err)
 			}
 			c.store = persisted
-			req := Request{ConversationID: "dm", Input: "hello", SenderOpenID: "owner", ChatType: protocol.ChatP2P}
+			req := Request{
+				Source: Source{
+					ConversationID: "dm",
+					ChatType:       protocol.ChatP2P,
+				},
+				Input: "hello",
+				Actor: Actor{ID: "owner"},
+			}
 			first, err := c.Handle(t.Context(), req)
 			if err != nil {
 				t.Fatal(err)

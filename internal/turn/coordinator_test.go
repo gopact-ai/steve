@@ -691,7 +691,10 @@ func TestCoordinatorEnglishLocale(t *testing.T) {
 }
 
 func handle(c *Coordinator, ctx context.Context, input string) (Result, error) {
-	return c.Handle(ctx, Request{ConversationID: "chat", Input: input})
+	return c.Handle(ctx, Request{
+		Source: Source{ConversationID: "chat"},
+		Input:  input,
+	})
 }
 
 // A bare message waits for the running turn instead of replacing it:

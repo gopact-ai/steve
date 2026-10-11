@@ -53,7 +53,14 @@ func TestProfileFollowupWritesSharedIdentityWithoutScanningLocalHistory(t *testi
 				t.Fatal(err)
 			}
 			runner.reply = "你好，我可以帮你处理问题和任务。"
-			greeting, err := coordinator.Handle(t.Context(), Request{ConversationID: "dm", Input: "你好", SenderOpenID: "owner", ChatType: protocol.ChatP2P})
+			greeting, err := coordinator.Handle(t.Context(), Request{
+				Source: Source{
+					ConversationID: "dm",
+					ChatType:       protocol.ChatP2P,
+				},
+				Input: "你好",
+				Actor: Actor{ID: "owner"},
+			})
 			if err != nil || greeting.Text != runner.reply {
 				t.Fatalf("shared template prevented ordinary conversation: %+v %v", greeting, err)
 			}
@@ -62,7 +69,14 @@ func TestProfileFollowupWritesSharedIdentityWithoutScanningLocalHistory(t *testi
 				t.Fatalf("ordinary greeting wrote a shared profile: %v", err)
 			}
 			runner.reply = "已记下。\n===SOUL.md===\n# Soul\n你是用户的可靠个人助手，帮助维护项目。\n===USER.md===\n# User\n- 称呼：李工\n- 时区：Asia/Shanghai\n"
-			result, err := coordinator.Handle(t.Context(), Request{ConversationID: "dm", Input: "叫我李工，时区上海", SenderOpenID: "owner", ChatType: protocol.ChatP2P})
+			result, err := coordinator.Handle(t.Context(), Request{
+				Source: Source{
+					ConversationID: "dm",
+					ChatType:       protocol.ChatP2P,
+				},
+				Input: "叫我李工，时区上海",
+				Actor: Actor{ID: "owner"},
+			})
 			if fail {
 				if !errors.Is(err, failure) || strings.Contains(result.Text, "已记下") {
 					t.Fatalf("failed shared save reported success: %+v %v", result, err)
@@ -94,7 +108,14 @@ func TestProfileFollowupWritesSharedIdentityWithoutScanningLocalHistory(t *testi
 			}
 			if !fail {
 				runner.reply = "可以一起维护项目。"
-				next, err := coordinator.Handle(t.Context(), Request{ConversationID: "dm", Input: "你能做什么", SenderOpenID: "owner", ChatType: protocol.ChatP2P})
+				next, err := coordinator.Handle(t.Context(), Request{
+					Source: Source{
+						ConversationID: "dm",
+						ChatType:       protocol.ChatP2P,
+					},
+					Input: "你能做什么",
+					Actor: Actor{ID: "owner"},
+				})
 				if err != nil {
 					t.Fatalf("shared identity followup: %v", err)
 				}

@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/schedule"
@@ -29,22 +30,20 @@ type Scheduler struct {
 	projects  *project.Store
 	schedules *schedule.Store
 	text      i18n.Catalog
-	owners    channelOwners
+	owners    identity.Owners
 }
 
 // SchedulerDeps is everything a Scheduler is built with. Attempts, Tasks,
 // Projects, Schedules and Text are required; NewScheduler refuses deps
-// missing any of them. Owner and ChannelOwners are optional.
+// missing any of them. Identity may have no configured owner.
 type SchedulerDeps struct {
 	Attempts  *attempt.Service
 	Tasks     *task.Store
 	Projects  *project.Store
 	Schedules *schedule.Store
 	Text      i18n.Catalog
-	// Owner is the baseline owner identity; ChannelOwners registers each
-	// trusted non-console adapter's native owner.
-	Owner         string
-	ChannelOwners map[string]string
+	// Identity is the configured authority shared by input adapters and execution.
+	Identity identity.Configuration
 }
 
 func (d SchedulerDeps) required() []dependency {
@@ -59,7 +58,7 @@ func NewScheduler(deps SchedulerDeps) (*Scheduler, error) {
 	if missing := absent(deps.required()); len(missing) > 0 {
 		return nil, fmt.Errorf("turn: missing scheduler dependencies: %s", strings.Join(missing, ", "))
 	}
-	owners, err := newChannelOwners(deps.Owner, deps.ChannelOwners)
+	owners, err := identity.NewOwners(deps.Identity)
 	if err != nil {
 		return nil, fmt.Errorf("turn: %w", err)
 	}
@@ -118,7 +117,7 @@ func (s *Scheduler) scheduleIdentity(ctx context.Context, binding agentmcp.Bindi
 	// Task.Requester belongs to the opening request, whereas By is the sender
 	// of this exact turn. A guest's later turn must not inherit the opener's rights.
 	tracked.Requester = r.By
-	owner, err := s.owners.of(tracked.Transport)
+	owner, err := s.owners.Owner(tracked.Transport)
 	if err != nil {
 		return task.Task{}, err
 	}

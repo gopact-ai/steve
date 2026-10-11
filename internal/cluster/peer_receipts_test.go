@@ -211,7 +211,7 @@ func consoleReceipt(t *testing.T, book *ledger.Ledger, node, missing string, fai
 		if missing == "other-transport" {
 			transport = "unsupported"
 		}
-		tracked, err := tasks.Create(task.Task{Channel: req.ConversationID, Transport: transport, Member: "worker", Requester: "owner"})
+		tracked, err := tasks.Create(task.Task{Channel: req.Source.ConversationID, Transport: transport, Member: "worker", Requester: "owner"})
 		if err != nil {
 			return turn.Result{}, err
 		}
@@ -222,7 +222,7 @@ func consoleReceipt(t *testing.T, book *ledger.Ledger, node, missing string, fai
 		if err != nil {
 			return turn.Result{}, err
 		}
-		record, err := attempts.Open(t.Context(), attempt.Spec{ID: "receipt-attempt", TaskID: tracked.ID, TurnID: req.MessageID,
+		record, err := attempts.Open(t.Context(), attempt.Spec{ID: "receipt-attempt", TaskID: tracked.ID, TurnID: req.Source.MessageID,
 			Kind: attempt.KindChat, Agent: "worker", Node: node, Execution: &token, Scope: attempt.ScopePathSet})
 		if err != nil {
 			return turn.Result{}, err

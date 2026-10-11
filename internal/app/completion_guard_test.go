@@ -124,8 +124,13 @@ func (f completionFixture) complete(t *testing.T, exchange string, want bool) {
 		t.Fatal("completion fixture lacks durable task accounting")
 	}
 	result, err := f.coordinator.Handle(t.Context(), turn.Request{
-		ConversationID: f.root.Channel, Channel: "console", ExchangeID: exchange, Locale: "en",
-		Input: "/tasks complete " + f.root.ID,
+		Source: turn.Source{
+			ConversationID: f.root.Channel,
+			Channel:        "console",
+		},
+		Admission: turn.Admission{ExchangeID: exchange},
+		Locale:    "en",
+		Input:     "/tasks complete " + f.root.ID,
 	})
 	after, _ := f.tasks.Get(f.root.ID)
 	if (err == nil) != want || after.CompletedByUser != want || strings.Contains(result.Text, "is completed") != want {

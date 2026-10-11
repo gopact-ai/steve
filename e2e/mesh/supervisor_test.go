@@ -393,7 +393,7 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 		o.Ledger, o.Catalog, o.Store, o.Assembler, o.Runtime, o.Timeout = f.book, f.catalog, store, capability.NewAssembler(nil), f.manager, 2*time.Minute
 		o.Tasks, o.Node, o.Executions = f.tasks, "hub-e2e", f.executions
 		o.Projects, o.DefaultProject, o.Attempts, o.Artifacts = f.projects, "local", f.attempts, f.artifacts
-		o.Owner = "ou_owner"
+		o.Identity.ConsoleOwner = "ou_owner"
 		o.Plans, o.Fleet = f.plans, f.roster
 	})
 	consoleSup := exec.NewSupervisor(planner.Rule{}, exec.Deps{Workspaces: f.artifacts, Attempts: f.attempts, Artifacts: f.artifacts, Roster: f.roster,

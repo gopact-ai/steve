@@ -28,7 +28,11 @@ func TestNoAgentRequestExplainsRegistrationWithoutCreatingSession(t *testing.T) 
 			manager := &fakeManager{}
 			coordinator := buildCoordinator(t, withDeps(func(d *Deps) { d.Catalog, d.Store, d.Runtime, d.Timeout = catalog, store, manager, time.Minute }))
 			for _, input := range []string{"hello", "@codex hello"} {
-				_, err := coordinator.Handle(t.Context(), Request{Locale: tc.locale, ConversationID: "chat", Input: input})
+				_, err := coordinator.Handle(t.Context(), Request{
+					Locale: tc.locale,
+					Source: Source{ConversationID: "chat"},
+					Input:  input,
+				})
 				var userError UserError
 				if !errors.As(err, &userError) || userError.Text != tc.want {
 					t.Fatalf("unregistered Agent request = %v", err)

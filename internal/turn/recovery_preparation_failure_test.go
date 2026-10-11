@@ -22,7 +22,10 @@ func TestRecoveryReservationBeforeNativePreparationCanBeReleasedWithoutChangingF
 	if _, err := c.attempts.FailWith(t.Context(), r.ID, "fixture", "admission refused", nil); err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.workspaceFor(t.Context(), Request{ConversationID: "console:retry", SenderOpenID: "owner"}, agent.Agent{ID: "worker", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
+	_, err = c.workspaceFor(t.Context(), Request{
+		Source: Source{ConversationID: "console:retry"},
+		Actor:  Actor{ID: "owner"},
+	}, agent.Agent{ID: "worker", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
 	if err != nil {
 		t.Fatalf("an unprepared failed input permanently held the copy: %v", err)
 	}
@@ -54,7 +57,10 @@ func TestRecoveryPreparationAndLostOpenKeepTheirMonotonicWriteObligation(t *test
 			if _, err := c.attempts.FailWith(t.Context(), r.ID, "fixture", "preparation failed after authorization", nil); err != nil {
 				t.Fatal(err)
 			}
-			_, err = c.workspaceFor(t.Context(), Request{ConversationID: "console:retry", SenderOpenID: "owner"}, agent.Agent{ID: "worker", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
+			_, err = c.workspaceFor(t.Context(), Request{
+				Source: Source{ConversationID: "console:retry"},
+				Actor:  Actor{ID: "owner"},
+			}, agent.Agent{ID: "worker", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
 			if !errors.Is(err, attempt.ErrWorkspaceRecovery) {
 				t.Fatalf("possible native write without output lost its fence: %v", err)
 			}

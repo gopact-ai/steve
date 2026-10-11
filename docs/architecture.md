@@ -14,6 +14,7 @@
 | `turn`、`delegate`、`exec` | 对话回合、委派与计划的业务编排 | task、attempt、artifact、project、harness 等领域服务 |
 | `execution`、`agentexec` | 执行作用域、停止等待，以及规划/验证的单次执行壳 | task、attempt、harness 与资源准入端口 |
 | `schedule` | 定时规则、触发认领与受理回执 | 持久化文档；通道投递由组合入口装配 |
+| `identity` | 从现有配置解析 Console 与已注册渠道的原生 owner | 仅标准库；不可变快照，不另建身份存储 |
 | `task`、`project`、`attempt` | 任务树预算、工作区归属、执行状态与租约 | ledger；不依赖 HTTP 或页面实现 |
 | `ledger` | 文档、事务、命名引用、租约与审计 | SQLite 与本地持久化（单文件文档用 `filedoc`） |
 | `artifact` | 产物清单、内容副本、落地与恢复记录 | `artifact/gitrepo`、项目、账本、节点操作端口 |
@@ -37,6 +38,8 @@
 依赖门禁禁止领域层反向引用应用/传输层，禁止契约包引用服务实现。传递依赖门禁要求 `config`、`i18n` 不链接执行层（exec、lifecycle、turn、node、harness）与存储层（ledger、SQLite），`consoleapi` 不链接执行层，`cmd/steve-node` 不链接 ledger 且只经 `node` 的会话记录使用 SQLite；违规时报告最短导入链。HTTP 实现只由组合入口装配，其他内部服务不导入它。包之间采用消费方所需的接口；运行期可替换的对象才需要接口。
 
 `gateway` 仍包含飞书启动及主动投递逻辑；配置了飞书凭据才创建该适配器。独立 Console 使用 `gateway.owner_id`，无需建立飞书连接。`channel.Messenger` 统一 Agent 的进度消息操作；通道特有的卡片、设备授权和回调留在适配器内。
+
+Console 与 Gateway 通过 `turn.InputExecutor` 调用执行能力，输入契约明确区分 `Source`、原生 `Actor.ID`、`ReplyContext` 和执行 `Admission`。输入持久受理与外部回复对账由适配器负责，执行层保留授权、任务准入与原 attempt 恢复。组合入口的同一份渠道接收器注册表负责定时触发、任务通知、手动恢复、已受理恢复的唤醒及子任务交接；业务路由仅使用持久渠道字段，不从聊天或消息 ID 猜测目标。渠道声明续接重放能力并提供对应回执查询，注册本身不赋予幂等投递保证。迁移细节见 [服务边界](service-boundaries.md)。
 
 ## 权威与提交点
 

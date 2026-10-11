@@ -91,7 +91,7 @@ func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate,
 		o.Tasks, o.Node, o.Executions = tasks, "test", execution.New(t.Context(), tasks)
 		o.Projects, o.DefaultProject, o.Attempts = projects, "p", attempt.New(book)
 		o.Artifacts = artifact.New(t.TempDir(), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
-		o.ChannelOwners = map[string]string{"feishu": "owner", "unknown": "owner"}
+		o.Identity.NativeOwners = map[string]string{"feishu": "owner", "unknown": "owner"}
 	})
 	var consoleCoordinator console.Coordinator = coordinator
 	if gate != nil {
@@ -111,12 +111,13 @@ func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate,
 	})
 	workers := &reconciliationWorkers{}
 	t.Cleanup(workers.Close)
+	gw := gateway.New(coordinator)
 	channels, err := assembleChannels(
 		&runtimeValues{book: book, cfg: &config.Config{}, ctx: t.Context()},
 		&ledgerValues{},
-		&executionValues{coordinator: coordinator, gw: gateway.New(coordinator), catalogText: i18n.New(i18n.LocaleEN)},
+		&executionValues{coordinator: coordinator, gw: gw, catalogText: i18n.New(i18n.LocaleEN)},
 		&readModelValues{}, &consoleValues{cons: cons, reconciliations: workers},
-		&administrationValues{}, &delegationValues{},
+		&administrationValues{}, &delegationValues{taskChannels: testTaskChannels(t, cons, gw, book, coordinator)},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -182,8 +183,15 @@ func TestTaskResumeStableControlIsIdempotentBeforeAndAfterConsumption(t *testing
 		}
 	}
 	// Also exercise manual orchestration itself, not only channel dedup.
-	if _, err := f.coordinator.Handle(t.Context(), turn.Request{Channel: "console", ConversationID: before.Channel,
-		ExchangeID: first.ExchangeID, MessageID: console.AnchorMark + first.ExchangeID, Input: command}); err != nil {
+	if _, err := f.coordinator.Handle(t.Context(), turn.Request{
+		Source: turn.Source{
+			Channel:        "console",
+			ConversationID: before.Channel,
+			MessageID:      console.AnchorMark + first.ExchangeID,
+		},
+		Admission: turn.Admission{ExchangeID: first.ExchangeID},
+		Input:     command,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := f.tasks.Get(before.ID); !reflect.DeepEqual(granted, got) {
@@ -196,22 +204,35 @@ func TestTaskResumeStableControlIsIdempotentBeforeAndAfterConsumption(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.coordinator.Handle(t.Context(), turn.Request{Channel: "console", ConversationID: before.Channel,
-		MessageID: "another-control", Input: command}); err != nil {
+	if _, err := f.coordinator.Handle(t.Context(), turn.Request{
+		Source: turn.Source{
+			Channel:        "console",
+			ConversationID: before.Channel,
+			MessageID:      "another-control",
+		},
+		Input: command,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := f.tasks.Get(before.ID); !reflect.DeepEqual(granted, got) || len(f.console.Queue(before.Channel)) != 3 {
 		t.Fatal("another resume click replaced the outstanding authorized input")
 	}
 	gate.release <- struct{}{}
-	waitResumeReceipt(t, f, before.Channel, input.ExchangeID)
+	waitResumeReceipt(t, f, before.Channel, input.Admission.ExchangeID)
 	waitResumeReceipt(t, f, before.Channel, duplicateControl.ID)
 	consumed, _ := f.tasks.Get(before.ID)
-	if !consumed.ResumeGrant.Consumed || consumed.ResumeGrant.TurnID != input.MessageID || consumed.Budget.Turns != before.Budget.Turns+1 {
+	if !consumed.ResumeGrant.Consumed || consumed.ResumeGrant.TurnID != input.Source.MessageID || consumed.Budget.Turns != before.Budget.Turns+1 {
 		t.Fatalf("original grant was not consumed exactly once: %+v", consumed)
 	}
-	if _, err := f.coordinator.Handle(t.Context(), turn.Request{Channel: "console", ConversationID: before.Channel,
-		ExchangeID: first.ExchangeID, MessageID: console.AnchorMark + first.ExchangeID, Input: command}); err != nil {
+	if _, err := f.coordinator.Handle(t.Context(), turn.Request{
+		Source: turn.Source{
+			Channel:        "console",
+			ConversationID: before.Channel,
+			MessageID:      console.AnchorMark + first.ExchangeID,
+		},
+		Admission: turn.Admission{ExchangeID: first.ExchangeID},
+		Input:     command,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.console.SendCommand(t.Context(), before.Channel, command, "control-id"); err != nil {
@@ -221,7 +242,7 @@ func TestTaskResumeStableControlIsIdempotentBeforeAndAfterConsumption(t *testing
 		t.Fatal(err)
 	}
 	native, err := attempt.New(f.book).ForTask(t.Context(), before.ID)
-	if err != nil || len(native) != 1 || native[0].State != attempt.Bound || native[0].TurnID != input.MessageID {
+	if err != nil || len(native) != 1 || native[0].State != attempt.Bound || native[0].TurnID != input.Source.MessageID {
 		t.Fatalf("consumed retry replaced the original attempt: %+v, %v", native, err)
 	}
 	if got, _ := f.tasks.Get(before.ID); !reflect.DeepEqual(consumed, got) {
@@ -247,7 +268,14 @@ func TestTaskResumeDormantGrantSurvivesActualSQLiteReopen(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			req := turn.Request{Channel: "console", ConversationID: before.Channel, MessageID: "stable-control", Input: "/tasks resume " + before.ID}
+			req := turn.Request{
+				Source: turn.Source{
+					Channel:        "console",
+					ConversationID: before.Channel,
+					MessageID:      "stable-control",
+				},
+				Input: "/tasks resume " + before.ID,
+			}
 			_, err := f.coordinator.Handle(t.Context(), req)
 			if (err == nil) != authorize {
 				t.Fatalf("resume grant=%v: %v", authorize, err)
@@ -305,7 +333,7 @@ type resumeInputGate struct {
 }
 
 func (g *resumeInputGate) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
-	if req.ExpectedTask != "" {
+	if req.Admission.ExpectedTask != "" {
 		select {
 		case g.entered <- req:
 		case <-ctx.Done():
@@ -386,9 +414,13 @@ func TestTaskResumeProductionRefusalLeavesTaskPaused(t *testing.T) {
 			}
 			durableBefore, _ := reopened.Get(before.ID)
 			result, err := f.coordinator.Handle(t.Context(), turn.Request{
-				Channel: transport, ConversationID: before.Channel, Locale: "en",
-				MessageID: "control-refusal",
-				Input:     "/tasks resume " + before.ID,
+				Source: turn.Source{
+					Channel:        transport,
+					ConversationID: before.Channel,
+					MessageID:      "control-refusal",
+				},
+				Locale: "en",
+				Input:  "/tasks resume " + before.ID,
 			})
 			if err == nil || result.Text == "" || strings.Contains(result.Text, "is running again") {
 				t.Errorf("refused resume reported success: result=%+v err=%v", result, err)
@@ -431,8 +463,13 @@ func TestTaskResumeProductionConsoleReentersOnlyAfterAdmission(t *testing.T) {
 				}
 			}
 			_, err := f.coordinator.Handle(t.Context(), turn.Request{
-				Channel: "console", ConversationID: before.Channel, Locale: "en", Input: "/tasks resume " + before.ID,
-				MessageID: "control-resume",
+				Source: turn.Source{
+					Channel:        "console",
+					ConversationID: before.Channel,
+					MessageID:      "control-resume",
+				},
+				Locale: "en",
+				Input:  "/tasks resume " + before.ID,
 			})
 			if (err != nil) != refuseTaskWrite {
 				t.Fatalf("resume write refusal=%v: %v", refuseTaskWrite, err)
@@ -514,8 +551,13 @@ func TestTaskResumeRejectedOrRevokedInputCannotBorrowLaterResume(t *testing.T) {
 			resume := func() error {
 				resumeCount++
 				_, err := f.coordinator.Handle(t.Context(), turn.Request{
-					Channel: "console", ConversationID: before.Channel, Locale: "en", Input: "/tasks resume " + before.ID,
-					MessageID: fmt.Sprintf("control-%d", resumeCount),
+					Source: turn.Source{
+						Channel:        "console",
+						ConversationID: before.Channel,
+						MessageID:      fmt.Sprintf("control-%d", resumeCount),
+					},
+					Locale: "en",
+					Input:  "/tasks resume " + before.ID,
 				})
 				return err
 			}
@@ -545,11 +587,15 @@ func TestTaskResumeRejectedOrRevokedInputCannotBorrowLaterResume(t *testing.T) {
 				case <-time.After(5 * time.Second):
 					t.Fatal("first granted input did not reach the consumption gate")
 				}
-				if obsolete.ExpectedTask != before.ID {
+				if obsolete.Admission.ExpectedTask != before.ID {
 					t.Fatal("fixture lost original task identity")
 				}
 				if _, err := f.coordinator.Handle(t.Context(), turn.Request{
-					Channel: "console", ConversationID: before.Channel, Input: "/tasks pause " + before.ID,
+					Source: turn.Source{
+						Channel:        "console",
+						ConversationID: before.Channel,
+					},
+					Input: "/tasks pause " + before.ID,
 				}); err != nil {
 					t.Fatal(err)
 				}
@@ -568,7 +614,7 @@ func TestTaskResumeRejectedOrRevokedInputCannotBorrowLaterResume(t *testing.T) {
 			// what the obsolete one did. Its future success cannot mask a replay.
 			select {
 			case current := <-gate.entered:
-				if current.ExchangeID == obsolete.ExchangeID {
+				if current.Admission.ExchangeID == obsolete.Admission.ExchangeID {
 					t.Fatal("new resume reused the obsolete input identity")
 				}
 			case <-time.After(15 * time.Second):

@@ -34,19 +34,19 @@ func TestResetConversationSessionsPersistsAnUndispatchedClose(t *testing.T) {
 	if !ok {
 		t.Fatal("missing task")
 	}
-	session := c.store.Conversation(req.ConversationID).Sessions["codex"]
+	session := c.store.Conversation(req.Source.ConversationID).Sessions["codex"]
 	sessions.err = &nodewire.SessionNotDispatched{Cause: errors.New("test node offline")}
-	if err := c.ResetConversationSessions(t.Context(), req.ConversationID); err != nil {
+	if err := c.ResetConversationSessions(t.Context(), req.Source.ConversationID); err != nil {
 		t.Fatal(err)
 	}
 	owed := c.store.OwedCloses()
 	if len(owed) != 1 || owed[0].TaskID != taskID || owed[0].UpstreamID != session.UpstreamID || owed[0].NodeID != session.NodeID || owed[0].HarnessID != session.HarnessID {
 		t.Fatalf("lost exact close obligation: %+v", owed)
 	}
-	if _, ok := c.store.Conversation(req.ConversationID).Sessions["codex"]; ok {
+	if _, ok := c.store.Conversation(req.Source.ConversationID).Sessions["codex"]; ok {
 		t.Fatal("old live slot survived retirement")
 	}
-	if got := c.store.ArchivedSessions(req.ConversationID, "codex"); len(got) != 1 || got[0].UpstreamID != session.UpstreamID || got[0].ArchivedAt != owed[0].OwedAt {
+	if got := c.store.ArchivedSessions(req.Source.ConversationID, "codex"); len(got) != 1 || got[0].UpstreamID != session.UpstreamID || got[0].ArchivedAt != owed[0].OwedAt {
 		t.Fatalf("archive differs from debt: %+v", got)
 	}
 	after, _ := c.tasks.Get(taskID)
@@ -64,16 +64,16 @@ func TestResetConversationSessionsPersistsAnUndispatchedClose(t *testing.T) {
 
 func TestDiscardConversationKeepsAuthorityForANewOwedClose(t *testing.T) {
 	c, sessions, req, taskID := retirementCoordinator(t)
-	if err := c.tasks.ChannelIdle(t.Context(), req.ConversationID, checkConversationRetirement); err != nil {
+	if err := c.tasks.ChannelIdle(t.Context(), req.Source.ConversationID, checkConversationRetirement); err != nil {
 		t.Fatalf("invalid idle prerequisite: %v", err)
 	}
 	before, _ := c.tasks.Get(taskID)
-	job, err := c.schedules.Create(schedule.Job{ConversationID: req.ConversationID, Member: "codex", Prompt: "later", Spec: schedule.Spec{Kind: schedule.KindEvery, Every: time.Hour, Text: "every hour"}})
+	job, err := c.schedules.Create(schedule.Job{ConversationID: req.Source.ConversationID, Member: "codex", Prompt: "later", Spec: schedule.Spec{Kind: schedule.KindEvery, Every: time.Hour, Text: "every hour"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sessions.err = &nodewire.SessionNotDispatched{Cause: errors.New("test node offline")}
-	err = c.DiscardConversation(t.Context(), req.ConversationID)
+	err = c.DiscardConversation(t.Context(), req.Source.ConversationID)
 	if !errors.Is(err, task.ErrRetirementPending) || !errors.Is(err, state.ErrCloseOwed) {
 		t.Fatalf("discard = %v; want durable close pending", err)
 	}
@@ -81,7 +81,7 @@ func TestDiscardConversationKeepsAuthorityForANewOwedClose(t *testing.T) {
 	if !exists || !reflect.DeepEqual(before, after) {
 		t.Fatal("pending discard deleted or changed original authority")
 	}
-	jobs := c.schedules.List(req.ConversationID)
+	jobs := c.schedules.List(req.Source.ConversationID)
 	if len(jobs) != 1 || jobs[0].ID != job.ID {
 		t.Fatal("pending discard dropped schedule")
 	}
@@ -92,19 +92,19 @@ func TestDiscardConversationKeepsAuthorityForANewOwedClose(t *testing.T) {
 	// This fixture's receiving node now acknowledges exactly the original close.
 	// Production reconciliation owns the same operation; no new task is created.
 	sessions.err = nil
-	if _, err := c.commands().closeSession(t.Context(), c.store.ArchivedSessions(req.ConversationID, "codex")[0].Session); err != nil {
+	if _, err := c.commands().closeSession(t.Context(), c.store.ArchivedSessions(req.Source.ConversationID, "codex")[0].Session); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.store.SettleOwedClose(owed[0]); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.DiscardConversation(t.Context(), req.ConversationID); err != nil {
+	if err := c.DiscardConversation(t.Context(), req.Source.ConversationID); err != nil {
 		t.Fatal(err)
 	}
 	if _, exists := c.tasks.Get(taskID); exists {
 		t.Fatal("settled discard kept task")
 	}
-	if len(c.schedules.List(req.ConversationID)) != 0 {
+	if len(c.schedules.List(req.Source.ConversationID)) != 0 {
 		t.Fatal("settled discard kept schedule")
 	}
 }
@@ -114,19 +114,19 @@ func TestConversationRetirementRetainsUnresolvedClose(t *testing.T) {
 		for _, failure := range []error{errors.New("test response lost"), context.DeadlineExceeded, &node.SessionError{Code: "uncertain", Message: "test original stop unconfirmed"}} {
 			t.Run(route+"/"+failure.Error(), func(t *testing.T) {
 				c, sessions, req, taskID := retirementCoordinator(t)
-				before := c.store.Conversation(req.ConversationID)
+				before := c.store.Conversation(req.Source.ConversationID)
 				beforeTask, _ := c.tasks.Get(taskID)
 				sessions.err = failure
 				var err error
 				if route == "reset" {
-					err = c.ResetConversationSessions(t.Context(), req.ConversationID)
+					err = c.ResetConversationSessions(t.Context(), req.Source.ConversationID)
 				} else {
-					err = c.DiscardConversation(t.Context(), req.ConversationID)
+					err = c.DiscardConversation(t.Context(), req.Source.ConversationID)
 				}
 				if !errors.Is(err, failure) {
 					t.Fatalf("retirement swallowed close failure: %v", err)
 				}
-				if !reflect.DeepEqual(before, c.store.Conversation(req.ConversationID)) {
+				if !reflect.DeepEqual(before, c.store.Conversation(req.Source.ConversationID)) {
 					t.Fatal("failed close lost session/history")
 				}
 				after, exists := c.tasks.Get(taskID)
@@ -162,7 +162,7 @@ func TestConversationRetirementFencesNewTurnsOnlyInItsConversation(t *testing.T)
 	gate := &retirementGateRuntime{nodeSessions: sessions, entered: make(chan struct{}), release: make(chan struct{})}
 	c.runtime = gate
 	done := make(chan error, 1)
-	go func() { done <- c.ResetConversationSessions(t.Context(), req.ConversationID) }()
+	go func() { done <- c.ResetConversationSessions(t.Context(), req.Source.ConversationID) }()
 	select {
 	case <-gate.entered:
 	case <-time.After(waitDeadline):
@@ -177,11 +177,11 @@ func TestConversationRetirementFencesNewTurnsOnlyInItsConversation(t *testing.T)
 	}()
 	_, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	if c.beginTurn(req.ConversationID, "new-agent", cancel) {
-		c.clearActive(req.ConversationID, "new-agent")
+	if c.beginTurn(req.Source.ConversationID, "new-agent", cancel) {
+		c.clearActive(req.Source.ConversationID, "new-agent")
 		t.Error("new agent entered retiring conversation")
 	}
-	if err := c.DiscardConversation(t.Context(), req.ConversationID); !errors.Is(err, ErrConversationBusy) {
+	if err := c.DiscardConversation(t.Context(), req.Source.ConversationID); !errors.Is(err, ErrConversationBusy) {
 		t.Errorf("concurrent retirement = %v", err)
 	}
 	if !c.beginTurn("console:unrelated", "other", cancel) {
@@ -198,17 +198,17 @@ func TestConversationRetirementFencesNewTurnsOnlyInItsConversation(t *testing.T)
 	case <-time.After(waitDeadline):
 		t.Fatal("reset did not finish")
 	}
-	if !c.beginTurn(req.ConversationID, "new-agent", cancel) {
+	if !c.beginTurn(req.Source.ConversationID, "new-agent", cancel) {
 		t.Fatal("completed retirement kept turn fence")
 	}
-	c.clearActive(req.ConversationID, "new-agent")
+	c.clearActive(req.Source.ConversationID, "new-agent")
 }
 
 func TestConversationRetirementDoesNotInventAnUnidentifiedDebt(t *testing.T) {
 	for _, route := range []string{"reset", "discard"} {
 		t.Run(route, func(t *testing.T) {
 			c, sessions, req, taskID := retirementCoordinator(t)
-			current := c.store.Conversation(req.ConversationID).Sessions["codex"]
+			current := c.store.Conversation(req.Source.ConversationID).Sessions["codex"]
 			current.UpstreamID = "ns_no_attempt"
 			if err := c.store.SaveSession(current); err != nil {
 				t.Fatal(err)
@@ -216,14 +216,14 @@ func TestConversationRetirementDoesNotInventAnUnidentifiedDebt(t *testing.T) {
 			sessions.err = &nodewire.SessionNotDispatched{Cause: errors.New("test node offline")}
 			var err error
 			if route == "reset" {
-				err = c.ResetConversationSessions(t.Context(), req.ConversationID)
+				err = c.ResetConversationSessions(t.Context(), req.Source.ConversationID)
 			} else {
-				err = c.DiscardConversation(t.Context(), req.ConversationID)
+				err = c.DiscardConversation(t.Context(), req.Source.ConversationID)
 			}
 			if !errors.Is(err, sessions.err) {
 				t.Fatalf("unidentified close = %v", err)
 			}
-			if got := c.store.Conversation(req.ConversationID).Sessions["codex"]; !reflect.DeepEqual(got, current) {
+			if got := c.store.Conversation(req.Source.ConversationID).Sessions["codex"]; !reflect.DeepEqual(got, current) {
 				t.Fatal("unidentified close lost its slot")
 			}
 			if len(c.store.OwedCloses()) != 0 {
@@ -238,13 +238,13 @@ func TestConversationRetirementDoesNotInventAnUnidentifiedDebt(t *testing.T) {
 
 func TestConversationRetirementKeepsItsSlotAfterPersistenceRefusal(t *testing.T) {
 	c, sessions, req, taskID := retirementCoordinator(t)
-	before := c.store.Conversation(req.ConversationID)
+	before := c.store.Conversation(req.Source.ConversationID)
 	book := ledgerOf(t, c)
 	if _, err := book.DB().Exec(`CREATE TRIGGER refuse_retirement BEFORE INSERT ON bindings WHEN NEW.kind='document' AND NEW.id='state' BEGIN SELECT RAISE(FAIL,'test session retirement write refused'); END`); err != nil {
 		t.Fatal(err)
 	}
 	sessions.err = &nodewire.SessionNotDispatched{Cause: errors.New("test node offline")}
-	if err := c.ResetConversationSessions(t.Context(), req.ConversationID); err == nil {
+	if err := c.ResetConversationSessions(t.Context(), req.Source.ConversationID); err == nil {
 		t.Fatal("refused retirement reported success")
 	}
 	if _, err := book.DB().Exec(`DROP TRIGGER refuse_retirement`); err != nil {
@@ -255,15 +255,15 @@ func TestConversationRetirementKeepsItsSlotAfterPersistenceRefusal(t *testing.T)
 		t.Fatal(err)
 	}
 	for _, store := range []*state.Store{c.store, reopened} {
-		if !reflect.DeepEqual(store.Conversation(req.ConversationID), before) || len(store.OwedCloses()) != 0 {
+		if !reflect.DeepEqual(store.Conversation(req.Source.ConversationID), before) || len(store.OwedCloses()) != 0 {
 			t.Fatal("refused write lost live slot or added half an obligation")
 		}
 	}
 	if _, exists := c.tasks.Get(taskID); !exists {
 		t.Fatal("refused write changed task authority")
 	}
-	if !c.beginTurn(req.ConversationID, "other", func() {}) {
+	if !c.beginTurn(req.Source.ConversationID, "other", func() {}) {
 		t.Fatal("failed retirement left its admission fence")
 	}
-	c.clearActive(req.ConversationID, "other")
+	c.clearActive(req.Source.ConversationID, "other")
 }

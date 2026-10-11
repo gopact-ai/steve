@@ -32,7 +32,7 @@ const goalLimit = 120
 // replace its original authorization with an empty or newer one.
 func (c *Coordinator) beginTurnScope(ctx context.Context, req Request, agentID string) (project.Binding, *execution.Scope, error) {
 	var previous task.Task
-	previous, _ = c.tasks.Active(req.ConversationID, agentID, req.Origin)
+	previous, _ = c.tasks.Active(req.Source.ConversationID, agentID, req.Source.Origin)
 	req.stage(view.StageWorkspace)
 	binding, err := c.bindingFor(ctx, req)
 	if err != nil {
@@ -42,7 +42,7 @@ func (c *Coordinator) beginTurnScope(ctx context.Context, req Request, agentID s
 	if previous.ProjectID == "" || previous.ProjectID == binding.ProjectID {
 		taskID = previous.ID
 	}
-	scope, err := c.executions.Begin(ctx, execution.Key{TaskID: taskID, InstanceID: req.MessageID})
+	scope, err := c.executions.Begin(ctx, execution.Key{TaskID: taskID, InstanceID: req.Source.MessageID})
 	if err != nil {
 		return binding, nil, err
 	}
@@ -58,21 +58,21 @@ func (c *Coordinator) beginTurnScope(ctx context.Context, req Request, agentID s
 // UserError when the budget is spent. When tracking is configured, admission
 // must be durable before any native execution can start.
 func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string, binding project.Binding, workspace string) (string, error) {
-	if req.ResumeAdmission != (task.ResumeAdmission{}) && req.ExpectedTask != req.ResumeAdmission.TaskID {
+	if req.Admission.ResumeAdmission != (task.ResumeAdmission{}) && req.Admission.ExpectedTask != req.Admission.ResumeAdmission.TaskID {
 		return "", fmt.Errorf("%w: resume input requires its original task", task.ErrExecutionStopped)
 	}
 	executionNode := selected.Node
 	if executionNode == "" {
 		executionNode = c.node
 	}
-	tracked, ok := c.tasks.Active(req.ConversationID, selected.ID, req.Origin)
-	if req.ExpectedTask != "" {
-		tracked, ok = c.tasks.Get(req.ExpectedTask)
-		if !ok || tracked.Channel != req.ConversationID || tracked.Member != selected.ID || (tracked.ProjectID != "" && tracked.ProjectID != binding.ProjectID) {
-			return "", fmt.Errorf("task %s continuation binding changed", req.ExpectedTask)
+	tracked, ok := c.tasks.Active(req.Source.ConversationID, selected.ID, req.Source.Origin)
+	if req.Admission.ExpectedTask != "" {
+		tracked, ok = c.tasks.Get(req.Admission.ExpectedTask)
+		if !ok || tracked.Channel != req.Source.ConversationID || tracked.Member != selected.ID || (tracked.ProjectID != "" && tracked.ProjectID != binding.ProjectID) {
+			return "", fmt.Errorf("task %s continuation binding changed", req.Admission.ExpectedTask)
 		}
 		if tracked.State != task.StateRunning {
-			return "", fmt.Errorf("%w: task %s is no longer available", task.ErrContinuationUnavailable, req.ExpectedTask)
+			return "", fmt.Errorf("%w: task %s is no longer available", task.ErrContinuationUnavailable, req.Admission.ExpectedTask)
 		}
 	}
 	if ok && tracked.ProjectID != "" && binding.ProjectID != "" && tracked.ProjectID != binding.ProjectID {
@@ -90,35 +90,35 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		}
 		created, err := c.tasks.Create(task.Task{
 			Goal:      title,
-			Requester: req.SenderOpenID,
-			Channel:   req.ConversationID,
-			Transport: req.Channel,
-			ChatID:    req.ChatID, AnchorMessage: req.MessageID, ChatType: string(req.ChatType), OpenCard: req.CardID,
+			Requester: req.Actor.ID,
+			Channel:   req.Source.ConversationID,
+			Transport: req.Source.Channel,
+			ChatID:    req.Reply.ChatID, AnchorMessage: req.Source.MessageID, ChatType: string(req.Source.ChatType), OpenCard: req.Reply.CardID,
 			Member:    selected.ID,
 			Node:      executionNode,
-			Origin:    req.Origin,
+			Origin:    req.Source.Origin,
 			System:    onboarding(req),
 			ProjectID: binding.ProjectID,
 			Workspace: workspace,
 		})
 		if err != nil {
-			return "", fmt.Errorf("create task for conversation %s: %w", req.ConversationID, err)
+			return "", fmt.Errorf("create task for conversation %s: %w", req.Source.ConversationID, err)
 		}
 		tracked = created
 	}
-	if tracked.Transport != req.Channel {
+	if tracked.Transport != req.Source.Channel {
 		return "", fmt.Errorf("task %s transport changed", tracked.ID)
 	}
 	_, beginErr := c.tasks.BeginTurn(tracked.ID, selected.ID, executionNode, task.TurnInput{
-		Address: req.Address(), ChatID: req.ChatID, ChatType: string(req.ChatType), CardID: req.CardID, Continuation: req.ExpectedTask != "",
-		ResumeAdmission: req.ResumeAdmission, TurnID: req.MessageID,
+		Address: req.Address(), ChatID: req.Reply.ChatID, ChatType: string(req.Source.ChatType), CardID: req.Reply.CardID, Continuation: req.Admission.ExpectedTask != "",
+		ResumeAdmission: req.Admission.ResumeAdmission, TurnID: req.Source.MessageID,
 	})
 	if err := beginErr; err != nil {
 		if errors.Is(err, task.ErrOpenAttempt) {
-			slog.Info(fmt.Sprintf("turn: task %s refused a turn: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
+			slog.Info(fmt.Sprintf("turn: task %s refused a turn: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.Source.ConversationID)
 			return "", UserError{Text: c.openAttemptRefusal(req, tracked.ID)}
 		}
-		if req.ExpectedTask != "" {
+		if req.Admission.ExpectedTask != "" {
 			return "", err
 		}
 		if text, spent := c.budgetStop(tracked); spent {
@@ -132,7 +132,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 // onboarding reports a turn running under the synthetic conversation the
 // first introduction uses before it is relocated into the real chat.
 func onboarding(req Request) bool {
-	return strings.HasPrefix(req.ConversationID, onboard.PendingPrefix)
+	return strings.HasPrefix(req.Source.ConversationID, onboard.PendingPrefix)
 }
 
 // closeOnboardingTask ends the onboarding turn's task once the turn is
@@ -148,7 +148,7 @@ func (c *Coordinator) closeOnboardingTask(req Request, id string, turnErr error)
 		return
 	}
 	if _, err := c.tasks.Advance(id, task.StateDone); err != nil {
-		slog.Error(fmt.Sprintf("turn: close onboarding task %s: %v", id, err), "task", id, "conversation", req.ConversationID)
+		slog.Error(fmt.Sprintf("turn: close onboarding task %s: %v", id, err), "task", id, "conversation", req.Source.ConversationID)
 	}
 }
 
@@ -158,16 +158,16 @@ func (c *Coordinator) closeOnboardingTask(req Request, id string, turnErr error)
 // still unsettled keeps running until it settles, rather than ending as
 // done under it.
 func (c *Coordinator) releaseLeftover(req Request, tracked task.Task, projectID string) error {
-	slog.Warn(fmt.Sprintf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, projectID), "task", tracked.ID, "conversation", req.ConversationID, "project", projectID)
+	slog.Warn(fmt.Sprintf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, projectID), "task", tracked.ID, "conversation", req.Source.ConversationID, "project", projectID)
 	if setsAside(tracked) {
 		if err := c.setAside(tracked); err != nil {
 			return fmt.Errorf("close previous project task %s: %w", tracked.ID, err)
 		}
 		return nil
 	}
-	_, err := c.closeSettled(context.Background(), []string{tracked.ID}, req.ExchangeID)
+	_, err := c.closeSettled(context.Background(), []string{tracked.ID}, req.Admission.ExchangeID)
 	if task.CompletionRefused(err) {
-		slog.Info(fmt.Sprintf("turn: task %s of project %s stays open: %v", tracked.ID, tracked.ProjectID, err), "task", tracked.ID, "conversation", req.ConversationID, "project", tracked.ProjectID)
+		slog.Info(fmt.Sprintf("turn: task %s of project %s stays open: %v", tracked.ID, tracked.ProjectID, err), "task", tracked.ID, "conversation", req.Source.ConversationID, "project", tracked.ProjectID)
 		return nil
 	}
 	if err != nil {
@@ -424,11 +424,11 @@ func (c *Coordinator) offlineReminder(req Request, id string, started time.Time,
 		return
 	}
 	elapsed := time.Since(started)
-	if elapsed < c.offlineAfter || c.heardSince(req.ConversationID, started) {
+	if elapsed < c.offlineAfter || c.heardSince(req.Source.ConversationID, started) {
 		return
 	}
 	c.routes.notify(TaskNotice{
-		TaskID: id, Transport: req.Channel, ChatID: req.ChatID, MessageID: req.MessageID, Requester: req.SenderOpenID, Conversation: req.ConversationID,
+		TaskID: id, Transport: req.Source.Channel, ChatID: req.Reply.ChatID, MessageID: req.Source.MessageID, Requester: req.Actor.ID, Conversation: req.Source.ConversationID,
 		Text: c.text.T(i18n.TaskOfflineDone, id, elapsed.Round(time.Minute)),
 	})
 }

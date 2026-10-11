@@ -35,15 +35,15 @@ type Whereabouts struct {
 // it from. A line that does not say whether it came in private or in a
 // group, such as a replayed card tap, is no evidence and changes nothing.
 func (c *Coordinator) rememberMode(req Request) {
-	if req.ChatType != protocol.ChatP2P && req.ChatType != protocol.ChatGroup {
+	if req.Source.ChatType != protocol.ChatP2P && req.Source.ChatType != protocol.ChatGroup {
 		return
 	}
-	mode := injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
+	mode := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerID)
 	c.mu.Lock()
 	if c.modes == nil {
 		c.modes = map[string]home.Mode{}
 	}
-	c.modes[req.ConversationID] = mode
+	c.modes[req.Source.ConversationID] = mode
 	c.mu.Unlock()
 }
 
@@ -62,7 +62,7 @@ const consolePrefix = "console:"
 // guest and the owner in private look alike by their key.
 func (c *Coordinator) arrivalMode(conversationID string) (mode home.Mode, known bool) {
 	if strings.HasPrefix(conversationID, consolePrefix) {
-		return injectionMode(protocol.ChatP2P, c.owners.baseline, c.owners.baseline), true
+		return injectionMode(protocol.ChatP2P, c.owners.ConsoleOwner(), c.owners.ConsoleOwner()), true
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

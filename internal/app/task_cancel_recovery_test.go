@@ -108,12 +108,13 @@ func openRetainedRecovery(t *testing.T, origin string, left task.State) cancelle
 	})
 	workers := &reconciliationWorkers{}
 	t.Cleanup(workers.Close)
+	gw := gateway.New(coordinator)
 	channels, err := assembleChannels(
 		&runtimeValues{book: book, cfg: &config.Config{}, ctx: t.Context()},
 		&ledgerValues{},
-		&executionValues{coordinator: coordinator, gw: gateway.New(coordinator), catalogText: i18n.New(i18n.LocaleEN)},
+		&executionValues{coordinator: coordinator, gw: gw, catalogText: i18n.New(i18n.LocaleEN)},
 		&readModelValues{}, &consoleValues{cons: f.cons, reconciliations: workers},
-		&administrationValues{}, &delegationValues{},
+		&administrationValues{}, &delegationValues{taskChannels: testTaskChannels(t, f.cons, gw, book, coordinator)},
 	)
 	if err != nil {
 		t.Fatal(err)

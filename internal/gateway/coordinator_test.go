@@ -80,14 +80,14 @@ func (p *catalogCoordinator) Handle(ctx context.Context, req turn.Request) (turn
 		return turn.Result{Text: "ok"}, nil
 	}
 	if req.OnTurnReady != nil {
-		req.OnTurnReady("task-"+req.MessageID, "attempt-"+req.MessageID)
+		req.OnTurnReady("task-"+req.Source.MessageID, "attempt-"+req.Source.MessageID)
 	}
 	select {
 	case <-p.release:
 	case <-ctx.Done():
 		return turn.Result{}, ctx.Err()
 	}
-	return turn.Result{Text: "complete original result", Attempt: "attempt-" + req.MessageID}, nil
+	return turn.Result{Text: "complete original result", Attempt: "attempt-" + req.Source.MessageID}, nil
 }
 
 // A stop that only the coordinator's catalog recognizes joins the turn its

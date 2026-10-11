@@ -15,13 +15,24 @@ import (
 func neverAdmittedFixture(t *testing.T, ended bool) (*Coordinator, *ledger.Ledger, task.Task, Request) {
 	t.Helper()
 	c, tasks, book := taskCoordinatorBook(t, &fakeRunner{reply: "must not execute"}, withOwner("owner"))
-	req := Request{Channel: "console", ConversationID: "console:proof", MessageID: "web-e1", ExchangeID: "e1", SenderOpenID: "owner", ExpectedProject: "codex"}
-	tracked, err := tasks.Create(task.Task{Transport: req.Channel, Channel: req.ConversationID, Requester: "owner", Member: "codex", ProjectID: "codex"})
+	req := Request{
+		Source: Source{
+			Channel:        "console",
+			ConversationID: "console:proof",
+			MessageID:      "web-e1",
+		},
+		Admission: Admission{
+			ExchangeID:      "e1",
+			ExpectedProject: "codex",
+		},
+		Actor: Actor{ID: "owner"},
+	}
+	tracked, err := tasks.Create(task.Task{Transport: req.Source.Channel, Channel: req.Source.ConversationID, Requester: "owner", Member: "codex", ProjectID: "codex"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.ExpectedTask = tracked.ID
-	tracked, err = tasks.BeginTurn(tracked.ID, "codex", "node", task.TurnInput{Address: req.Address(), TurnID: req.MessageID})
+	req.Admission.ExpectedTask = tracked.ID
+	tracked, err = tasks.BeginTurn(tracked.ID, "codex", "node", task.TurnInput{Address: req.Address(), TurnID: req.Source.MessageID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +56,17 @@ func TestConfirmNeverAdmittedAfterRealPrepareSessionErrorAndRestart(t *testing.T
 	c, _, book := taskCoordinatorBook(t, runner, withOwner("owner"), withCallbacks(func(cb *Callbacks) { cb.AgentGate = &fakeGate{} }))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	c.runtime = failingPreparationManager{manager}
-	req := Request{Channel: "console", ConversationID: "console:proof", MessageID: "web-e1", ExchangeID: "e1", SenderOpenID: "owner", Input: "normal question", Mentioned: true}
+	req := Request{
+		Source: Source{
+			Channel:        "console",
+			ConversationID: "console:proof",
+			MessageID:      "web-e1",
+			Mentioned:      true,
+		},
+		Admission: Admission{ExchangeID: "e1"},
+		Actor:     Actor{ID: "owner"},
+		Input:     "normal question",
+	}
 	if _, err := c.Handle(t.Context(), req); err == nil {
 		t.Fatal("preparation unexpectedly succeeded")
 	}
@@ -100,23 +121,23 @@ func TestConfirmNeverAdmittedRejectsUnrelatedIdentityAndActiveObserver(t *testin
 			c, _, _, req := neverAdmittedFixture(t, true)
 			switch field {
 			case "channel":
-				req.Channel = "feishu"
+				req.Source.Channel = "feishu"
 			case "conversation":
-				req.ConversationID = "console:other"
+				req.Source.ConversationID = "console:other"
 			case "message":
-				req.MessageID = "web-other"
+				req.Source.MessageID = "web-other"
 			case "exchange":
-				req.ExchangeID = "other"
+				req.Admission.ExchangeID = "other"
 			case "requester":
-				req.SenderOpenID = "other"
+				req.Actor.ID = "other"
 			case "project":
-				req.ExpectedProject = "other"
+				req.Admission.ExpectedProject = "other"
 			case "task":
-				req.ExpectedTask = "other"
+				req.Admission.ExpectedTask = "other"
 			case "origin":
-				req.Origin = "another-schedule"
+				req.Source.Origin = "another-schedule"
 			case "active":
-				c.cancels[sessionKey(req.ConversationID, "codex")] = &turnEntry{}
+				c.cancels[sessionKey(req.Source.ConversationID, "codex")] = &turnEntry{}
 			}
 			if confirmed, err := confirmUnadmitted(t, c, req); confirmed {
 				t.Fatalf("wrong identity/active observer authorized closure: %v", err)
@@ -148,7 +169,7 @@ func TestConfirmNeverAdmittedRejectsAnyAdmittedAttemptEvenOutsideRetainedView(t 
 		t.Run(phase, func(t *testing.T) {
 			c, book, tracked, req := neverAdmittedFixture(t, true)
 			if _, err := book.DB().Exec(`INSERT INTO operations VALUES('hidden','attempt',?,1,1,?,'2026-09-20T00:00:00Z','2026-09-20T00:00:00Z')`,
-				phase, `{"id":"hidden","task_id":"`+tracked.ID+`","turn_id":"`+req.MessageID+`","kind":"chat"}`); err != nil {
+				phase, `{"id":"hidden","task_id":"`+tracked.ID+`","turn_id":"`+req.Source.MessageID+`","kind":"chat"}`); err != nil {
 				t.Fatal(err)
 			}
 			if got, err := confirmUnadmitted(t, c, req); got {
@@ -178,11 +199,11 @@ func TestConfirmNeverAdmittedRejectsCorruptOrAmbiguousEvidence(t *testing.T) {
 			case "accounting-key":
 				_, err = book.DB().Exec(`UPDATE bindings SET id='wrong' WHERE kind='task-attempt'`)
 			case "duplicate":
-				other, createErr := c.tasks.Create(task.Task{Transport: req.Channel, Channel: req.ConversationID, Requester: "owner", Member: "other", ProjectID: tracked.ProjectID})
+				other, createErr := c.tasks.Create(task.Task{Transport: req.Source.Channel, Channel: req.Source.ConversationID, Requester: "owner", Member: "other", ProjectID: tracked.ProjectID})
 				if createErr != nil {
 					t.Fatal(createErr)
 				}
-				_, err = c.tasks.BeginTurn(other.ID, "other", "", task.TurnInput{Address: channel.Address{Channel: req.Channel, Conversation: req.ConversationID, Message: req.MessageID}})
+				_, err = c.tasks.BeginTurn(other.ID, "other", "", task.TurnInput{Address: channel.Address{Channel: req.Source.Channel, Conversation: req.Source.ConversationID, Message: req.Source.MessageID}})
 			case "interrupted":
 				_, err = book.DB().Exec(`UPDATE bindings SET data=json_set(data,'$.outcome','interrupted') WHERE kind='task-attempt'`)
 			}

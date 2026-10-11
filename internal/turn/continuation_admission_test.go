@@ -81,7 +81,14 @@ func TestParentContinuationWaitsForLandingWithoutDuplicatingPromptOrBudget(t *te
 			defer release()
 			finished := make(chan error, 1)
 			go func() {
-				_, err := c.Handle(t.Context(), Request{ConversationID: "chat", Input: "retained child result", MessageID: "delivery-original", ExpectedTask: root.ID})
+				_, err := c.Handle(t.Context(), Request{
+					Source: Source{
+						ConversationID: "chat",
+						MessageID:      "delivery-original",
+					},
+					Input:     "retained child result",
+					Admission: Admission{ExpectedTask: root.ID},
+				})
 				finished <- err
 			}()
 			deadline := time.Now().Add(5 * time.Second)
@@ -169,14 +176,18 @@ func TestOrdinaryPromptWaitsOutACanonicalSnapshot(t *testing.T) {
 	defer timer.Stop()
 	var mu sync.Mutex
 	var stages []view.Stage
-	result, err := c.Handle(t.Context(), Request{ConversationID: "chat", Input: "new work", OnStage: func(s view.Stage) {
-		mu.Lock()
-		stages = append(stages, s)
-		mu.Unlock()
-		if s == view.StageAwaitSnapshot {
-			go giveBack()
-		}
-	}})
+	result, err := c.Handle(t.Context(), Request{
+		Source: Source{ConversationID: "chat"},
+		Input:  "new work",
+		OnStage: func(s view.Stage) {
+			mu.Lock()
+			stages = append(stages, s)
+			mu.Unlock()
+			if s == view.StageAwaitSnapshot {
+				go giveBack()
+			}
+		},
+	})
 	if err != nil {
 		t.Fatalf("a prompt behind a snapshot was refused: %v", err)
 	}

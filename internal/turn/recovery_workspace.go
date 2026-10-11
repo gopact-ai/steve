@@ -35,7 +35,7 @@ func (c *Coordinator) sharedRecoveryWorkspace(ctx context.Context, req Request, 
 	if err != nil {
 		return project.Workspace{}, true, UserError{Text: c.text.T(i18n.RecoveryCopyPending, err.Error()), Cause: err}
 	}
-	r, err = c.attempts.SelectRecoveryWorkspace(ctx, r.ID, planned, req.SenderOpenID)
+	r, err = c.attempts.SelectRecoveryWorkspace(ctx, r.ID, planned, req.Actor.ID)
 	if err != nil {
 		return project.Workspace{}, true, UserError{Text: c.text.T(i18n.RecoveryCopyPending, err.Error()), Cause: err}
 	}

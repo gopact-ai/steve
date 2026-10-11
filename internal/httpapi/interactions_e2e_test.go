@@ -86,7 +86,7 @@ func newInteractionE2E(t *testing.T, bin string, noMedia bool, checkpoint ...con
 	registry := execution.New(t.Context(), tasks)
 	artifacts.SetExecution(registry)
 	coordinator := turntest.New(t, func(o *turntest.Options) {
-		o.Ledger, o.Catalog, o.Store, o.Runtime, o.Timeout, o.Owner = book, catalog, store, manager, 10*time.Second, "owner"
+		o.Ledger, o.Catalog, o.Store, o.Runtime, o.Timeout, o.Identity.ConsoleOwner = book, catalog, store, manager, 10*time.Second, "owner"
 		o.Projects, o.DefaultProject, o.Attempts, o.Artifacts = projects, "scratch", attempt.New(book), artifacts
 		o.Tasks, o.Executions = tasks, registry
 	})

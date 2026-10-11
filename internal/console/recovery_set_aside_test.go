@@ -166,7 +166,7 @@ type stoppablePlanDriver struct {
 
 func (d *stoppablePlanDriver) StopRetainedTask(_ context.Context, id string, req turn.Request, cancel bool) (turn.Result, error) {
 	d.stops.Add(1)
-	if id != "plan-task" || req.ConversationID != "console:main" || req.MessageID != "web-e1" {
+	if id != "plan-task" || req.Source.ConversationID != "console:main" || req.Source.MessageID != "web-e1" {
 		return turn.Result{}, errors.New("stop targeted another execution")
 	}
 	return turn.Result{}, harness.ErrStopUnconfirmed
@@ -274,7 +274,7 @@ func (d *storedTaskDriver) ResumeRetainedChat(context.Context, string, turn.Requ
 
 func (d *storedTaskDriver) StopRetainedTask(ctx context.Context, id string, req turn.Request, cancel bool) (turn.Result, error) {
 	d.stops.Add(1)
-	if id != d.id || req.ConversationID != "console:main" || req.MessageID != "web-e1" {
+	if id != d.id || req.Source.ConversationID != "console:main" || req.Source.MessageID != "web-e1" {
 		return turn.Result{}, errors.New("stop targeted another execution")
 	}
 	if d.hold.Load() {

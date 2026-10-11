@@ -172,8 +172,15 @@ func repairCoordinator(t *testing.T, opts ...testOption) (*Coordinator, *fakeSup
 func say(t *testing.T, c *Coordinator, input string) Result {
 	t.Helper()
 	res, err := c.Handle(t.Context(), Request{
-		ConversationID: "chat", ChatID: "chat", MessageID: "m-" + input, Input: input,
-		SenderOpenID: "ou_owner", ChatType: protocol.ChatP2P, Mentioned: true,
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "m-" + input,
+			ChatType:       protocol.ChatP2P,
+			Mentioned:      true,
+		},
+		Reply: ReplyContext{ChatID: "chat"},
+		Input: input,
+		Actor: Actor{ID: "ou_owner"},
 	})
 	if err != nil {
 		t.Fatalf("%s: %v", input, err)

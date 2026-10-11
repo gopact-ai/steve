@@ -24,17 +24,24 @@ func TestRejectedOnTurnReadyReceiptCancelsBeforeNativePrompt(t *testing.T) {
 	defer cancel()
 	var receiptErr error
 	var admitted string
-	result, err := c.Handle(ctx, Request{ConversationID: "chat", MessageID: "original-message", Input: "must not execute", OnTurnReady: func(taskID, attemptID string) {
-		admitted = attemptID
-		raw, marshalErr := json.Marshal(map[string]string{"task_id": taskID, "attempt_id": attemptID})
-		if marshalErr != nil {
-			t.Fatal(marshalErr)
-		}
-		receiptErr = book.RecordCommand(ctx, "input/attempt", "gateway-input-attempt", "owner", raw)
-		if receiptErr != nil {
-			cancel()
-		}
-	}})
+	result, err := c.Handle(ctx, Request{
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "original-message",
+		},
+		Input: "must not execute",
+		OnTurnReady: func(taskID, attemptID string) {
+			admitted = attemptID
+			raw, marshalErr := json.Marshal(map[string]string{"task_id": taskID, "attempt_id": attemptID})
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			receiptErr = book.RecordCommand(ctx, "input/attempt", "gateway-input-attempt", "owner", raw)
+			if receiptErr != nil {
+				cancel()
+			}
+		},
+	})
 	if admitted == "" || receiptErr == nil || !strings.Contains(receiptErr.Error(), "admission receipt unavailable") {
 		t.Fatalf("fault missed durable callback boundary: admitted=%s error=%v", admitted, receiptErr)
 	}

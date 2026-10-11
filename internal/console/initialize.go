@@ -19,7 +19,7 @@ func (s *Service) InitializeConversation(ctx context.Context, conversation, proj
 		return errors.New("conversation and project are required")
 	}
 	if s.owner == "" {
-		return errors.New("the console needs feishu.owner_open_id: it acts as the owner")
+		return errors.New("the console needs gateway.owner_id: it acts as the owner")
 	}
 	conversation = ConversationID(conversation)
 	s.mu.Lock()

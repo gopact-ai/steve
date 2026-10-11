@@ -119,7 +119,7 @@ func testNodeReceiptConsoleClosure(t *testing.T, bin, key string) {
 	var bound harness.NodeSessionContext
 	workdir := t.TempDir()
 	cons := console.New(receiptChatCoordinator{answer: func(ctx context.Context, req turn.Request) (turn.Result, error) {
-		tracked, err := tasks.Create(task.Task{Channel: req.ConversationID, Transport: req.Channel, Requester: req.SenderOpenID,
+		tracked, err := tasks.Create(task.Task{Channel: req.Source.ConversationID, Transport: req.Source.Channel, Requester: req.Actor.ID,
 			Member: "mock", ProjectID: "p", Goal: "receipt closure"})
 		if err != nil {
 			return turn.Result{}, err
@@ -134,15 +134,15 @@ func testNodeReceiptConsoleClosure(t *testing.T, bin, key string) {
 		var result turn.Result
 		finished, err := lifecycle.Run(ctx, lifecycle.Options{
 			Attempts: attempts, Sessions: manager, Actor: "test",
-			Spec: attempt.Spec{ID: "native-receipt", TaskID: tracked.ID, TurnID: req.MessageID, Kind: attempt.KindChat,
+			Spec: attempt.Spec{ID: "native-receipt", TaskID: tracked.ID, TurnID: req.Source.MessageID, Kind: attempt.KindChat,
 				Agent: "mock", Node: "worker", Harness: "mock", Project: "p", Execution: &token, Scope: attempt.ScopePathSet,
 				Workspace: project.Workspace{ID: "work", Project: "p", Node: "worker", Kind: project.KindWorktree, Path: workdir}},
 			At: harness.Placement{Node: "worker", Harness: "mock"}, Workdir: workdir, Prompt: req.Input, TurnPrompt: true,
 			Leased: func(ctx context.Context, e *lifecycle.Execution) (context.Context, error) {
-				if err := tasks.BindAttempt(token, e.Record.ID, req.MessageID); err != nil {
+				if err := tasks.BindAttempt(token, e.Record.ID, req.Source.MessageID); err != nil {
 					return ctx, err
 				}
-				bound = harness.NodeSessionContext{Authority: authority, CommandID: req.MessageID, Binding: nodewire.SessionBinding{
+				bound = harness.NodeSessionContext{Authority: authority, CommandID: req.Source.MessageID, Binding: nodewire.SessionBinding{
 					ProjectID: "p", SessionID: attempt.RetainedSessionID(tracked.Channel, tracked.ID, "mock"), TaskID: tracked.ID,
 					AttemptID: e.Record.ID, NodeID: "worker", ExecutionEpoch: attempt.SessionExecutionEpoch(e.Record), TaskEpoch: token.Epoch}}
 				return harness.WithNodeSession(ctx, bound), nil

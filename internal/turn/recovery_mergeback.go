@@ -20,7 +20,7 @@ func (a *WorkspaceRecoveryControl) Drive(ctx context.Context, id string, step fu
 	c := a.coordinator
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
-	owner, err := c.owners.of("console")
+	owner, err := c.owners.Owner("console")
 	if err != nil {
 		return err
 	}

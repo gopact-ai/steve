@@ -136,7 +136,7 @@ type enqueueOptions struct {
 func (s *Service) enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef, options enqueueOptions) (*queuedExchange, Exchange, error) {
 	prompt, key := options.Prompt, options.Key
 	if s.owner == "" {
-		return nil, Exchange{}, errors.New("the console needs feishu.owner_open_id: it acts as the owner")
+		return nil, Exchange{}, errors.New("the console needs gateway.owner_id: it acts as the owner")
 	}
 	conversation = ConversationID(conversation)
 	input, prompt, quotes, hash := submission(input, prompt, quotes)

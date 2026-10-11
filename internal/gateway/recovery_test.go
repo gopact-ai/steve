@@ -23,7 +23,7 @@ type recoveryProbe struct {
 func (p *recoveryProbe) Handle(_ context.Context, r turn.Request) (turn.Result, error) {
 	p.calls.Add(1)
 	if r.OnTurnReady != nil {
-		r.OnTurnReady(r.ExpectedTask, "new-attempt")
+		r.OnTurnReady(r.Admission.ExpectedTask, "new-attempt")
 	}
 	return turn.Result{Text: "complete original result", Attempt: "new-attempt"}, p.fail
 }

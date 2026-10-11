@@ -21,9 +21,20 @@ func confirmNeverAdmitted(ctx context.Context, driver RetainedChatDriver, e Exch
 		return false, nil
 	}
 	confirmed, err := proof.ConfirmNeverAdmitted(ctx, turn.Request{
-		Channel: "console", ConversationID: e.Conversation, MessageID: AnchorMark + e.ID,
-		ExchangeID: e.ID, SenderOpenID: requester, ExpectedProject: e.ExpectedProject, ExpectedTask: e.ExpectedTask,
-		ResumeAdmission: e.ResumeAdmission, Origin: e.Origin, Locale: e.Locale,
+		Source: turn.Source{
+			Channel:        "console",
+			ConversationID: e.Conversation,
+			MessageID:      AnchorMark + e.ID,
+			Origin:         e.Origin,
+		},
+		Admission: turn.Admission{
+			ExchangeID:      e.ID,
+			ExpectedProject: e.ExpectedProject,
+			ExpectedTask:    e.ExpectedTask,
+			ResumeAdmission: e.ResumeAdmission,
+		},
+		Actor:  turn.Actor{ID: requester},
+		Locale: e.Locale,
 	})
 	return confirmed && err == nil, err
 }

@@ -28,7 +28,7 @@ func selectorAdminFixture(t *testing.T, runtime ...selectorRuntime) *Service {
 		t.Fatal(err)
 	}
 	a.Coordinator = turntest.New(t, func(o *turntest.Options) {
-		o.Ledger, o.Catalog, o.Store, o.Timeout, o.Owner = book, catalog, store, time.Second, "owner"
+		o.Ledger, o.Catalog, o.Store, o.Timeout, o.Identity.ConsoleOwner = book, catalog, store, time.Second, "owner"
 		o.Projects, o.DefaultProject = a.Projects, "p"
 		for _, r := range runtime {
 			o.Runtime = r

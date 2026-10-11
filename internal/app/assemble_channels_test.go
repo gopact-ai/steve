@@ -74,12 +74,13 @@ func TestAssembledChannelsGiveTheAgentGateTheScheduler(t *testing.T) {
 	})
 	workers := &reconciliationWorkers{}
 	t.Cleanup(workers.Close)
+	gw := gateway.New(coordinator)
 	if _, err := assembleChannels(
 		&runtimeValues{book: book, cfg: &config.Config{}, ctx: t.Context()},
 		&ledgerValues{},
-		&executionValues{coordinator: coordinator, gw: gateway.New(coordinator), catalogText: i18n.New(i18n.LocaleEN), scheduler: scheduler},
+		&executionValues{coordinator: coordinator, gw: gw, catalogText: i18n.New(i18n.LocaleEN), scheduler: scheduler},
 		&readModelValues{}, &consoleValues{cons: cons, reconciliations: workers},
-		&administrationValues{}, &delegationValues{gate: gate},
+		&administrationValues{}, &delegationValues{gate: gate, taskChannels: testTaskChannels(t, cons, gw, book, coordinator)},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +153,7 @@ func TestAssembledIngressRecoversAnUnsettledTurnThroughTheCoordinator(t *testing
 		&ledgerValues{},
 		&executionValues{coordinator: f.c, gw: g, catalogText: i18n.New(i18n.LocaleEN)},
 		&readModelValues{}, &consoleValues{cons: f.cons, reconciliations: workers},
-		&administrationValues{}, &delegationValues{},
+		&administrationValues{}, &delegationValues{taskChannels: testTaskChannels(t, f.cons, g, f.book, f.c)},
 	); err != nil {
 		t.Fatal(err)
 	}

@@ -19,7 +19,7 @@ func (c *Coordinator) StopRetainedTask(ctx context.Context, taskID string, req R
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
 	var err error
-	c, err = c.forChannel(req.Channel)
+	c, err = c.forChannel(req.Source.Channel)
 	if err != nil {
 		return Result{}, err
 	}
@@ -30,10 +30,10 @@ func (c *Coordinator) StopRetainedTask(ctx context.Context, taskID string, req R
 		return Result{}, errors.New("recovery task control is unavailable")
 	}
 	tracked, ok := c.tasks.Get(taskID)
-	if !ok || tracked.Channel != req.ConversationID || tracked.AnchorMessage != req.MessageID || (req.ExpectedProject != "" && req.ExpectedProject != tracked.ProjectID) {
+	if !ok || tracked.Channel != req.Source.ConversationID || tracked.AnchorMessage != req.Source.MessageID || (req.Admission.ExpectedProject != "" && req.Admission.ExpectedProject != tracked.ProjectID) {
 		return Result{}, errors.New("recovery stop does not match the original exchange")
 	}
-	if tracked.Requester != "" && tracked.Requester != req.SenderOpenID {
+	if tracked.Requester != "" && tracked.Requester != req.Actor.ID {
 		return Result{}, errors.New("recovery stop requires the original requester")
 	}
 	if !cancel || tracked.State == task.StateCancelled {

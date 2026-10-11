@@ -17,7 +17,7 @@ import (
 // property of a live session: the agent only reports its options once one is
 // open, and a change has to land on the session the next turn will use.
 func (c commands) modelCmd(parent context.Context, req Request, selected agent.Agent, want string) (Result, error) {
-	conversationID := req.ConversationID
+	conversationID := req.Source.ConversationID
 	ctx, cancel := context.WithTimeout(parent, c.promptTimeout())
 	// Take the turn lock: switching model under a running turn would change
 	// the agent out from under it.
@@ -53,7 +53,7 @@ func (c commands) modelCmd(parent context.Context, req Request, selected agent.A
 	if err := configurable.SetModel(ctx, optionID, picked.Value); err != nil {
 		return Result{}, err
 	}
-	if err := c.store.SetPreferences(req.ConversationID, selected.ID, map[string]string{"model": picked.Value}); err != nil {
+	if err := c.store.SetPreferences(req.Source.ConversationID, selected.ID, map[string]string{"model": picked.Value}); err != nil {
 		return Result{}, err
 	}
 	// Read back rather than echoing the request: the agent confirms with a

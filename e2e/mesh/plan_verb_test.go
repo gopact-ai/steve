@@ -70,7 +70,8 @@ func TestChatPlanVerbAcrossTheFleet(t *testing.T) {
 
 	// /fleet first: what a person checks before trusting a placement.
 	fleetCard, err := coordinator.Handle(ctx, turn.Request{
-		ConversationID: "chat", Input: "/fleet",
+		Source: turn.Source{ConversationID: "chat"},
+		Input:  "/fleet",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +84,11 @@ func TestChatPlanVerbAcrossTheFleet(t *testing.T) {
 	}
 
 	result, err := coordinator.Handle(ctx, turn.Request{
-		ConversationID: "chat", MessageID: "om_e2e", ChatID: "oc_e2e",
+		Source: turn.Source{
+			ConversationID: "chat",
+			MessageID:      "om_e2e",
+		},
+		Reply: turn.ReplyContext{ChatID: "oc_e2e"},
 		Input: "/plan release the thing",
 	})
 	if err != nil {
@@ -104,7 +109,10 @@ func TestChatPlanVerbAcrossTheFleet(t *testing.T) {
 	}
 
 	// /plans must then show it, with its revision history.
-	listing, err := coordinator.Handle(ctx, turn.Request{ConversationID: "chat", Input: "/plans"})
+	listing, err := coordinator.Handle(ctx, turn.Request{
+		Source: turn.Source{ConversationID: "chat"},
+		Input:  "/plans",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

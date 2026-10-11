@@ -22,7 +22,9 @@ func TestTaskExecutionNodeSurvivesCoordinatorChangeAndReload(t *testing.T) {
 				t.Fatal(err)
 			}
 			selected := agent.Agent{ID: "worker-agent", Node: selectedNode}
-			req := Request{ConversationID: "chat"}
+			req := Request{
+				Source: Source{ConversationID: "chat"},
+			}
 			var taskID string
 			var nodes []string
 			for _, coordinatorNode := range []string{"coordinator-a", "coordinator-b"} {
