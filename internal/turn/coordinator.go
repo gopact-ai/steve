@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/memory"
@@ -126,8 +127,8 @@ type Result struct {
 
 type Coordinator struct {
 	*coordinatorState
-	text        i18n.Catalog
-	ownerOpenID string
+	text    i18n.Catalog
+	ownerID string
 }
 
 // coordinatorState owns shared execution state. Request-local views replace
@@ -145,7 +146,7 @@ type coordinatorState struct {
 	// setting never interrupts a live turn. Nil never hands a merge
 	// conflict to an agent unasked.
 	autoResolveSource func() bool
-	owners            channelOwners
+	owners            identity.Owners
 	home              home.Loader
 	homePath          string
 	skills            *skills.Live
@@ -221,13 +222,11 @@ type Deps struct {
 	// handed to an agent without anyone asking; nil never does.
 	AutoResolveSource func() bool
 	Text              i18n.Catalog
-	// Owner is the baseline owner identity; ChannelOwners registers each
-	// trusted non-console adapter's native owner.
-	Owner         string
-	ChannelOwners map[string]string
-	Home          home.Loader
-	Skills        *skills.Live
-	Projects      *project.Store
+	// Identity is the configured authority shared by input adapters and execution.
+	Identity identity.Configuration
+	Home     home.Loader
+	Skills   *skills.Live
+	Projects *project.Store
 	// DefaultProject binds a conversation that has never chosen;
 	// HomeProject, when set, binds the owner's DM instead.
 	DefaultProject string
@@ -304,7 +303,7 @@ func New(deps Deps) (*Coordinator, error) {
 	if missing := absent(deps.required()); len(missing) > 0 {
 		return nil, fmt.Errorf("turn: missing dependencies: %s", strings.Join(missing, ", "))
 	}
-	owners, err := newChannelOwners(deps.Owner, deps.ChannelOwners)
+	owners, err := identity.NewOwners(deps.Identity)
 	if err != nil {
 		return nil, fmt.Errorf("turn: %w", err)
 	}
@@ -313,8 +312,8 @@ func New(deps Deps) (*Coordinator, error) {
 		homePath = dir.Path
 	}
 	return &Coordinator{
-		text:        deps.Text,
-		ownerOpenID: deps.Owner,
+		text:    deps.Text,
+		ownerID: deps.Identity.ConsoleOwner,
 		coordinatorState: &coordinatorState{
 			catalog: deps.Catalog, store: deps.Store, assembler: deps.Assembler, runtime: deps.Runtime,
 			promptClock:       promptClock{timeout: deps.Timeout, source: deps.TimeoutSource, start: idle.WithTimeout},

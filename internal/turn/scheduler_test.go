@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -139,7 +140,7 @@ func schedulerFor(t *testing.T, c *Coordinator) *Scheduler {
 	t.Helper()
 	s, err := NewScheduler(SchedulerDeps{
 		Attempts: c.attempts, Tasks: c.tasks, Projects: c.projects, Schedules: c.schedules, Text: c.text,
-		Owner: c.owners.baseline, ChannelOwners: c.owners.byChannel,
+		Identity: c.owners.Configuration(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -375,11 +376,11 @@ func TestNewSchedulerRefusesMissingDependenciesAndInvalidOwners(t *testing.T) {
 	}
 	var deps Deps
 	fillDeps(t, testLedger(t), &deps)
-	full := SchedulerDeps{Attempts: deps.Attempts, Tasks: deps.Tasks, Projects: deps.Projects, Schedules: deps.Schedules, Text: deps.Text, Owner: "owner", ChannelOwners: map[string]string{"feishu": "ou_owner"}}
+	full := SchedulerDeps{Attempts: deps.Attempts, Tasks: deps.Tasks, Projects: deps.Projects, Schedules: deps.Schedules, Text: deps.Text, Identity: identity.Configuration{ConsoleOwner: "owner", NativeOwners: map[string]string{"feishu": "ou_owner"}}}
 	if _, err := NewScheduler(full); err != nil {
 		t.Fatal(err)
 	}
-	full.ChannelOwners = map[string]string{"console": "owner"}
+	full.Identity.NativeOwners = map[string]string{"console": "owner"}
 	if _, err := NewScheduler(full); err == nil {
 		t.Fatal("NewScheduler accepted an owner for the console channel")
 	}

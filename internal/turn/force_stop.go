@@ -18,7 +18,7 @@ func (f *ForceStopControl) ForceStopAttempt(ctx context.Context, id, requester s
 	c := f.coordinator
 	c.requestMu.RLock()
 	defer c.requestMu.RUnlock()
-	owner, err := c.owners.of("console")
+	owner, err := c.owners.Owner("console")
 	if err != nil {
 		return err
 	}

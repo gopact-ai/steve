@@ -1,6 +1,7 @@
 package turn
 
 import (
+	"context"
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -9,6 +10,14 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
+
+// InputExecutor is the execution port shared by input adapters. An adapter
+// authenticates and durably accepts its input before invoking Handle, and owns
+// reply delivery afterwards. ParseInput lets controls reach a running turn.
+type InputExecutor interface {
+	Handle(context.Context, Request) (Result, error)
+	ParseInput(string) (string, ParsedInput)
+}
 
 // Source identifies the input in its adapter's namespace. A source is evidence
 // of where work came from; it does not grant execution or queue authority.

@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/i18n"
+	authidentity "github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/models"
@@ -108,12 +109,13 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	if cfg.FeishuEnabled() {
 		channelOwners = map[string]string{"feishu": cfg.Feishu.OwnerOpenID}
 	}
+	identities := authidentity.Configuration{ConsoleOwner: cfg.EffectiveOwnerID(), NativeOwners: channelOwners}
 	timeoutSource, autoResolveSource := turnPolicy(boot.Settings())
 	coordinator, err := turn.New(turn.Deps{
 		Catalog: catalog, Store: store, Assembler: assembler, Runtime: manager,
 		Timeout: time.Duration(cfg.Gateway.PromptTimeout), TimeoutSource: timeoutSource,
 		AutoResolveSource: autoResolveSource, Text: catalogText,
-		Owner: cfg.EffectiveOwnerID(), ChannelOwners: channelOwners, Home: profile.Home, Skills: live,
+		Identity: identities, Home: profile.Home, Skills: live,
 		Projects: projects, DefaultProject: cfg.Gateway.DefaultProject, HomeProject: adminsvc.HomeProjectID,
 		Memory: memories, Attempts: attempts, Artifacts: artifacts, Intents: intents,
 		Executions: executions, Tasks: tasks, Node: boot.NodeName(), Schedules: schedules,
@@ -129,7 +131,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	// stores and owners as the coordinator but none of its runtime state.
 	scheduler, err := turn.NewScheduler(turn.SchedulerDeps{
 		Attempts: attempts, Tasks: tasks, Projects: projects, Schedules: schedules, Text: catalogText,
-		Owner: cfg.EffectiveOwnerID(), ChannelOwners: channelOwners,
+		Identity: identities,
 	})
 	if err != nil {
 		return nil, err

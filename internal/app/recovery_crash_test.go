@@ -85,7 +85,7 @@ func openCrashProbe(t *testing.T, dir string, opts ...turntest.Option) *crashPro
 	f.c = turntest.New(t, append([]turntest.Option{func(o *turntest.Options) {
 		o.Ledger, o.Catalog, o.Store, o.Runtime, o.Timeout = f.book, catalog, sessions, manager, time.Minute
 		o.Tasks, o.Node, o.Attempts = f.tasks, "hub", f.attempts
-		o.ChannelOwners = map[string]string{"feishu": "owner"}
+		o.Identity.NativeOwners = map[string]string{"feishu": "owner"}
 	}}, opts...)...)
 	f.ctx, f.cancel = context.WithCancel(t.Context())
 	f.cons = console.New(f, "owner", nil)

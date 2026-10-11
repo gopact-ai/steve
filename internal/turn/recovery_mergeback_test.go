@@ -27,6 +27,7 @@ import (
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -256,7 +257,7 @@ func TestRecoveryCaptureRequiresExactDriverAndTheCurrentOwner(t *testing.T) {
 		t.Fatal("maintenance authorized recovery I/O")
 	}
 	c.maintaining = false
-	owners, err := newChannelOwners("different-owner", nil)
+	owners, err := identity.NewOwners(identity.Configuration{ConsoleOwner: "different-owner", NativeOwners: nil})
 	c.owners = owners
 	if err != nil {
 		t.Fatal(err)
@@ -775,7 +776,7 @@ func TestRecoveryResolverSinkRechecksOwnerMaintenanceAndExactConflictAfterPublic
 			switch mode {
 			case "owner":
 				var err error
-				c.owners, err = newChannelOwners("different-owner", nil)
+				c.owners, err = identity.NewOwners(identity.Configuration{ConsoleOwner: "different-owner", NativeOwners: nil})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -952,7 +953,7 @@ func TestRecoveryResolverAdmittedWALSurvivesTaskCancelAndOwnerChangeWithoutNewAu
 	if err != nil || land.State != artifact.LandCommitted {
 		t.Fatalf("source cancel abandoned admitted resolver WAL: %+v %v", land, err)
 	}
-	c.owners, err = newChannelOwners("new-owner", nil)
+	c.owners, err = identity.NewOwners(identity.Configuration{ConsoleOwner: "new-owner", NativeOwners: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1686,7 +1687,7 @@ func TestRecoveryCommittedSinkAcknowledgementDoesNotRequireFreshOwner(t *testing
 			}
 			switch mode {
 			case "owner":
-				c.owners, err = newChannelOwners("next-owner", nil)
+				c.owners, err = identity.NewOwners(identity.Configuration{ConsoleOwner: "next-owner", NativeOwners: nil})
 				if err != nil {
 					t.Fatal(err)
 				}

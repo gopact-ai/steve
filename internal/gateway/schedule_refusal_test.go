@@ -71,7 +71,7 @@ func TestScheduledRunOnAnOpenAttemptTellsTheOwnerWhatToDo(t *testing.T) {
 	// would expire before the task is even looked at.
 	c := turntest.New(t, func(o *turntest.Options) {
 		o.Ledger, o.Catalog, o.Projects, o.Tasks, o.Timeout = book, catalog, projects, tasks, time.Minute
-		o.Owner, o.ChannelOwners, o.DefaultProject = f.Requester, map[string]string{"feishu": f.Requester}, f.ProjectID
+		o.Identity.ConsoleOwner, o.Identity.NativeOwners, o.DefaultProject = f.Requester, map[string]string{"feishu": f.Requester}, f.ProjectID
 	})
 	if _, err := projects.Bind(t.Context(), f.ConversationID, f.ProjectID, f.Requester); err != nil {
 		t.Fatal(err)

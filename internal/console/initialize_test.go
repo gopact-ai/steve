@@ -121,7 +121,7 @@ func TestInitializeConversationRetriesCommittedBindingAfterTranscriptSaveFailure
 		t.Fatal(err)
 	}
 	coordinator := turntest.New(t, func(o *turntest.Options) {
-		o.Ledger, o.Timeout, o.Owner = book, time.Minute, "owner"
+		o.Ledger, o.Timeout, o.Identity.ConsoleOwner = book, time.Minute, "owner"
 		o.Projects, o.DefaultProject = projects, "p"
 	})
 	s := New(coordinator, "owner", nil)

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"log/slog"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/gateway"
-	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/turn"
 )
@@ -22,7 +22,6 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	cfg := boot.Config()
 	ctx := boot.Context()
 	attempts := storage.Attempts()
-	catalogText := work.CatalogText()
 	coordinator := work.Coordinator()
 	gw := work.Gateway()
 	intents := work.Intents()
@@ -31,6 +30,10 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	cons := page.Console()
 	channelSettings := management.ChannelSettings()
 	gate := delegates.Gate()
+	taskChannels := delegates.TaskChannels()
+	if taskChannels == nil {
+		return nil, errors.New("channels require their registered task receivers")
+	}
 	if gate != nil {
 		gate.SetIntents(intent.ForAgents{S: intents, Attempts: attempts})
 		// Platform questions are answered by the coordinator, live.
@@ -78,20 +81,13 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 	// arrives as an ordinary message.
 	var routes taskRoutes
 	routes.Notifier = func(n turn.TaskNotice) {
-		err := routeTask(n.Transport, func() error { cons.Notice(n); return nil }, func() error {
-			gw.Notify(gateway.Notice{TaskID: n.TaskID, MessageID: n.MessageID, Requester: n.Requester, Text: n.Text})
-			return nil
-		})
+		err := taskChannels.Notice(n)
 		if err != nil {
 			slog.Error("task notice not routed", "task", n.TaskID, "error", err)
 		}
 	}
 	routes.Resumer = func(r turn.TaskResume) error {
-		return routeTask(r.Transport, func() error {
-			return cons.Resume(ctx, r.ConversationID, r.TaskID, r.Member, catalogText.T(i18n.TaskResumeNotice, r.TaskID), catalogText.T(i18n.TaskResumeManual, r.Goal), r.Admission, coordinator.ReviveSession)
-		}, func() error {
-			return gw.QueueTaskResume(ctx, book, r.Admission.ID, gateway.Revival{TaskID: r.TaskID, Goal: r.Goal, Member: r.Member, ConversationID: r.ConversationID, ChatID: r.ChatID, MessageID: r.MessageID, Requester: r.Requester, ChatType: r.ChatType, Manual: true}, r.Admission)
-		})
+		return taskChannels.Resume(ctx, r)
 	}
 	gw.SetRecoveryLedger(book)
 	gw.SetIngressLifetime(ctx, page.Reconciliations(), coordinator)
@@ -99,9 +95,7 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 		// Acceptance and owner authorization are already durable. Waking a
 		// consumer is best-effort; startup/runtime recovery uses the same input.
 		page.Reconciliations().Go(func() {
-			err := routeTask(r.Transport, func() error { return cons.DispatchResume(r.ConversationID, r.Admission) }, func() error {
-				return gw.DispatchResume(ctx, book, r.Admission, coordinator, coordinator.ReviveSession)
-			})
+			err := taskChannels.DispatchResume(ctx, r)
 			if err != nil {
 				slog.Error("accepted task resume awaits recovery", "task", r.TaskID, "admission", r.Admission.ID, "error", err)
 			}

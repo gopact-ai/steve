@@ -111,7 +111,7 @@ func unstartedFixture(t *testing.T, attemptState, data string) (*ledger.Ledger, 
 	coordinator := turntest.New(t, func(o *turntest.Options) {
 		o.Ledger, o.Catalog, o.Store, o.Timeout = book, catalog, sessions, time.Minute
 		o.Tasks, o.Node, o.Attempts = tasks, "node", attempt.New(book)
-		o.ChannelOwners = map[string]string{"feishu": msg.SenderOpenID}
+		o.Identity.NativeOwners = map[string]string{"feishu": msg.SenderOpenID}
 	})
 	return book, tasks, &unstartedProbe{taskID: tracked.ID, coordinator: coordinator}
 }

@@ -78,7 +78,7 @@ func rewindRetirementService(t *testing.T) (*Service, *rewindRetirementRuntime, 
 		o.Runtime = runtime
 		o.Projects = projects
 		o.DefaultProject = "p"
-		o.Owner = "owner"
+		o.Identity.ConsoleOwner = "owner"
 		o.Timeout = time.Minute
 	})
 	s := New(c, "owner", nil)

@@ -91,7 +91,7 @@ func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate,
 		o.Tasks, o.Node, o.Executions = tasks, "test", execution.New(t.Context(), tasks)
 		o.Projects, o.DefaultProject, o.Attempts = projects, "p", attempt.New(book)
 		o.Artifacts = artifact.New(t.TempDir(), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
-		o.ChannelOwners = map[string]string{"feishu": "owner", "unknown": "owner"}
+		o.Identity.NativeOwners = map[string]string{"feishu": "owner", "unknown": "owner"}
 	})
 	var consoleCoordinator console.Coordinator = coordinator
 	if gate != nil {
@@ -111,12 +111,13 @@ func assembledResumeAt(t *testing.T, dir, command string, gate *resumeInputGate,
 	})
 	workers := &reconciliationWorkers{}
 	t.Cleanup(workers.Close)
+	gw := gateway.New(coordinator)
 	channels, err := assembleChannels(
 		&runtimeValues{book: book, cfg: &config.Config{}, ctx: t.Context()},
 		&ledgerValues{},
-		&executionValues{coordinator: coordinator, gw: gateway.New(coordinator), catalogText: i18n.New(i18n.LocaleEN)},
+		&executionValues{coordinator: coordinator, gw: gw, catalogText: i18n.New(i18n.LocaleEN)},
 		&readModelValues{}, &consoleValues{cons: cons, reconciliations: workers},
-		&administrationValues{}, &delegationValues{},
+		&administrationValues{}, &delegationValues{taskChannels: testTaskChannels(t, cons, gw, book, coordinator)},
 	)
 	if err != nil {
 		t.Fatal(err)

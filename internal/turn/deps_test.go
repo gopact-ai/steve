@@ -197,21 +197,21 @@ func withCallbacks(set func(*Callbacks)) testOption {
 
 // withOwner sets the baseline owner identity.
 func withOwner(owner string) testOption {
-	return withDeps(func(d *Deps) { d.Owner = owner })
+	return withDeps(func(d *Deps) { d.Identity.ConsoleOwner = owner })
 }
 
 // withHome sets the baseline owner identity and the home it reads.
 func withHome(owner string, loader home.Loader) testOption {
-	return withDeps(func(d *Deps) { d.Owner, d.Home = owner, loader })
+	return withDeps(func(d *Deps) { d.Identity.ConsoleOwner, d.Home = owner, loader })
 }
 
 // withChannelOwner registers owner as the native owner of channel.
 func withChannelOwner(channel, owner string) testOption {
 	return withDeps(func(d *Deps) {
-		if d.ChannelOwners == nil {
-			d.ChannelOwners = map[string]string{}
+		if d.Identity.NativeOwners == nil {
+			d.Identity.NativeOwners = map[string]string{}
 		}
-		d.ChannelOwners[channel] = owner
+		d.Identity.NativeOwners[channel] = owner
 	})
 }
 
@@ -334,7 +334,7 @@ func TestNewRefusesEachRequiredDependencyAlone(t *testing.T) {
 func TestNewRefusesAnInvalidChannelOwner(t *testing.T) {
 	var deps Deps
 	fillDeps(t, testLedger(t), &deps)
-	deps.ChannelOwners = map[string]string{"console": "owner"}
+	deps.Identity.NativeOwners = map[string]string{"console": "owner"}
 	if _, err := New(deps); err == nil {
 		t.Fatal("New accepted an owner for the console channel")
 	}
@@ -343,8 +343,8 @@ func TestNewRefusesAnInvalidChannelOwner(t *testing.T) {
 func TestNewWiresEveryDependency(t *testing.T) {
 	var deps Deps
 	fillDeps(t, testLedger(t), &deps)
-	deps.Owner, deps.Node, deps.DefaultProject, deps.HomeProject = "owner", "hub", "p", "home"
-	deps.ChannelOwners = map[string]string{"feishu": "native-owner"}
+	deps.Identity.ConsoleOwner, deps.Node, deps.DefaultProject, deps.HomeProject = "owner", "hub", "p", "home"
+	deps.Identity.NativeOwners = map[string]string{"feishu": "native-owner"}
 	deps.Text = i18n.New(i18n.LocaleEN)
 	deps.OfflineAfter = time.Minute
 	guarded := errors.New("guarded")
@@ -369,7 +369,7 @@ func TestNewWiresEveryDependency(t *testing.T) {
 		c.tasks != deps.Tasks || c.schedules != deps.Schedules {
 		t.Fatal("New dropped a store or service")
 	}
-	if _, dir := c.home.(home.Dir); !dir || c.homePath != deps.Home.(home.Dir).Path || c.ownerOpenID != "owner" || c.node != "hub" ||
+	if _, dir := c.home.(home.Dir); !dir || c.homePath != deps.Home.(home.Dir).Path || c.ownerID != "owner" || c.node != "hub" ||
 		c.defaultProject != "p" || c.homeProject != "home" || c.text.Locale() != i18n.LocaleEN || c.offlineAfter != time.Minute {
 		t.Fatal("New dropped an identity, placement, locale or reminder setting")
 	}
@@ -377,7 +377,7 @@ func TestNewWiresEveryDependency(t *testing.T) {
 		t.Fatalf("completion guard = %v, want the one Deps gave", err)
 	}
 	native, err := c.forChannel("feishu")
-	if err != nil || native.ownerOpenID != "native-owner" {
+	if err != nil || native.ownerID != "native-owner" {
 		t.Fatalf("feishu owner = %v, %v", native, err)
 	}
 }

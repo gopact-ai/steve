@@ -39,7 +39,7 @@ func TestRegisteredProviderTurnKeepsNativeIdentityAndExecutionReceipt(t *testing
 	if err != nil || record.By != "mail-account" || record.TurnID != "provider-message" {
 		t.Fatalf("execution lost its original actor or source: %+v err=%v", record, err)
 	}
-	if c.ownerOpenID != "console-owner" {
+	if c.ownerID != "console-owner" {
 		t.Fatal("provider input replaced Console's owner")
 	}
 }

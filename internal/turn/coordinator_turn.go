@@ -290,7 +290,7 @@ func (t *chatTurn) compose(e *lifecycle.Execution, preface string) error {
 			speaker = "-"
 		}
 		ownerFlag := "false"
-		if req.Actor.ID != "" && req.Actor.ID == c.ownerOpenID {
+		if req.Actor.ID != "" && req.Actor.ID == c.ownerID {
 			ownerFlag = "true"
 		}
 		user = fmt.Sprintf("[steve: speaker=%s owner=%s chat=%s]\n%s", speaker, ownerFlag, req.Source.ChatType, t.prompt)

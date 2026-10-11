@@ -13,6 +13,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/permission"
 
 	"github.com/gopact-ai/steve/internal/agent"
@@ -51,7 +52,7 @@ func TestChannelOwnerControlsProjectPermissionsWithoutCrossChannelPrivilege(t *t
 			t.Fatal("native sender identity was rewritten")
 		}
 	}
-	if c.ownerOpenID != "console-owner" {
+	if c.ownerID != "console-owner" {
 		t.Fatal("channel request changed the baseline owner")
 	}
 }
@@ -117,7 +118,7 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 
 func TestChannelOwnerRegistrationIsExplicitAndKeepsTheConsoleBaseline(t *testing.T) {
 	owners := map[string]string{"feishu": "ou_first"}
-	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Timeout, d.ChannelOwners = time.Minute, owners }), withOwner("console-owner"))
+	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Timeout, d.Identity.NativeOwners = time.Minute, owners }), withOwner("console-owner"))
 	if _, err := c.forChannel("slack"); err == nil {
 		t.Fatal("unregistered channel borrowed console identity")
 	}
@@ -126,7 +127,7 @@ func TestChannelOwnerRegistrationIsExplicitAndKeepsTheConsoleBaseline(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if native.localized(i18n.LocaleEN).ownerOpenID != "ou_first" || c.ownerOpenID != "console-owner" {
+	if native.localized(i18n.LocaleEN).ownerID != "ou_first" || c.ownerID != "console-owner" {
 		t.Fatal("registration changed after New or replaced the Console baseline")
 	}
 }
@@ -205,30 +206,30 @@ func TestConcurrentChannelOwnersAndLocalesRemainRequestLocal(t *testing.T) {
 		}(n)
 	}
 	wg.Wait()
-	if c.ownerOpenID != "console-owner" || c.text.Locale() != i18n.LocaleZH {
+	if c.ownerID != "console-owner" || c.text.Locale() != i18n.LocaleZH {
 		t.Fatal("request modified baseline identity or catalog")
 	}
-	role, err := c.projects.Access(t.Context(), "worker", "console-owner", c.ownerOpenID)
+	role, err := c.projects.Access(t.Context(), "worker", "console-owner", c.ownerID)
 	if err != nil || role != project.RoleAdmin {
 		t.Fatalf("baseline owner changed %s %v", role, err)
 	}
 }
 
 func TestChannelOwnersResolveBaselineAndRegisteredChannels(t *testing.T) {
-	owners, err := newChannelOwners("console-owner", map[string]string{"feishu": "ou_im_owner"})
+	owners, err := identity.NewOwners(identity.Configuration{ConsoleOwner: "console-owner", NativeOwners: map[string]string{"feishu": "ou_im_owner"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for channel, want := range map[string]string{"": "console-owner", "console": "console-owner", "feishu": "ou_im_owner"} {
-		if got, err := owners.of(channel); err != nil || got != want {
+		if got, err := owners.Owner(channel); err != nil || got != want {
 			t.Errorf("owner of %q = %q, %v; want %q", channel, got, err, want)
 		}
 	}
-	if _, err := owners.of("slack"); err == nil {
+	if _, err := owners.Owner("slack"); err == nil {
 		t.Error("an unregistered channel resolved to an owner")
 	}
 	for _, channel := range []string{"", "console", " feishu"} {
-		if _, err := newChannelOwners("console-owner", map[string]string{channel: "someone"}); err == nil {
+		if _, err := identity.NewOwners(identity.Configuration{ConsoleOwner: "console-owner", NativeOwners: map[string]string{channel: "someone"}}); err == nil {
 			t.Errorf("registered an owner for channel %q", channel)
 		}
 	}

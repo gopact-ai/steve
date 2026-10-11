@@ -41,7 +41,7 @@ func nativeImportAdminFixture(t *testing.T, bin string) (*Service, *state.Store,
 		t.Fatal(err)
 	}
 	a.Coordinator = turntest.New(t, func(o *turntest.Options) {
-		o.Ledger, o.Catalog, o.Store, o.Timeout, o.Owner = book, a.Catalog, store, time.Second, "owner"
+		o.Ledger, o.Catalog, o.Store, o.Timeout, o.Identity.ConsoleOwner = book, a.Catalog, store, time.Second, "owner"
 		o.Projects, o.DefaultProject = a.Projects, "p"
 	})
 	a.Console = console.New(turntest.IdleCoordinator{}, "owner", nil)

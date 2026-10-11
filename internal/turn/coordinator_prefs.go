@@ -175,7 +175,7 @@ func (c *Coordinator) Selectors(parent context.Context, conversationID, agentID 
 			ConversationID: conversationID,
 			ChatType:       protocol.ChatP2P,
 		},
-		Actor: Actor{ID: c.ownerOpenID},
+		Actor: Actor{ID: c.ownerID},
 	}
 	ctx, cancel := context.WithTimeout(parent, c.promptTimeout())
 	defer cancel()

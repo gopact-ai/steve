@@ -38,7 +38,7 @@ func (c *Coordinator) rememberMode(req Request) {
 	if req.Source.ChatType != protocol.ChatP2P && req.Source.ChatType != protocol.ChatGroup {
 		return
 	}
-	mode := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID)
+	mode := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerID)
 	c.mu.Lock()
 	if c.modes == nil {
 		c.modes = map[string]home.Mode{}
@@ -62,7 +62,7 @@ const consolePrefix = "console:"
 // guest and the owner in private look alike by their key.
 func (c *Coordinator) arrivalMode(conversationID string) (mode home.Mode, known bool) {
 	if strings.HasPrefix(conversationID, consolePrefix) {
-		return injectionMode(protocol.ChatP2P, c.owners.baseline, c.owners.baseline), true
+		return injectionMode(protocol.ChatP2P, c.owners.ConsoleOwner(), c.owners.ConsoleOwner()), true
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

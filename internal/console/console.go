@@ -615,7 +615,7 @@ func (s *Service) SendCommand(ctx context.Context, conversation, input, commandI
 // turn.
 func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply consoleapi.Reply, err error) {
 	if s.owner == "" {
-		return consoleapi.Reply{}, errors.New("the console needs feishu.owner_open_id: it acts as the owner")
+		return consoleapi.Reply{}, errors.New("the console needs gateway.owner_id: it acts as the owner")
 	}
 	requester := s.owner
 	if exchange.Requester != "" {

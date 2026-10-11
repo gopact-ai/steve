@@ -53,7 +53,7 @@ func (t *chatTurn) prepareCredentials(ctx context.Context, saved state.Session, 
 	updated := append([]capability.Extra(nil), extras...)
 	updated[0] = next[0]
 	if saved.PluginRuntime != nil {
-		mode := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID)
+		mode := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerID)
 		caps, err = c.assembler.AssembleExtraPinned(selected, mode, updated, saved.PluginSkillsFingerprint)
 	} else {
 		caps, err = c.assemble(selected, req, updated)

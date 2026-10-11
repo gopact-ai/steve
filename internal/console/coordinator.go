@@ -10,8 +10,7 @@ import (
 // conversation's turns and knows where the conversation stands, what the
 // console can be told and how a line parses.
 type Coordinator interface {
-	// Handle answers a line sent to a conversation.
-	Handle(ctx context.Context, req turn.Request) (turn.Result, error)
+	turn.InputExecutor
 	// Context is a conversation's project and agents.
 	Context(ctx context.Context, conversationID string) (turn.Context, error)
 	// SessionSetup is what an agent has in hand for a conversation.
@@ -21,8 +20,6 @@ type Coordinator interface {
 	// VerbsFor names the verbs the console can be told, in the language of
 	// the request.
 	VerbsFor(ctx context.Context) []turn.Verb
-	// ParseInput splits a line into its addressed target and parsed input.
-	ParseInput(line string) (string, turn.ParsedInput)
 	// InitializeConversation gives a conversation its first project
 	// binding, on behalf of requester. It refuses a project that is unknown
 	// or that requester cannot read, and a conversation already bound to

@@ -183,7 +183,7 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	extras = append(extras, c.projectMemory(ctx, req.Source.ConversationID, req)...)
 	var capabilities capability.Capabilities
 	if saved.PluginRuntime != nil {
-		mode := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID)
+		mode := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerID)
 		capabilities, err = c.assembler.AssembleExtraPinned(selected, mode, extras, saved.PluginSkillsFingerprint)
 	} else {
 		capabilities, err = c.assemble(selected, req, extras)
@@ -226,7 +226,7 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 }
 
 func (c *Coordinator) buildingProfile(req Request) (bool, error) {
-	owner := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID) == home.ModeOwner
+	owner := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerID) == home.ModeOwner
 	if !onboard.Building(req.Source.ConversationID, owner, true) {
 		return false, nil
 	}
@@ -266,7 +266,7 @@ func (c *Coordinator) open(ctx context.Context, saved state.Session, selected ag
 }
 
 func (c *Coordinator) assemble(selected agent.Agent, req Request, extras []capability.Extra) (capability.Capabilities, error) {
-	return c.assembler.AssembleExtra(selected, injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID), extras)
+	return c.assembler.AssembleExtra(selected, injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerID), extras)
 }
 
 // gateExtras injects the messaging server for harnesses that can speak HTTP

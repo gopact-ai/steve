@@ -15,7 +15,7 @@ import (
 
 // require refuses a principal whose role in the project is below want.
 func (c *Coordinator) require(ctx context.Context, projectID, principal string, want project.Role) error {
-	return requireRole(ctx, c.projects, c.text, c.ownerOpenID, projectID, principal, want)
+	return requireRole(ctx, c.projects, c.text, c.ownerID, projectID, principal, want)
 }
 
 // requireRole refuses a principal whose role in the project, with owner as
@@ -32,7 +32,7 @@ func requireRole(ctx context.Context, projects *project.Store, text i18n.Catalog
 }
 
 func (c *Coordinator) isOwner(req Request) bool {
-	return c.ownerOpenID != "" && req.Actor.ID == c.ownerOpenID
+	return c.ownerID != "" && req.Actor.ID == c.ownerID
 }
 
 // held is an answer from a sealed project waiting for the owner. It lives

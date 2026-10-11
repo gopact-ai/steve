@@ -7,7 +7,6 @@ import (
 
 	"github.com/gopact-ai/steve/internal/debugapi"
 	"github.com/gopact-ai/steve/internal/desktop"
-	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
@@ -30,17 +29,7 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 	recoverRetainedDelegates := delegates.RecoverRetainedDelegates()
 	reconcileDeliveries := delegates.ReconcileDeliveries()
 	channel := channels.Channel()
-	receivers := &schedule.ReceiverRegistry{}
-	if cons != nil {
-		if err := receivers.Register("console", consoleScheduleReceiver{page: cons}); err != nil {
-			return err
-		}
-	}
-	if gw != nil {
-		if err := receivers.Register("feishu", gatewayScheduleReceiver{chat: gw}); err != nil {
-			return err
-		}
-	}
+	receivers := delegates.TaskChannels()
 	// The console starts serving below and may rewrite the configuration
 	// from then on; take what the listeners need from it first.
 	cfg := boot.Config()
