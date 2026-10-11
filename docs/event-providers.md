@@ -198,12 +198,14 @@ in a disclosure; original events, frozen subscriptions and receipts open in the
 inspector. The instrument has no demo playback controls or explanatory legend.
 
 The **Event Flow** dashboard instrument draws independently flowing publication and claim
-particles over Magic UI Animated Beam paths along a horizontal channel, with a rounded
-illuminated pending buffer in the middle. The MIT component is adapted to play once per observed record,
+block packets over Magic UI Animated Beam paths along one horizontal transfer channel, with a segmented
+pending buffer in the middle. The MIT component is adapted to play once per observed record,
 with shared path measurement instead of continuously looping demonstration
-traffic. One buffer dot represents one pending delivery. Dots form a single row
-against the right edge, with a width-dependent display limit of at most 128 dots and an explicit
-undisplayed remainder. Claims remove the right-hand head; new dots join the left.
+traffic. One filled buffer block represents one pending delivery. Blocks form a single row
+against the right edge, with a width-dependent display limit of at most 128 blocks and an explicit
+undisplayed remainder. Claims remove the right-hand head; new blocks join the left.
+The block count reconciles to each snapshot immediately, with short position transitions;
+the strip is not a completion percentage or a representation of configured capacity.
 Unknown effects retain a separate amber count. Its owner-only `GET /console/event-flow` reads queue counts,
 the latest 64 immutable event intake receipts and 64 claim fingerprints in one
 ledger snapshot every two seconds. It never fetches payloads or claim credentials.
