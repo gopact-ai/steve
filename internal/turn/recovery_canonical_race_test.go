@@ -64,15 +64,21 @@ func checkCanonicalRecoveryAdmission(t *testing.T, contention, continuation bool
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := Request{ConversationID: "console:canonical-race", MessageID: "canonical-race", SenderOpenID: "owner"}
-	if _, err := c.tasks.BeginTurn(tracked.ID, "worker", "node", task.TurnInput{TurnID: req.MessageID, Address: channel.Address{Conversation: req.ConversationID, Channel: "console", Message: req.MessageID}}); err != nil {
+	req := Request{
+		Source: Source{
+			ConversationID: "console:canonical-race",
+			MessageID:      "canonical-race",
+		},
+		Actor: Actor{ID: "owner"},
+	}
+	if _, err := c.tasks.BeginTurn(tracked.ID, "worker", "node", task.TurnInput{TurnID: req.Source.MessageID, Address: channel.Address{Conversation: req.Source.ConversationID, Channel: "console", Message: req.Source.MessageID}}); err != nil {
 		t.Fatal(err)
 	}
 	token, err := c.tasks.ExecutionToken(tracked.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := c.executions.Begin(t.Context(), execution.Key{TaskID: tracked.ID, InstanceID: req.MessageID})
+	scope, err := c.executions.Begin(t.Context(), execution.Key{TaskID: tracked.ID, InstanceID: req.Source.MessageID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +91,7 @@ func checkCanonicalRecoveryAdmission(t *testing.T, contention, continuation bool
 	}
 	spec.ID = "one-canonical-input"
 	if continuation {
-		req.ExpectedTask = tracked.ID
+		req.Admission.ExpectedTask = tracked.ID
 	}
 	turn := &chatTurn{c: c, req: req, selected: selected, tracked: tracked.ID, binding: project.Binding{ProjectID: p.ID}, workspace: p.Canonical(), clock: newTurnClock(), spent: &turnSpend{resetIdle: func() {}}}
 	raced := &canonicalRecoveryRaceAttempts{Attempts: c.attempts, before: func() {
@@ -112,7 +118,7 @@ func checkCanonicalRecoveryAdmission(t *testing.T, contention, continuation bool
 	if err != nil || got.ID != spec.ID || got.WorkspaceRecovery == nil || got.Workspace.Kind != project.KindWorktree || got.Workspace.Path == p.Home.Path || !turn.recoveryRefreshed || raced.calls != wantCalls {
 		t.Fatalf("canonical refusal rejected an unadmitted input: %+v refreshed=%v opens=%d err=%v", got, turn.recoveryRefreshed, raced.calls, err)
 	}
-	if got.Execution == nil || *got.Execution != token || got.TaskID != tracked.ID || got.TurnID != req.MessageID {
+	if got.Execution == nil || *got.Execution != token || got.TaskID != tracked.ID || got.TurnID != req.Source.MessageID {
 		t.Fatal("refresh replaced the task or execution identity")
 	}
 	if err := ledgerOf(t, c).Read(t.Context(), func(tx *ledger.ReadTx) error {
@@ -151,15 +157,21 @@ func TestCanonicalRecoveryRefreshStopsAtAcceptedOrUnexplainedRefusals(t *testing
 	for _, mode := range []string{"accepted", "unexplained", "other-project", "worktree"} {
 		t.Run(mode, func(t *testing.T) {
 			c, p, _, _ := recoveryCopyFixture(t, true)
-			req := Request{ConversationID: "console:bounded-refresh", MessageID: "bounded-refresh", SenderOpenID: "owner"}
-			tracked, err := c.tasks.Create(task.Task{Channel: req.ConversationID, Transport: "console", Member: "worker", ProjectID: p.ID, Workspace: p.Home.Path})
+			req := Request{
+				Source: Source{
+					ConversationID: "console:bounded-refresh",
+					MessageID:      "bounded-refresh",
+				},
+				Actor: Actor{ID: "owner"},
+			}
+			tracked, err := c.tasks.Create(task.Task{Channel: req.Source.ConversationID, Transport: "console", Member: "worker", ProjectID: p.ID, Workspace: p.Home.Path})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := c.tasks.BeginTurn(tracked.ID, "worker", "node", task.TurnInput{TurnID: req.MessageID, Address: channel.Address{Conversation: req.ConversationID, Channel: "console", Message: req.MessageID}}); err != nil {
+			if _, err := c.tasks.BeginTurn(tracked.ID, "worker", "node", task.TurnInput{TurnID: req.Source.MessageID, Address: channel.Address{Conversation: req.Source.ConversationID, Channel: "console", Message: req.Source.MessageID}}); err != nil {
 				t.Fatal(err)
 			}
-			scope, err := c.executions.Begin(t.Context(), execution.Key{TaskID: tracked.ID, InstanceID: req.MessageID})
+			scope, err := c.executions.Begin(t.Context(), execution.Key{TaskID: tracked.ID, InstanceID: req.Source.MessageID})
 			if err != nil {
 				t.Fatal(err)
 			}

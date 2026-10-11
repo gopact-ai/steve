@@ -21,8 +21,13 @@ func TestOfflineReminderFiresWhenTheAskerWentQuiet(t *testing.T) {
 	coordinator, notices := noticeCoordinator(t, &fakeRunner{reply: "ok"}, time.Nanosecond)
 
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "chat", Input: "crunch the archive",
-		MessageID: "om_anchor", ChatID: "oc_chat", SenderOpenID: "ou_asker",
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "om_anchor",
+		},
+		Input: "crunch the archive",
+		Reply: ReplyContext{ChatID: "oc_chat"},
+		Actor: Actor{ID: "ou_asker"},
 	}); err != nil {
 		t.Fatalf("turn: %v", err)
 	}

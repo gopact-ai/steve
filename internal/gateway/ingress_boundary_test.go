@@ -348,7 +348,7 @@ func TestDurableHistoryCardReplaysItsOriginalAcceptanceOnly(t *testing.T) {
 	if p.calls.Load() != 1 {
 		t.Fatal("same rendered history action dispatched twice")
 	}
-	if req := nextIngress(t, p); req.Input != "/history 1" || req.ConversationID != "thread" || req.MessageID != "finished-card" {
+	if req := nextIngress(t, p); req.Input != "/history 1" || req.Source.ConversationID != "thread" || req.Source.MessageID != "finished-card" {
 		t.Fatal(req)
 	}
 	action.OpenID = "other"
@@ -436,7 +436,7 @@ func TestDurableNormalInputWaitsWithoutReservingDispatchBehindLiveOwner(t *testi
 		t.Fatal(err)
 	}
 	workers.Wait()
-	if req := nextIngress(t, p); req.MessageID != second.MessageID {
+	if req := nextIngress(t, p); req.Source.MessageID != second.MessageID {
 		t.Fatal(req)
 	}
 }
@@ -495,7 +495,7 @@ func TestDurableTopicSeedsParallelThreadWhileOriginalChatIsServing(t *testing.T)
 		t.Fatal(err)
 	}
 	req := nextIngress(t, p)
-	if req.ConversationID != "topic-thread" || req.Input != "parallel work" {
+	if req.Source.ConversationID != "topic-thread" || req.Input != "parallel work" {
 		t.Fatal(req)
 	}
 	select {

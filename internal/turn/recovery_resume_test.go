@@ -135,7 +135,15 @@ func retainedChatFixture(t *testing.T, opts ...testOption) (*Coordinator, *retai
 	if _, err := c.attempts.PrepareRecovery(t.Context(), "replacement coordinator"); err != nil {
 		t.Fatal(err)
 	}
-	return c, runner, book, r, Request{Channel: "console", ConversationID: tracked.Channel, MessageID: r.TurnID, ChatID: "console", SenderOpenID: "owner"}
+	return c, runner, book, r, Request{
+		Source: Source{
+			Channel:        "console",
+			ConversationID: tracked.Channel,
+			MessageID:      r.TurnID,
+		},
+		Reply: ReplyContext{ChatID: "console"},
+		Actor: Actor{ID: "owner"},
+	}
 }
 
 func TestRetainedChatCompletesOriginalAttemptWithoutPromptReplay(t *testing.T) {
@@ -169,7 +177,7 @@ func TestRetainedChatCompletesOriginalAttemptWithoutPromptReplay(t *testing.T) {
 	if tracked.Budget.Turns != 1 || len(tracked.Attempts) != 1 || tracked.Attempts[0].Open() {
 		t.Fatalf("task was duplicated or not settled: %+v", tracked)
 	}
-	if c.store.Conversation(req.ConversationID).Sessions["worker"].Tainted {
+	if c.store.Conversation(req.Source.ConversationID).Sessions["worker"].Tainted {
 		t.Fatal("completed native session stayed tainted")
 	}
 	second, err := c.ResumeRetainedChat(t.Context(), old.ID, req)

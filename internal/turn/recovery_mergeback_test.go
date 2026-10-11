@@ -872,7 +872,14 @@ func TestRecoveryFinalizingInputWaitsAndRefreshesOnlyBeforeCanonicalAdmission(t 
 	selected := agent.Agent{ID: "worker", Node: ws.Node, Harness: "mock"}
 	waiting := make(chan struct{})
 	var once sync.Once
-	req := Request{ConversationID: "console:queued", MessageID: "queued-turn", SenderOpenID: "owner", OnStage: func(view.Stage) { once.Do(func() { close(waiting) }) }}
+	req := Request{
+		Source: Source{
+			ConversationID: "console:queued",
+			MessageID:      "queued-turn",
+		},
+		Actor:   Actor{ID: "owner"},
+		OnStage: func(view.Stage) { once.Do(func() { close(waiting) }) },
+	}
 	spec, _, err := c.turnSpec(scope.Context(), req, selected, tracked.ID, project.Binding{ProjectID: p.ID}, ws)
 	if err != nil {
 		t.Fatal(err)
@@ -1534,12 +1541,19 @@ func TestRecoveryWaitingRefreshUpdatesEveryLifecycleSessionInput(t *testing.T) {
 	}
 	defer scope.Finish(nil)
 	ready := make(chan struct{}, 1)
-	req := Request{ConversationID: cached.ConversationID, MessageID: "waiting-native", SenderOpenID: "owner", OnStage: func(view.Stage) {
-		select {
-		case ready <- struct{}{}:
-		default:
-		}
-	}}
+	req := Request{
+		Source: Source{
+			ConversationID: cached.ConversationID,
+			MessageID:      "waiting-native",
+		},
+		Actor: Actor{ID: "owner"},
+		OnStage: func(view.Stage) {
+			select {
+			case ready <- struct{}{}:
+			default:
+			}
+		},
+	}
 	selected := agent.Agent{ID: "worker", Node: ws.Node, Harness: "mock"}
 	spec, candidate, err := c.turnSpec(scope.Context(), req, selected, tracked.ID, project.Binding{ProjectID: p.ID}, ws)
 	if err != nil {

@@ -45,7 +45,7 @@ func TestManualResumeWakeCannotReleaseStartupAccountingBarrier(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := nextCall(t, h)
-	if call.req.ConversationID != row.Channel || call.req.ResumeAdmission != a {
+	if call.req.Source.ConversationID != row.Channel || call.req.Admission.ResumeAdmission != a {
 		t.Fatalf("manual wake dispatched another conversation: %+v", call.req)
 	}
 	call.finish <- nil

@@ -38,41 +38,41 @@ func (c commands) projectCmd(ctx context.Context, req Request, rest string) (Res
 	if !ok {
 		return Result{Title: title, Text: c.text.T(i18n.ProjectUnknown, target)}, nil
 	}
-	if err := c.require(ctx, p.ID, req.SenderOpenID, project.RoleRead); err != nil {
+	if err := c.require(ctx, p.ID, req.Actor.ID, project.RoleRead); err != nil {
 		return Result{}, err
 	}
-	release, admissionErr := c.beginConversationRetirement(ctx, req.ConversationID)
+	release, admissionErr := c.beginConversationRetirement(ctx, req.Source.ConversationID)
 	if admissionErr != nil {
 		return Result{Title: title, Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}, nil
 	}
 	defer release()
-	conversation := c.store.Conversation(req.ConversationID)
+	conversation := c.store.Conversation(req.Source.ConversationID)
 	// A task belongs to the project it was opened in; the next turn here
 	// runs in another. What this conversation still held is closed, so it is
 	// not silently continued under a different directory and a different
 	// data level — and before the binding moves, so one still unsettled
 	// refuses the switch with nothing changed.
-	if refused, err := c.closeTask(ctx, req.ConversationID, slices.Sorted(maps.Keys(conversation.Sessions)), req.ExchangeID); err != nil {
-		refusal := c.closeRefusal(req.ConversationID, refused, err)
+	if refused, err := c.closeTask(ctx, req.Source.ConversationID, slices.Sorted(maps.Keys(conversation.Sessions)), req.Admission.ExchangeID); err != nil {
+		refusal := c.closeRefusal(req.Source.ConversationID, refused, err)
 		return Result{Title: title, Text: refusal.Text}, refusal
 	}
-	binding, err := c.projects.Bind(ctx, req.ConversationID, p.ID, req.SenderOpenID)
+	binding, err := c.projects.Bind(ctx, req.Source.ConversationID, p.ID, req.Actor.ID)
 	if err != nil {
 		return Result{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	for agentID := range conversation.Sessions {
-		if err := c.store.ArchiveSession(req.ConversationID, agentID, now); err != nil {
-			slog.Error(fmt.Sprintf("turn: archive %s session on project switch: %v", agentID, err), "conversation", req.ConversationID, "agent", agentID, "project", p.ID)
+		if err := c.store.ArchiveSession(req.Source.ConversationID, agentID, now); err != nil {
+			slog.Error(fmt.Sprintf("turn: archive %s session on project switch: %v", agentID, err), "conversation", req.Source.ConversationID, "agent", agentID, "project", p.ID)
 		}
 	}
-	slog.Info(fmt.Sprintf("turn: conversation %s bound to project %s (v%d) by %s", req.ConversationID, p.ID, binding.Version, req.SenderOpenID), "conversation", req.ConversationID, "project", p.ID)
+	slog.Info(fmt.Sprintf("turn: conversation %s bound to project %s (v%d) by %s", req.Source.ConversationID, p.ID, binding.Version, req.Actor.ID), "conversation", req.Source.ConversationID, "project", p.ID)
 	return Result{Title: title, Text: c.text.T(i18n.ProjectSwitched, p.ID, homeLabel(p))}, nil
 }
 
 func (c commands) projectStatus(ctx context.Context, req Request, title string) (Result, error) {
 	var lines []string
-	binding, ok, err := c.projects.Binding(ctx, req.ConversationID)
+	binding, ok, err := c.projects.Binding(ctx, req.Source.ConversationID)
 	if err != nil {
 		return Result{}, err
 	}

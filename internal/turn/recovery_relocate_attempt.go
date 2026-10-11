@@ -142,11 +142,11 @@ func (c *Coordinator) relocationRequest(ctx context.Context, planID string, req 
 	if err != nil {
 		return attempt.RelocationIntent{}, attempt.Record{}, err
 	}
-	if p.Owner != req.SenderOpenID || req.Relocation == nil || p.InputDigest != relocationRequestDigest(req) {
+	if p.Owner != req.Actor.ID || req.Relocation == nil || p.InputDigest != relocationRequestDigest(req) {
 		return attempt.RelocationIntent{}, attempt.Record{}, errors.New("relocation approval does not match the original request context")
 	}
 	tracked, ok := c.tasks.Get(old.TaskID)
-	if !ok || tracked.Channel != req.ConversationID || old.TurnID != req.MessageID || (req.ExpectedProject != "" && req.ExpectedProject != old.Project) {
+	if !ok || tracked.Channel != req.Source.ConversationID || old.TurnID != req.Source.MessageID || (req.Admission.ExpectedProject != "" && req.Admission.ExpectedProject != old.Project) {
 		return attempt.RelocationIntent{}, attempt.Record{}, errors.New("relocation does not belong to this task conversation")
 	}
 	c.rememberMode(req)
@@ -156,7 +156,7 @@ func (c *Coordinator) relocationRequest(ctx context.Context, planID string, req 
 	if err := c.tasks.CheckExecution(*old.Execution); err != nil {
 		return attempt.RelocationIntent{}, attempt.Record{}, err
 	}
-	if err := c.require(ctx, old.Project, req.SenderOpenID, project.RoleWrite); err != nil {
+	if err := c.require(ctx, old.Project, req.Actor.ID, project.RoleWrite); err != nil {
 		return attempt.RelocationIntent{}, attempt.Record{}, err
 	}
 	return p, old, nil
@@ -302,7 +302,7 @@ func (c *Coordinator) bindRelocation(ctx context.Context, r, old attempt.Record,
 // this attempt's exact persisted payload may reuse it after an
 // interrupted open.
 func (c *Coordinator) freezeRelocationSession(ctx context.Context, req Request, selected agent.Agent, bindings []ability.Binding, r attempt.Record) (attempt.RelocationSessionConfig, error) {
-	extras, agentToken, err := c.gateExtras(ctx, req.ConversationID, selected, state.Session{})
+	extras, agentToken, err := c.gateExtras(ctx, req.Source.ConversationID, selected, state.Session{})
 	if err != nil {
 		return attempt.RelocationSessionConfig{}, err
 	}
@@ -351,12 +351,12 @@ func (c *Coordinator) relocationSessionState(ctx context.Context, req Request, r
 	if err != nil {
 		return state.Session{}, err
 	}
-	if saved := c.store.Conversation(req.ConversationID).Sessions[r.Agent]; saved.UpstreamID != "" && saved.UpstreamID != r.Session {
-		if err := c.store.ArchiveSession(req.ConversationID, r.Agent, time.Now().UTC().Format(time.RFC3339)); err != nil {
+	if saved := c.store.Conversation(req.Source.ConversationID).Sessions[r.Agent]; saved.UpstreamID != "" && saved.UpstreamID != r.Session {
+		if err := c.store.ArchiveSession(req.Source.ConversationID, r.Agent, time.Now().UTC().Format(time.RFC3339)); err != nil {
 			return state.Session{}, err
 		}
 	}
-	session := state.Session{PluginRuntime: r.PluginRuntime.Clone(), ConversationID: req.ConversationID, AgentID: r.Agent, HarnessID: r.Harness, NodeID: r.Node, UpstreamID: r.Session, Workspace: r.Workspace.Path, ProjectID: r.Project, ProjectVersion: binding.Version, CapabilityHash: frozen.Fingerprint, SessionConfigHash: frozen.SessionConfigHash, AgentToken: frozen.AgentToken, Tainted: true}
+	session := state.Session{PluginRuntime: r.PluginRuntime.Clone(), ConversationID: req.Source.ConversationID, AgentID: r.Agent, HarnessID: r.Harness, NodeID: r.Node, UpstreamID: r.Session, Workspace: r.Workspace.Path, ProjectID: r.Project, ProjectVersion: binding.Version, CapabilityHash: frozen.Fingerprint, SessionConfigHash: frozen.SessionConfigHash, AgentToken: frozen.AgentToken, Tainted: true}
 	session.PluginSkillsFingerprint = frozen.PluginSkillsFingerprint
 	if err := c.store.SaveSession(session); err != nil {
 		return state.Session{}, err
@@ -402,7 +402,7 @@ func (c *Coordinator) openRelocation(ctx context.Context, req Request, r attempt
 	if err != nil {
 		return nil, r, session, true, err
 	}
-	if err := c.bindExecutionGate(ctx, req.ConversationID, r.ID); err != nil {
+	if err := c.bindExecutionGate(ctx, req.Source.ConversationID, r.ID); err != nil {
 		return nil, r, session, true, err
 	}
 	return runner, r, session, true, nil

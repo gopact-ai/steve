@@ -29,9 +29,9 @@ import (
 )
 
 func (c *Coordinator) prompt(parent context.Context, req Request, selected agent.Agent, prompt string) (result Result, err error) {
-	conversationID := req.ConversationID
+	conversationID := req.Source.ConversationID
 	turnCtx, cancel := context.WithCancel(parent)
-	if !c.takeTurn(turnCtx, conversationID, selected.ID, cancel, req.Queue) {
+	if !c.takeTurn(turnCtx, conversationID, selected.ID, cancel, req.Admission.Queue) {
 		cancel()
 		if c.skillsUpdating() {
 			return Result{}, UserError{Text: c.text.T(i18n.SkillsUpdating)}
@@ -167,9 +167,9 @@ func (t *chatTurn) settleTask(parent context.Context, started time.Time, finishE
 
 func (t *chatTurn) prepareSession(ctx context.Context) error {
 	c, req, selected := t.c, t.req, t.selected
-	conversation := c.store.Conversation(req.ConversationID)
+	conversation := c.store.Conversation(req.Source.ConversationID)
 	saved := conversation.Sessions[selected.ID]
-	saved.ConversationID = req.ConversationID
+	saved.ConversationID = req.Source.ConversationID
 	if saved.HarnessID != "" && saved.HarnessID != selected.Harness {
 		return fmt.Errorf("session belongs to harness %q, not %q", saved.HarnessID, selected.Harness)
 	}
@@ -180,10 +180,10 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	saved.AgentToken = agentToken
 	gateEnabled := len(extras) > 0
 	t.clock.mark("gate")
-	extras = append(extras, c.projectMemory(ctx, req.ConversationID, req)...)
+	extras = append(extras, c.projectMemory(ctx, req.Source.ConversationID, req)...)
 	var capabilities capability.Capabilities
 	if saved.PluginRuntime != nil {
-		mode := injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
+		mode := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID)
 		capabilities, err = c.assembler.AssembleExtraPinned(selected, mode, extras, saved.PluginSkillsFingerprint)
 	} else {
 		capabilities, err = c.assemble(selected, req, extras)
@@ -193,7 +193,7 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	}
 	t.clock.mark("assemble")
 	if saved.Tainted {
-		cleared, taintErr := c.clearSettledTaint(ctx, req.ConversationID, selected.ID, saved)
+		cleared, taintErr := c.clearSettledTaint(ctx, req.Source.ConversationID, selected.ID, saved)
 		if taintErr != nil {
 			return taintErr
 		}
@@ -226,8 +226,8 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 }
 
 func (c *Coordinator) buildingProfile(req Request) (bool, error) {
-	owner := injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) == home.ModeOwner
-	if !onboard.Building(req.ConversationID, owner, true) {
+	owner := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID) == home.ModeOwner
+	if !onboard.Building(req.Source.ConversationID, owner, true) {
 		return false, nil
 	}
 	if editor, shared := c.home.(home.IdentityEditor); shared {
@@ -266,7 +266,7 @@ func (c *Coordinator) open(ctx context.Context, saved state.Session, selected ag
 }
 
 func (c *Coordinator) assemble(selected agent.Agent, req Request, extras []capability.Extra) (capability.Capabilities, error) {
-	return c.assembler.AssembleExtra(selected, injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID), extras)
+	return c.assembler.AssembleExtra(selected, injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID), extras)
 }
 
 // gateExtras injects the messaging server for harnesses that can speak HTTP

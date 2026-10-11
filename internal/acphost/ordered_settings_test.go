@@ -123,42 +123,100 @@ type orderedPeerWriter struct {
 	agent  *orderedPeer
 }
 
-func (w orderedPeerWriter) Write(frame []byte) (int, error) {
-	n, err := w.output.Write(frame)
-	if err != nil {
-		return n, err
+type orderedFrameWriter func([]byte) (int, error)
+
+func (w orderedFrameWriter) Write(frame []byte) (int, error) { return w(frame) }
+
+func TestOrderedResponseCannotSignalNextOperation(t *testing.T) {
+	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	a := &orderedPeer{configReplyWritten: make(chan struct{})}
+	calls := 0
+	w := orderedPeerWriter{agent: a, output: orderedFrameWriter(func(frame []byte) (int, error) {
+		calls++
+		if calls == 1 {
+			close(entered)
+			<-release
+		}
+		return len(frame), nil
+	})}
+	response := []byte(`{"jsonrpc":"2.0","id":1,"result":{}}`)
+	go func() { _, err := w.Write(response); done <- err }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("previous response did not reach its reader")
 	}
+	// The client may issue its next request as soon as it reads this response,
+	// before the previous writer returns. Its ACK belongs to the next frame.
+	a.mu.Lock()
+	a.configReplyArmed = true
+	a.mu.Unlock()
+	unblock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-a.configReplyWritten:
+		t.Fatal("previous response signalled the next operation's ACK")
+	default:
+	}
+	if _, err := w.Write(response); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-a.configReplyWritten:
+	default:
+		t.Fatal("next response did not signal its own ACK")
+	}
+}
+
+func (w orderedPeerWriter) Write(frame []byte) (int, error) {
 	var envelope struct {
 		Result map[string]json.RawMessage `json:"result"`
 		Error  json.RawMessage            `json:"error"`
 	}
-	if json.Unmarshal(frame, &envelope) != nil {
-		return n, err
-	}
-	if envelope.Result != nil || len(envelope.Error) > 0 {
+	var modeWritten, configWritten chan struct{}
+	var notice *acp.SessionNotification
+	// Bind effects to this frame before its reader can issue another request.
+	// Taking pendingAfter after Write can steal a later operation's notification
+	// and send it before that operation's response, reversing the intended order.
+	if json.Unmarshal(frame, &envelope) == nil && (envelope.Result != nil || len(envelope.Error) > 0) {
 		w.agent.mu.Lock()
 		if w.agent.modeReplyArmed && w.agent.modeReplyWritten != nil {
 			w.agent.modeReplyArmed = false
-			close(w.agent.modeReplyWritten)
+			modeWritten = w.agent.modeReplyWritten
 		}
 		if w.agent.configReplyArmed && w.agent.configReplyWritten != nil {
 			w.agent.configReplyArmed = false
-			close(w.agent.configReplyWritten)
+			configWritten = w.agent.configReplyWritten
 		}
-		notice := w.agent.pendingAfter
+		notice = w.agent.pendingAfter
 		w.agent.pendingAfter = nil
 		w.agent.mu.Unlock()
-		if notice != nil {
-			go func() {
-				_ = w.agent.client.Update(context.Background(), notice)
-				if w.agent.afterSentinel != nil {
-					_ = w.agent.client.Update(context.Background(), w.agent.afterSentinel)
-				}
-				if w.agent.newNoticeWritten != nil {
-					close(w.agent.newNoticeWritten)
-				}
-			}()
-		}
+	}
+	n, err := w.output.Write(frame)
+	if err != nil {
+		return n, err
+	}
+	if modeWritten != nil {
+		close(modeWritten)
+	}
+	if configWritten != nil {
+		close(configWritten)
+	}
+	if notice != nil {
+		go func() {
+			_ = w.agent.client.Update(context.Background(), notice)
+			if w.agent.afterSentinel != nil {
+				_ = w.agent.client.Update(context.Background(), w.agent.afterSentinel)
+			}
+			if w.agent.newNoticeWritten != nil {
+				close(w.agent.newNoticeWritten)
+			}
+		}()
 	}
 	return n, nil
 }

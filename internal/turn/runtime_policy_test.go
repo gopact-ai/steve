@@ -61,12 +61,19 @@ func TestLiveDefaultLocaleAndExplicitRequestLocale(t *testing.T) {
 	c := buildCoordinator(t, withDeps(func(d *Deps) { d.Catalog, d.Store, d.Timeout, d.Text = catalog, store, time.Minute, text }))
 	for _, want := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
 		english.Store(want == i18n.LocaleEN)
-		got, err := c.Handle(t.Context(), Request{ConversationID: string(want), Input: "/use worker"})
+		got, err := c.Handle(t.Context(), Request{
+			Source: Source{ConversationID: string(want)},
+			Input:  "/use worker",
+		})
 		if err != nil || got.Text != i18n.New(want).T(i18n.Switched, "worker") {
 			t.Fatalf("default language not live: %q %v", got.Text, err)
 		}
 	}
-	got, err := c.Handle(t.Context(), Request{ConversationID: "explicit", Input: "/use worker", Locale: "zh"})
+	got, err := c.Handle(t.Context(), Request{
+		Source: Source{ConversationID: "explicit"},
+		Input:  "/use worker",
+		Locale: "zh",
+	})
 	if err != nil || got.Text != i18n.New(i18n.LocaleZH).T(i18n.Switched, "worker") {
 		t.Fatal("default language overrode request preference")
 	}

@@ -29,20 +29,39 @@ func TestAccessIsGrantedNotAssumed(t *testing.T) {
 	// The hub is internal in tests; a restricted project needs a hub that
 	// qualifies, so give the roster nothing and rely on the access check
 	// firing first.
-	guest := Request{ConversationID: "chat", Input: "hello", SenderOpenID: "ou_guest", MessageID: "m1"}
+	guest := Request{
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "m1",
+		},
+		Input: "hello",
+		Actor: Actor{ID: "ou_guest"},
+	}
 	_, err := coordinator.Handle(ctx, guest)
 	if err == nil || !strings.Contains(err.Error(), "none") {
 		t.Fatalf("guest on a restricted project = %v; want a role refusal", err)
 	}
 	// A guest cannot grant; the owner can.
-	if result, _ := coordinator.Handle(ctx, Request{ConversationID: "chat", Input: "/grant codex ou_guest write", SenderOpenID: "ou_guest"}); result.Text != "" && !strings.Contains(result.Text, "none") {
+	if result, _ := coordinator.Handle(ctx, Request{
+		Source: Source{ConversationID: "chat"},
+		Input:  "/grant codex ou_guest write",
+		Actor:  Actor{ID: "ou_guest"},
+	}); result.Text != "" && !strings.Contains(result.Text, "none") {
 		t.Fatalf("guest grant = %q", result.Text)
 	}
-	result, err := coordinator.Handle(ctx, Request{ConversationID: "chat", Input: "/grant codex ou_guest write", SenderOpenID: "ou_owner"})
+	result, err := coordinator.Handle(ctx, Request{
+		Source: Source{ConversationID: "chat"},
+		Input:  "/grant codex ou_guest write",
+		Actor:  Actor{ID: "ou_owner"},
+	})
 	if err != nil || !strings.Contains(result.Text, "ou_guest") {
 		t.Fatalf("owner grant = %#v, %v", result, err)
 	}
-	result, _ = coordinator.Handle(ctx, Request{ConversationID: "chat", Input: "/grant codex", SenderOpenID: "ou_owner"})
+	result, _ = coordinator.Handle(ctx, Request{
+		Source: Source{ConversationID: "chat"},
+		Input:  "/grant codex",
+		Actor:  Actor{ID: "ou_owner"},
+	})
 	if !strings.Contains(result.Text, "ou_guest — write") {
 		t.Fatalf("grant list = %q", result.Text)
 	}
@@ -52,7 +71,14 @@ func TestAccessIsGrantedNotAssumed(t *testing.T) {
 	}
 	// With write, the same guest's turn is admitted (and then meets the
 	// level check, which is a different refusal).
-	_, err = coordinator.Handle(ctx, Request{ConversationID: "chat", Input: "hello", SenderOpenID: "ou_guest", MessageID: "m2"})
+	_, err = coordinator.Handle(ctx, Request{
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "m2",
+		},
+		Input: "hello",
+		Actor: Actor{ID: "ou_guest"},
+	})
 	if err != nil && strings.Contains(err.Error(), "role") {
 		t.Fatalf("granted guest still refused on role: %v", err)
 	}
@@ -74,7 +100,15 @@ func TestSealedAnswersWaitForTheOwner(t *testing.T) {
 	}
 	// Without a fleet no admission runs, so the test hub takes sealed data.
 
-	result, err := coordinator.Handle(ctx, Request{ConversationID: "chat", ChatID: "oc_1", Input: "tell me", SenderOpenID: "ou_guest", MessageID: "m1"})
+	result, err := coordinator.Handle(ctx, Request{
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "m1",
+		},
+		Reply: ReplyContext{ChatID: "oc_1"},
+		Input: "tell me",
+		Actor: Actor{ID: "ou_guest"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,13 +117,21 @@ func TestSealedAnswersWaitForTheOwner(t *testing.T) {
 	}
 	id := result.Text[strings.LastIndex(result.Text, " ")+1:]
 	// Not the owner: refused.
-	if r, _ := coordinator.Handle(ctx, Request{ConversationID: "chat", Input: "/approve " + id, SenderOpenID: "ou_guest"}); strings.Contains(r.Text, "已批准") {
+	if r, _ := coordinator.Handle(ctx, Request{
+		Source: Source{ConversationID: "chat"},
+		Input:  "/approve " + id,
+		Actor:  Actor{ID: "ou_guest"},
+	}); strings.Contains(r.Text, "已批准") {
 		t.Fatal("a guest approved a disclosure")
 	}
 	if len(sent) != 0 {
 		t.Fatal("content left before approval")
 	}
-	r, err := coordinator.Handle(ctx, Request{ConversationID: "dm", Input: "/approve " + id, SenderOpenID: "ou_owner"})
+	r, err := coordinator.Handle(ctx, Request{
+		Source: Source{ConversationID: "dm"},
+		Input:  "/approve " + id,
+		Actor:  Actor{ID: "ou_owner"},
+	})
 	if err != nil || !strings.Contains(r.Text, id) {
 		t.Fatalf("owner approve = %#v %v", r, err)
 	}
@@ -97,7 +139,11 @@ func TestSealedAnswersWaitForTheOwner(t *testing.T) {
 		t.Fatalf("released = %+v", sent)
 	}
 	// Once resolved, the id is gone.
-	if r, _ := coordinator.Handle(ctx, Request{ConversationID: "dm", Input: "/deny " + id, SenderOpenID: "ou_owner"}); !strings.Contains(r.Text, id) || strings.Contains(r.Text, "已拒绝") {
+	if r, _ := coordinator.Handle(ctx, Request{
+		Source: Source{ConversationID: "dm"},
+		Input:  "/deny " + id,
+		Actor:  Actor{ID: "ou_owner"},
+	}); !strings.Contains(r.Text, id) || strings.Contains(r.Text, "已拒绝") {
 		t.Fatalf("second decision = %q", r.Text)
 	}
 }

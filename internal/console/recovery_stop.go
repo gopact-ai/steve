@@ -126,7 +126,16 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 		return turn.Result{}, true, err
 	}
 	s.mu.Unlock()
-	result, err := stopper.StopRetainedTask(ctx, candidate.TaskID, turn.Request{Channel: "console", ConversationID: original.Conversation, MessageID: AnchorMark + original.ID, SenderOpenID: requester, ExpectedProject: original.ExpectedProject, Locale: control.Locale}, true)
+	result, err := stopper.StopRetainedTask(ctx, candidate.TaskID, turn.Request{
+		Source: turn.Source{
+			Channel:        "console",
+			ConversationID: original.Conversation,
+			MessageID:      AnchorMark + original.ID,
+		},
+		Actor:     turn.Actor{ID: requester},
+		Admission: turn.Admission{ExpectedProject: original.ExpectedProject},
+		Locale:    control.Locale,
+	}, true)
 	s.refreshStopTasks(ctx)
 	if err != nil {
 		s.mu.Lock()
@@ -211,7 +220,16 @@ func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, 
 		return saveErr
 	}
 	s.mu.Unlock()
-	result, err := stopper.StopRetainedTask(ctx, candidate.TaskID, turn.Request{Channel: "console", ConversationID: original.Conversation, MessageID: AnchorMark + original.ID, SenderOpenID: requester, ExpectedProject: original.ExpectedProject, Locale: original.Locale}, cancel)
+	result, err := stopper.StopRetainedTask(ctx, candidate.TaskID, turn.Request{
+		Source: turn.Source{
+			Channel:        "console",
+			ConversationID: original.Conversation,
+			MessageID:      AnchorMark + original.ID,
+		},
+		Actor:     turn.Actor{ID: requester},
+		Admission: turn.Admission{ExpectedProject: original.ExpectedProject},
+		Locale:    original.Locale,
+	}, cancel)
 	s.refreshStopTasks(ctx)
 	if err != nil {
 		s.mu.Lock()

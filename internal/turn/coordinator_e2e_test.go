@@ -87,7 +87,13 @@ func TestPromptUsageIsRecordedOnAttemptsE2E(t *testing.T) {
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
 	for _, prompt := range []string{"reportusage", "reportusage cancelme", "legacy response"} {
 		t.Run(prompt, func(t *testing.T) {
-			_, turnErr := coordinator.Handle(t.Context(), Request{ConversationID: "chat", MessageID: prompt, Input: prompt})
+			_, turnErr := coordinator.Handle(t.Context(), Request{
+				Source: Source{
+					ConversationID: "chat",
+					MessageID:      prompt,
+				},
+				Input: prompt,
+			})
 			wantFailure := prompt == "reportusage cancelme"
 			if (turnErr != nil) != wantFailure {
 				t.Fatalf("turn error = %v, wantFailure %v", turnErr, wantFailure)

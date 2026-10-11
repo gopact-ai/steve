@@ -14,7 +14,14 @@ func TestAdmissionPersistsExplicitAddressWithoutMessage(t *testing.T) {
 		for _, planned := range []bool{false, true} {
 			t.Run(transport+map[bool]string{false: "/chat", true: "/plan"}[planned], func(t *testing.T) {
 				c, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
-				req := Request{Channel: transport, ConversationID: "same-conversation", ChatID: "console", SenderOpenID: "native-user"}
+				req := Request{
+					Source: Source{
+						Channel:        transport,
+						ConversationID: "same-conversation",
+					},
+					Reply: ReplyContext{ChatID: "console"},
+					Actor: Actor{ID: "native-user"},
+				}
 				var tracked task.Task
 				var err error
 				if planned {

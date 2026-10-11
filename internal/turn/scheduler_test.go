@@ -338,14 +338,20 @@ func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- gate.Start(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
-	first, err := c.Handle(t.Context(), Request{ConversationID: "chat", Input: "hello"})
+	first, err := c.Handle(t.Context(), Request{
+		Source: Source{ConversationID: "chat"},
+		Input:  "hello",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	before := c.store.Conversation("chat").Sessions["codex"]
 	// Adding platform tools changes guidance, not the MCP connection or token.
 	gate.SetScheduler(schedulerFor(t, c))
-	second, err := c.Handle(t.Context(), Request{ConversationID: "chat", Input: "continue"})
+	second, err := c.Handle(t.Context(), Request{
+		Source: Source{ConversationID: "chat"},
+		Input:  "continue",
+	})
 	if err != nil {
 		t.Fatalf("schedule upgrade broke the existing conversation: %v", err)
 	}
@@ -353,7 +359,10 @@ func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
 	if second.Injected.Session != first.Injected.Session || second.Injected.NewSession || !second.Injected.InstructionsSent || !strings.Contains(second.Injected.Instructions, "steve_schedule") || before.SessionConfigHash != after.SessionConfigHash || before.AgentToken != after.AgentToken || len(c.store.Conversation("chat").Archived) != 0 {
 		t.Fatal("schedule guidance did not refresh within the existing session")
 	}
-	third, err := c.Handle(t.Context(), Request{ConversationID: "chat", Input: "continue again"})
+	third, err := c.Handle(t.Context(), Request{
+		Source: Source{ConversationID: "chat"},
+		Input:  "continue again",
+	})
 	if err != nil || third.Injected.InstructionsSent {
 		t.Fatalf("guidance was not stable: %+v %v", third, err)
 	}

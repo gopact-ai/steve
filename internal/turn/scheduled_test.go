@@ -15,7 +15,10 @@ func TestScheduledProjectDriftIsRefusedBeforeWorkspaceUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	selected := c.catalog.Default()
-	if _, _, err := c.resolveWorkspace(t.Context(), Request{ConversationID: "scheduled", ExpectedProject: "original"}, selected); err == nil {
+	if _, _, err := c.resolveWorkspace(t.Context(), Request{
+		Source:    Source{ConversationID: "scheduled"},
+		Admission: Admission{ExpectedProject: "original"},
+	}, selected); err == nil {
 		t.Fatal("scheduled work followed a changed project binding")
 	}
 }

@@ -53,11 +53,13 @@ func runChannel(boot runtimeAssembly, storage ledgerAssembly, identity homeAssem
 			Catalog: catalogText,
 			Handle: func(ctx context.Context, req onboard.TurnRequest) (onboard.TurnResult, error) {
 				result, err := coordinator.Handle(ctx, turn.Request{
-					Channel:        "feishu",
-					ConversationID: req.ConversationID,
-					Input:          req.Input,
-					SenderOpenID:   req.SenderOpenID,
-					ChatType:       protocol.ParseChatType(req.ChatType),
+					Source: turn.Source{
+						Channel:        "feishu",
+						ConversationID: req.ConversationID,
+						ChatType:       protocol.ParseChatType(req.ChatType),
+					},
+					Input: req.Input,
+					Actor: turn.Actor{ID: req.SenderOpenID},
 				})
 				if err != nil {
 					return onboard.TurnResult{}, err

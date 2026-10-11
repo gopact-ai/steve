@@ -48,7 +48,7 @@ type ingressProbe struct {
 func (p *ingressProbe) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
 	p.calls.Add(1)
 	if req.OnTurnReady != nil && req.Input != "/cancel" {
-		req.OnTurnReady("task-"+req.MessageID, "attempt-"+req.MessageID)
+		req.OnTurnReady("task-"+req.Source.MessageID, "attempt-"+req.Source.MessageID)
 	}
 	p.entered <- req
 	if req.Input != "/cancel" && p.release != nil {
@@ -58,7 +58,7 @@ func (p *ingressProbe) Handle(ctx context.Context, req turn.Request) (turn.Resul
 			return turn.Result{}, ctx.Err()
 		}
 	}
-	attempt := "attempt-" + req.MessageID
+	attempt := "attempt-" + req.Source.MessageID
 	if req.Input == "/cancel" {
 		attempt = ""
 	}
@@ -155,7 +155,7 @@ func TestOrdinaryIngressReturnsAfterAcceptanceAndSharesRecoveryControlSlot(t *te
 		t.Fatal(err)
 	}
 	workers.Wait()
-	if req := nextIngress(t, p); req.MessageID != "other" {
+	if req := nextIngress(t, p); req.Source.MessageID != "other" {
 		t.Fatal(req)
 	}
 	if len(g.slots) != 0 || len(g.durableRunning) != 0 {
@@ -195,7 +195,7 @@ func TestOrdinaryTopicUsesOneAcceptedInputAndMovesItsControlSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := nextIngress(t, p)
-	if req.ConversationID != "topic-thread" || req.MessageID != "topic-anchor" || req.Input != "original work" {
+	if req.Source.ConversationID != "topic-thread" || req.Source.MessageID != "topic-anchor" || req.Input != "original work" {
 		t.Fatalf("topic command reached native rather than its proven route: %+v", req)
 	}
 	inputs, err := book.Commands(ctx, gatewayInputKind)
@@ -294,7 +294,7 @@ func TestDurableCardRetryDoesNotReuseOriginalMessageCommand(t *testing.T) {
 	if p.calls.Load() != 2 {
 		t.Fatalf("retry replayed original command: calls=%d", p.calls.Load())
 	}
-	if req := nextIngress(t, p); req.Input != msg.Text || req.MessageID != msg.MessageID {
+	if req := nextIngress(t, p); req.Input != msg.Text || req.Source.MessageID != msg.MessageID {
 		t.Fatalf("retry changed native anchor: %+v", req)
 	}
 	g.HandleCardAction(action)

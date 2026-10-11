@@ -25,22 +25,22 @@ type concurrentResumeProbe struct {
 }
 
 func (p *concurrentResumeProbe) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
-	_, err := p.tasks.BeginTurn(req.ExpectedTask, "worker", "", task.TurnInput{Address: channel.Address{Channel: "feishu", Conversation: req.ConversationID, Message: req.MessageID}, Continuation: true, ResumeAdmission: req.ResumeAdmission, TurnID: req.MessageID})
+	_, err := p.tasks.BeginTurn(req.Admission.ExpectedTask, "worker", "", task.TurnInput{Address: channel.Address{Channel: "feishu", Conversation: req.Source.ConversationID, Message: req.Source.MessageID}, Continuation: true, ResumeAdmission: req.Admission.ResumeAdmission, TurnID: req.Source.MessageID})
 	if err != nil {
 		return turn.Result{}, err
 	}
-	id := "attempt-" + req.ExpectedTask
+	id := "attempt-" + req.Admission.ExpectedTask
 	if req.OnTurnReady != nil {
-		req.OnTurnReady(req.ExpectedTask, id)
+		req.OnTurnReady(req.Admission.ExpectedTask, id)
 	}
-	p.entered <- req.ConversationID
-	if req.ConversationID == "slow" {
+	p.entered <- req.Source.ConversationID
+	if req.Source.ConversationID == "slow" {
 		select {
 		case <-p.release:
 		case <-ctx.Done():
 		}
 	}
-	_, err = p.tasks.Finish(req.ExpectedTask, task.OutcomeOK, task.Tokens{}, 0)
+	_, err = p.tasks.Finish(req.Admission.ExpectedTask, task.OutcomeOK, task.Tokens{}, 0)
 	return turn.Result{Text: "complete original result", Attempt: id}, err
 }
 func TestGatewayIndependentManualResumeDoesNotWaitForOtherNativeTurn(t *testing.T) {
@@ -168,7 +168,7 @@ func (p *blockedRecoveryProbe) wait(ctx context.Context) error {
 func (p *blockedRecoveryProbe) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
 	p.calls.Add(1)
 	if req.OnTurnReady != nil {
-		req.OnTurnReady(req.ExpectedTask, "original-attempt")
+		req.OnTurnReady(req.Admission.ExpectedTask, "original-attempt")
 	}
 	if err := p.wait(ctx); err != nil {
 		return turn.Result{}, err
@@ -207,7 +207,13 @@ func TestGatewaySameInputJoinsNativeAndUnknownRetainedObserver(t *testing.T) {
 				if err := book.RecordCommand(t.Context(), key+"/notice", "gateway-recovery-notice", "owner", []byte(`"notice-receipt"`)); err != nil {
 					t.Fatal(err)
 				}
-				req := turn.Request{ExpectedTask: "parent", ConversationID: "conversation", MessageID: "notice-receipt"}
+				req := turn.Request{
+					Admission: turn.Admission{ExpectedTask: "parent"},
+					Source: turn.Source{
+						ConversationID: "conversation",
+						MessageID:      "notice-receipt",
+					},
+				}
 				if err := rememberRecoveryAttempt(t.Context(), book, key, "owner", req, "parent", "original-attempt"); err != nil {
 					t.Fatal(err)
 				}

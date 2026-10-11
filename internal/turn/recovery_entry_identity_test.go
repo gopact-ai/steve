@@ -190,7 +190,7 @@ func recoveryEntryRuns(t *testing.T, queued func(*testing.T, *Coordinator) conte
 			t.Fatal(err)
 		}
 		req.Relocation = &RelocationContext{Input: "original task"}
-		plan, err := c.attempts.RecordRelocation(t.Context(), attempt.RelocationIntent{SourceID: old.ID, SourceRevision: old.Revision, TaskEpoch: old.Execution.Epoch, Checkpoint: "snapshot", Owner: req.SenderOpenID, CreatedAt: time.Now(), InputDigest: relocationRequestDigest(req), Prompt: "continue original", Target: attempt.Spec{ID: "replacement", TaskID: old.TaskID, TurnID: old.TurnID, Kind: old.Kind, Project: old.Project, Node: "node-b", Harness: old.Harness, Agent: old.Agent, Execution: old.Execution, ExecutionGeneration: attempt.SessionExecutionEpoch(old) + 1, NativeCommandID: "new-command", Scope: attempt.ScopePathSet, Base: "snapshot", Workspace: project.Workspace{ID: "replacement", Project: old.Project, Node: "node-b", Path: "/isolated", Kind: project.KindWorktree}}})
+		plan, err := c.attempts.RecordRelocation(t.Context(), attempt.RelocationIntent{SourceID: old.ID, SourceRevision: old.Revision, TaskEpoch: old.Execution.Epoch, Checkpoint: "snapshot", Owner: req.Actor.ID, CreatedAt: time.Now(), InputDigest: relocationRequestDigest(req), Prompt: "continue original", Target: attempt.Spec{ID: "replacement", TaskID: old.TaskID, TurnID: old.TurnID, Kind: old.Kind, Project: old.Project, Node: "node-b", Harness: old.Harness, Agent: old.Agent, Execution: old.Execution, ExecutionGeneration: attempt.SessionExecutionEpoch(old) + 1, NativeCommandID: "new-command", Scope: attempt.ScopePathSet, Base: "snapshot", Workspace: project.Workspace{ID: "replacement", Project: old.Project, Node: "node-b", Path: "/isolated", Kind: project.KindWorktree}}})
 		if err != nil {
 			t.Fatal(err)
 		}

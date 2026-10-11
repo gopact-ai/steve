@@ -36,7 +36,10 @@ func TestPromptPreparationRefusalPrecedence(t *testing.T) {
 			}
 			manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "done"}}}
 			c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-			req := Request{ConversationID: "chat", Input: "hello"}
+			req := Request{
+				Source: Source{ConversationID: "chat"},
+				Input:  "hello",
+			}
 			caps, err := c.assemble(catalog.Default(), req, nil)
 			if err != nil {
 				t.Fatal(err)

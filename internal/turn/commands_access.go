@@ -38,10 +38,10 @@ func (c commands) grantCmd(ctx context.Context, req Request, rest string) (Resul
 		}
 		return Result{Title: title, Text: strings.Join(lines, "\n")}, nil
 	case 3:
-		if err := c.require(ctx, fields[0], req.SenderOpenID, project.RoleAdmin); err != nil {
+		if err := c.require(ctx, fields[0], req.Actor.ID, project.RoleAdmin); err != nil {
 			return Result{}, err
 		}
-		g, err := c.projects.Grant(ctx, fields[0], fields[1], project.Role(fields[2]), req.SenderOpenID)
+		g, err := c.projects.Grant(ctx, fields[0], fields[1], project.Role(fields[2]), req.Actor.ID)
 		if err != nil {
 			if user, isUser := err.(UserError); isUser {
 				return Result{}, user
@@ -73,13 +73,13 @@ func (c commands) decideCmd(ctx context.Context, req Request, cmd protocol.Comma
 		return Result{Title: title, Text: c.text.T(i18n.DisclosureUnknown, id)}, nil
 	}
 	approved := cmd == protocol.CommandApprove
-	if err := c.projects.ResolveDisclosure(ctx, id, approved, req.SenderOpenID); err != nil {
+	if err := c.projects.ResolveDisclosure(ctx, id, approved, req.Actor.ID); err != nil {
 		return Result{}, err
 	}
 	if !approved {
 		return Result{Title: title, Text: c.text.T(i18n.DisclosureDenied, id)}, nil
 	}
-	c.routes.notify(TaskNotice{Transport: h.req.Channel, TaskID: h.task, ChatID: h.req.ChatID, MessageID: h.req.MessageID, Requester: h.req.SenderOpenID, Conversation: h.req.ConversationID, Text: h.text})
+	c.routes.notify(TaskNotice{Transport: h.req.Source.Channel, TaskID: h.task, ChatID: h.req.Reply.ChatID, MessageID: h.req.Source.MessageID, Requester: h.req.Actor.ID, Conversation: h.req.Source.ConversationID, Text: h.text})
 	return Result{Title: title, Text: c.text.T(i18n.DisclosureApproved, id)}, nil
 }
 
@@ -105,7 +105,7 @@ func (c commands) effectsCmd(ctx context.Context, req Request, rest string) (Res
 		if !c.isOwner(req) {
 			return Result{Title: title, Text: c.text.T(i18n.OwnerOnly)}, nil
 		}
-		it, err := c.intents.Resolve(ctx, fields[0], fields[1], req.SenderOpenID)
+		it, err := c.intents.Resolve(ctx, fields[0], fields[1], req.Actor.ID)
 		if err != nil {
 			return Result{Title: title, Text: err.Error()}, nil
 		}

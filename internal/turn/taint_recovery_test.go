@@ -25,7 +25,7 @@ import (
 // instead of asking the owner to start a new session by hand.
 func TestUncertainSessionRecoversWithoutANewSessionCommand(t *testing.T) {
 	c, runner, _, old, req := retainedChatFixture(t)
-	req.Input, req.MessageID = "继续", "web-next"
+	req.Input, req.Source.MessageID = "继续", "web-next"
 	selected := c.catalog.Default()
 	binding, _, err := c.resolveWorkspace(t.Context(), req, selected)
 	if err != nil {
@@ -35,7 +35,7 @@ func TestUncertainSessionRecoversWithoutANewSessionCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved := c.store.Conversation(req.ConversationID).Sessions["worker"]
+	saved := c.store.Conversation(req.Source.ConversationID).Sessions["worker"]
 	saved.ProjectVersion, saved.CapabilityHash = binding.Version, caps.Fingerprint
 	if err := c.store.SaveSession(saved); err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestUncertainSessionRecoversWithoutANewSessionCommand(t *testing.T) {
 		if err != nil || !reflect.DeepEqual(record, current) {
 			t.Fatalf("%s: refused admission changed original execution: %+v %v", stage, current, err)
 		}
-		if len(runner.seen()) != 0 || len(manager.opened) != 0 || !c.store.Conversation(req.ConversationID).Sessions["worker"].Tainted {
+		if len(runner.seen()) != 0 || len(manager.opened) != 0 || !c.store.Conversation(req.Source.ConversationID).Sessions["worker"].Tainted {
 			t.Fatalf("%s: refused admission opened, prompted or cleared the uncertain session", stage)
 		}
 	}
@@ -88,10 +88,10 @@ func TestUncertainSessionRecoversWithoutANewSessionCommand(t *testing.T) {
 	if tracked.Budget.Turns != 2 || len(tracked.Attempts) != 2 || tracked.Attempts[0].Open() || tracked.Attempts[1].Open() || tracked.Attempts[1].ExecutionID != result.Attempt {
 		t.Fatalf("new turn was not accounted exactly once: %+v", tracked)
 	}
-	if c.store.Conversation(req.ConversationID).Sessions["worker"].Tainted {
+	if c.store.Conversation(req.Source.ConversationID).Sessions["worker"].Tainted {
 		t.Fatal("taint survived an attempt that is over")
 	}
-	if saved := c.store.Conversation(req.ConversationID).Sessions["worker"]; saved.UpstreamID != runner.fakeRunner.id {
+	if saved := c.store.Conversation(req.Source.ConversationID).Sessions["worker"]; saved.UpstreamID != runner.fakeRunner.id {
 		t.Fatalf("recovered session lost its native context: %q", saved.UpstreamID)
 	}
 	record, err := c.attempts.Get(t.Context(), old.ID)

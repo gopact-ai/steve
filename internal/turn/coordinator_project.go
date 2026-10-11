@@ -19,22 +19,22 @@ import (
 // binding — version 1, by "default" — so a later switch is a visible
 // change from something, not from nothing.
 func (c *Coordinator) bindingFor(ctx context.Context, req Request) (project.Binding, error) {
-	binding, ok, err := c.projects.Binding(ctx, req.ConversationID)
+	binding, ok, err := c.projects.Binding(ctx, req.Source.ConversationID)
 	if err != nil {
 		return project.Binding{}, err
 	}
 	if ok {
 		return binding, nil
 	}
-	id := c.unboundProject(injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID))
+	id := c.unboundProject(injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID))
 	if id == "" {
 		return project.Binding{}, UserError{Text: c.text.T(i18n.ProjectUnbound, protocol.CommandProject)}
 	}
-	binding, err = c.projects.Bind(ctx, req.ConversationID, id, "default")
+	binding, err = c.projects.Bind(ctx, req.Source.ConversationID, id, "default")
 	if err != nil {
 		return project.Binding{}, err
 	}
-	slog.Info(fmt.Sprintf("turn: conversation %s bound to project %s by default", req.ConversationID, id), "conversation", req.ConversationID, "project", id)
+	slog.Info(fmt.Sprintf("turn: conversation %s bound to project %s by default", req.Source.ConversationID, id), "conversation", req.Source.ConversationID, "project", id)
 	return binding, nil
 }
 
@@ -66,16 +66,16 @@ func (c *Coordinator) resolveWorkspace(ctx context.Context, req Request, selecte
 }
 
 func (c *Coordinator) workspaceFor(ctx context.Context, req Request, selected agent.Agent, binding project.Binding) (project.Workspace, error) {
-	if err := checkScheduledProject(req.ExpectedProject, binding.ProjectID); err != nil {
+	if err := checkScheduledProject(req.Admission.ExpectedProject, binding.ProjectID); err != nil {
 		return project.Workspace{}, err
 	}
-	if err := c.require(ctx, binding.ProjectID, req.SenderOpenID, project.RoleWrite); err != nil {
+	if err := c.require(ctx, binding.ProjectID, req.Actor.ID, project.RoleWrite); err != nil {
 		return project.Workspace{}, err
 	}
 	if workspace, recovered, err := c.sharedRecoveryWorkspace(ctx, req, selected, binding.ProjectID); recovered || err != nil {
 		return workspace, err
 	}
-	if tracked, ok := c.tasks.RecoveryOn(req.ConversationID, selected.ID, req.Origin); ok {
+	if tracked, ok := c.tasks.RecoveryOn(req.Source.ConversationID, selected.ID, req.Source.Origin); ok {
 		recovered := tracked.RecoveryWorkspace
 		if recovered.ProjectID == binding.ProjectID && recovered.NodeID == selected.Node && recovered.HarnessID == selected.Harness {
 			return project.Workspace{ID: recovered.ID, Project: recovered.ProjectID, Node: recovered.NodeID, Path: recovered.Path, Kind: project.KindWorktree, Base: recovered.Base}, nil

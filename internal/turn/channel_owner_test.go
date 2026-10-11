@@ -34,12 +34,20 @@ func TestChannelOwnerControlsProjectPermissionsWithoutCrossChannelPrivilege(t *t
 		channel, sender string
 		allowed         bool
 	}{{"feishu", "ou_im_owner", true}, {"console", "console-owner", true}, {"feishu", "console-owner", false}, {"console", "ou_im_owner", false}, {"unknown", "console-owner", false}} {
-		req := Request{Channel: test.channel, ConversationID: fmt.Sprintf("%s-%s", test.channel, test.sender), SenderOpenID: test.sender, Input: "/grant worker target write", ChatType: protocol.ChatP2P}
+		req := Request{
+			Source: Source{
+				Channel:        test.channel,
+				ConversationID: fmt.Sprintf("%s-%s", test.channel, test.sender),
+				ChatType:       protocol.ChatP2P,
+			},
+			Actor: Actor{ID: test.sender},
+			Input: "/grant worker target write",
+		}
 		_, err := c.Handle(t.Context(), req)
 		if (err == nil) != test.allowed {
 			t.Errorf("channel=%s sender=%s allowed=%t err=%v", test.channel, test.sender, test.allowed, err)
 		}
-		if req.SenderOpenID != test.sender {
+		if req.Actor.ID != test.sender {
 			t.Fatal("native sender identity was rewritten")
 		}
 	}
@@ -64,7 +72,17 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 	c, _, runner := homeCoordinator(t, dir, "console-owner", onLedger(book), withChannelOwner("feishu", "ou_im_owner"))
 	tasks := c.tasks
 	c.artifacts.SetExecution(c.executions)
-	result, err := c.Handle(t.Context(), Request{Channel: "feishu", ConversationID: "oc-native", SenderOpenID: "ou_im_owner", ChatType: protocol.ChatP2P, Input: "hello", MessageID: "om-native", ChatID: "oc-native"})
+	result, err := c.Handle(t.Context(), Request{
+		Source: Source{
+			Channel:        "feishu",
+			ConversationID: "oc-native",
+			ChatType:       protocol.ChatP2P,
+			MessageID:      "om-native",
+		},
+		Actor: Actor{ID: "ou_im_owner"},
+		Input: "hello",
+		Reply: ReplyContext{ChatID: "oc-native"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +98,15 @@ func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
 	if record, err := c.attempts.Get(t.Context(), result.Attempt); err != nil || record.By != "ou_im_owner" {
 		t.Fatalf("attempt lost native actor: %+v %v", record, err)
 	}
-	_, err = c.Handle(t.Context(), Request{Channel: "feishu", ConversationID: "oc-group", SenderOpenID: "ou_im_owner", ChatType: protocol.ChatGroup, Input: "/use codex"})
+	_, err = c.Handle(t.Context(), Request{
+		Source: Source{
+			Channel:        "feishu",
+			ConversationID: "oc-group",
+			ChatType:       protocol.ChatGroup,
+		},
+		Actor: Actor{ID: "ou_im_owner"},
+		Input: "/use codex",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +148,16 @@ func TestNativeChannelOwnerKeepsACPApprovalAndQuestionCallbacks(t *testing.T) {
 	defer manager.Stop()
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 10*time.Second, withOwner("console-owner"), withChannelOwner("feishu", "ou_im_owner"))
 	asks := 0
-	result, err := c.Handle(t.Context(), Request{Channel: "feishu", ConversationID: "oc-native", SenderOpenID: "ou_im_owner", ChatType: protocol.ChatP2P, Input: "perm askme", MessageID: "om-native", ChatID: "oc-native",
+	result, err := c.Handle(t.Context(), Request{
+		Source: Source{
+			Channel:        "feishu",
+			ConversationID: "oc-native",
+			ChatType:       protocol.ChatP2P,
+			MessageID:      "om-native",
+		},
+		Actor: Actor{ID: "ou_im_owner"},
+		Input: "perm askme",
+		Reply: ReplyContext{ChatID: "oc-native"},
 		OnAsk: func(_ context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 			asks++
 			return permission.Choose(true, ask.Options), nil
@@ -151,7 +186,16 @@ func TestConcurrentChannelOwnersAndLocalesRemainRequestLocal(t *testing.T) {
 				channel, owner, locale = "feishu", "ou_im_owner", "en"
 			}
 			conversation := fmt.Sprintf("channel-%d", n)
-			_, err := c.Handle(t.Context(), Request{Channel: channel, Locale: locale, ConversationID: conversation, SenderOpenID: owner, ChatType: protocol.ChatP2P, Input: fmt.Sprintf("/grant worker reader-%d read", n)})
+			_, err := c.Handle(t.Context(), Request{
+				Source: Source{
+					Channel:        channel,
+					ConversationID: conversation,
+					ChatType:       protocol.ChatP2P,
+				},
+				Locale: locale,
+				Actor:  Actor{ID: owner},
+				Input:  fmt.Sprintf("/grant worker reader-%d read", n),
+			})
 			if err != nil {
 				t.Error(err)
 			}

@@ -19,7 +19,7 @@ import (
 // as the message the user would have typed themselves.
 func (c commands) scheduleCmd(req Request, selected agent.Agent, cmd protocol.Command, rest string) Result {
 	title := c.text.T(i18n.CardSchedules)
-	if req.Origin != "" {
+	if req.Source.Origin != "" {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleNotCreatedAutomatic)}
 	}
 	if strings.TrimSpace(rest) == "" {
@@ -36,26 +36,26 @@ func (c commands) scheduleCmd(req Request, selected agent.Agent, cmd protocol.Co
 	}
 	// An anchor is not optional: without a message to reply to, the firing
 	// would have nowhere to land and the schedule would run in silence.
-	if req.MessageID == "" {
+	if req.Source.MessageID == "" {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleUsage, cmd)}
 	}
-	if req.Channel == "" {
+	if req.Source.Channel == "" {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleNotCreatedNoChannel)}
 	}
 	binding, err := c.bindingFor(context.Background(), req)
 	if err != nil {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleNotCreated, err.Error())}
 	}
-	if err := checkScheduledProject(req.ExpectedProject, binding.ProjectID); err != nil {
+	if err := checkScheduledProject(req.Admission.ExpectedProject, binding.ProjectID); err != nil {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleNotCreated, err.Error())}
 	}
 	created, err := c.schedules.Create(schedule.Job{
-		Channel: req.Channel, ProjectID: binding.ProjectID,
-		ConversationID: req.ConversationID,
-		ChatID:         req.ChatID,
-		ChatType:       string(req.ChatType),
-		AnchorMessage:  req.MessageID,
-		Requester:      req.SenderOpenID,
+		Channel: req.Source.Channel, ProjectID: binding.ProjectID,
+		ConversationID: req.Source.ConversationID,
+		ChatID:         req.Reply.ChatID,
+		ChatType:       string(req.Source.ChatType),
+		AnchorMessage:  req.Source.MessageID,
+		Requester:      req.Actor.ID,
 		Member:         selected.ID,
 		Prompt:         prompt,
 		Spec:           spec,
@@ -78,13 +78,13 @@ func (c commands) schedulesCmd(req Request, rest string) Result {
 	if verdict, ok := firingVerdict(fields); ok {
 		id := strings.TrimPrefix(fields[1], "#")
 		job, ok := c.schedules.Get(id)
-		if !ok || job.ConversationID != req.ConversationID {
+		if !ok || job.ConversationID != req.Source.ConversationID {
 			return Result{Title: title, Text: c.text.T(i18n.ScheduleUnknown, id)}
 		}
-		if req.SenderOpenID == "" || (req.SenderOpenID != job.Requester && req.SenderOpenID != c.ownerOpenID) {
+		if req.Actor.ID == "" || (req.Actor.ID != job.Requester && req.Actor.ID != c.ownerOpenID) {
 			return Result{Title: title, Text: c.text.T(i18n.ScheduleResolveForbidden)}
 		}
-		if err := c.schedules.ResolveFiring(id, verdict, req.SenderOpenID); err != nil {
+		if err := c.schedules.ResolveFiring(id, verdict, req.Actor.ID); err != nil {
 			return Result{Title: title, Text: err.Error()}
 		}
 		if verdict == "retry" {
@@ -97,9 +97,9 @@ func (c commands) schedulesCmd(req Request, rest string) Result {
 		return Result{Title: title, Text: c.text.T(i18n.ScheduleUsage, protocol.CommandEvery)}
 	}
 	if verb == taskCancel {
-		return c.cancelSchedule(req.ConversationID, id, title)
+		return c.cancelSchedule(req.Source.ConversationID, id, title)
 	}
-	jobs := c.schedules.List(req.ConversationID)
+	jobs := c.schedules.List(req.Source.ConversationID)
 	if len(jobs) == 0 {
 		return Result{Title: title, Text: c.text.T(i18n.SchedulesEmpty, protocol.CommandEvery)}
 	}

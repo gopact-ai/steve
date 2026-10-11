@@ -33,7 +33,11 @@ func TestRequestLocalesShareExecutionStateWithoutChangingDefault(t *testing.T) {
 				locale = i18n.LocaleEN
 			}
 			conversation := fmt.Sprintf("conversation-%d", n)
-			got, err := c.Handle(t.Context(), Request{Locale: string(locale), ConversationID: conversation, Input: "/use worker"})
+			got, err := c.Handle(t.Context(), Request{
+				Locale: string(locale),
+				Source: Source{ConversationID: conversation},
+				Input:  "/use worker",
+			})
 			if err != nil {
 				t.Error(err)
 				return

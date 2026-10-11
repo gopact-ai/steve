@@ -35,15 +35,15 @@ type Whereabouts struct {
 // it from. A line that does not say whether it came in private or in a
 // group, such as a replayed card tap, is no evidence and changes nothing.
 func (c *Coordinator) rememberMode(req Request) {
-	if req.ChatType != protocol.ChatP2P && req.ChatType != protocol.ChatGroup {
+	if req.Source.ChatType != protocol.ChatP2P && req.Source.ChatType != protocol.ChatGroup {
 		return
 	}
-	mode := injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
+	mode := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID)
 	c.mu.Lock()
 	if c.modes == nil {
 		c.modes = map[string]home.Mode{}
 	}
-	c.modes[req.ConversationID] = mode
+	c.modes[req.Source.ConversationID] = mode
 	c.mu.Unlock()
 }
 

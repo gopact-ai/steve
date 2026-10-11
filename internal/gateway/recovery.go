@@ -221,8 +221,22 @@ func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key str
 		return errors.New("gateway recovery reply channel is not available")
 	}
 	anchor := input.MessageID
-	request := turn.Request{Channel: "feishu", ConversationID: input.ConversationID, ExpectedTask: input.TaskID,
-		MessageID: anchor, ChatID: input.ChatID, SenderOpenID: input.Requester, ChatType: protocol.ParseChatType(input.ChatType), Mentioned: true, Input: input.Prompt, ResumeAdmission: input.Admission}
+	request := turn.Request{
+		Source: turn.Source{
+			Channel:        "feishu",
+			ConversationID: input.ConversationID,
+			MessageID:      anchor,
+			ChatType:       protocol.ParseChatType(input.ChatType),
+			Mentioned:      true,
+		},
+		Admission: turn.Admission{
+			ExpectedTask:    input.TaskID,
+			ResumeAdmission: input.Admission,
+		},
+		Reply: turn.ReplyContext{ChatID: input.ChatID},
+		Actor: turn.Actor{ID: input.Requester},
+		Input: input.Prompt,
+	}
 	var output recoveredOutput
 	if input.Attempt != "" {
 		if driver == nil {
@@ -256,7 +270,7 @@ func (g *Gateway) recoverInput(ctx context.Context, book *ledger.Ledger, key str
 		if err != nil {
 			return err
 		}
-		request.MessageID = anchor
+		request.Source.MessageID = anchor
 		raw, replayed, err := book.Command(ctx, key+"/dispatch", "gateway-recovery-dispatch", input.Requester, func(ctx context.Context) (json.RawMessage, error) {
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()

@@ -40,7 +40,7 @@ func TestPlanRecoveryUsesOriginalExchangeAndNativeQuestionCallbacks(t *testing.T
 	}
 	driver := &planRecoveryDriver{recoveryDriver: recoveryDriver{candidates: []turn.RetainedChat{}}, plans: []turn.RetainedPlan{{TaskID: "plan-task", Conversation: "console:main", MessageID: "web-e1", PlanID: "plan-1", RunID: "run-1", AttemptID: "planning-attempt", ProjectID: "p"}}}
 	driver.resumePlan = func(ctx context.Context, p turn.RetainedPlan, req turn.Request) (turn.Result, error) {
-		if p.PlanID != "plan-1" || p.RunID != "run-1" || req.MessageID != "web-e1" {
+		if p.PlanID != "plan-1" || p.RunID != "run-1" || req.Source.MessageID != "web-e1" {
 			t.Error("plan identity changed")
 		}
 		req.OnTurnReady(p.TaskID, "retained-step")

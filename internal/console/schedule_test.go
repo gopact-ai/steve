@@ -60,7 +60,7 @@ func TestScheduledExchangePersistsOriginalContextAndDeduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := nextCall(t, h2)
-	if call.req.Channel != "console" || call.req.ExpectedProject != "p" || call.req.SenderOpenID != "owner" || call.req.Origin != "schedule:1" || call.req.Input != "@builder scheduled work" {
+	if call.req.Source.Channel != "console" || call.req.Admission.ExpectedProject != "p" || call.req.Actor.ID != "owner" || call.req.Source.Origin != "schedule:1" || call.req.Input != "@builder scheduled work" {
 		t.Fatalf("schedule metadata not persisted: %+v", call.req)
 	}
 	call.finish <- nil

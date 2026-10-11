@@ -67,9 +67,9 @@ type chatTurn struct {
 // knows both the machine's level and the endpoint's session cap.
 func (c *Coordinator) turnSpec(ctx context.Context, req Request, selected agent.Agent, taskID string, binding project.Binding, workspace project.Workspace) (attempt.Spec, roster.Candidate, error) {
 	spec := attempt.Spec{Execution: execution.Token(ctx),
-		TaskID: taskID, TurnID: req.MessageID, Kind: attempt.KindChat, Project: binding.ProjectID,
+		TaskID: taskID, TurnID: req.Source.MessageID, Kind: attempt.KindChat, Project: binding.ProjectID,
 		Node: selected.Node, Harness: selected.Harness, Agent: selected.ID,
-		Workspace: workspace, Scope: attempt.ScopeUnrestricted, By: req.SenderOpenID,
+		Workspace: workspace, Scope: attempt.ScopeUnrestricted, By: req.Actor.ID,
 	}
 	if workspace.Kind == project.KindWorktree {
 		spec.Scope = attempt.ScopePathSet
@@ -113,9 +113,9 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 		attempts.passes = recoveryCopyPasses(spec.Workspace.ID)
 		attempts.limit = 0
 	}
-	if req.ExpectedTask != "" {
+	if req.Admission.ExpectedTask != "" {
 		attempts = waitingAttempts{Attempts: c.attempts, passes: continuationPasses, waiting: func() {
-			slog.Info("turn: parent continuation waiting for a workspace or endpoint", "task", req.ExpectedTask, "conversation", req.ConversationID)
+			slog.Info("turn: parent continuation waiting for a workspace or endpoint", "task", req.Admission.ExpectedTask, "conversation", req.Source.ConversationID)
 		}}
 	}
 	return lifecycle.Options{
@@ -124,7 +124,7 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 		// A lost lease cancels the turn, because nothing done after it
 		// could be recorded.
 		Lost: func() {
-			slog.Warn(fmt.Sprintf("turn: attempt %s lost its lease; cancelling the turn", spec.ID), "attempt", spec.ID, "task", t.tracked, "conversation", t.req.ConversationID)
+			slog.Warn(fmt.Sprintf("turn: attempt %s lost its lease; cancelling the turn", spec.ID), "attempt", spec.ID, "task", t.tracked, "conversation", t.req.Source.ConversationID)
 		},
 		// A chat turn is admitted like any other attempt: the machine's
 		// own word on the agent's requirements, taken now, kept on the
@@ -189,7 +189,7 @@ func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*a
 		return nil, nil
 	}
 	req.stage(view.StageSnapshot)
-	before, _, serr := c.snapshot(ctx, p, workspace, e.Record.Leases, "", e.Record.ID, "before turn "+req.MessageID)
+	before, _, serr := c.snapshot(ctx, p, workspace, e.Record.Leases, "", e.Record.ID, "before turn "+req.Source.MessageID)
 	if serr != nil {
 		return nil, fmt.Errorf("before-snapshot: %w", serr)
 	}
@@ -218,10 +218,10 @@ func (t *chatTurn) open(ctx context.Context, e *lifecycle.Execution) (harness.Ru
 func (t *chatTurn) arm(ctx context.Context, e *lifecycle.Execution) (func(*attempt.Record), error) {
 	c, req, selected := t.c, t.req, t.selected
 	runner := e.Session
-	unlock := c.lockPreferences(req.ConversationID, selected.ID)
+	unlock := c.lockPreferences(req.Source.ConversationID, selected.ID)
 	defer unlock()
 	// Explicit user choices must be honored or reported before any prompt is sent.
-	prefs := c.store.Preferences(req.ConversationID, selected.ID)
+	prefs := c.store.Preferences(req.Source.ConversationID, selected.ID)
 	if len(prefs) > 0 {
 		options := make(map[string]string, len(prefs))
 		for id, value := range prefs {
@@ -238,7 +238,7 @@ func (t *chatTurn) arm(ctx context.Context, e *lifecycle.Execution) (func(*attem
 	t.session = state.Session{
 		NativeImport:   e.Record.NativeImport.Clone(),
 		PluginRuntime:  e.Record.PluginRuntime.Clone(),
-		ConversationID: req.ConversationID, AgentID: selected.ID, HarnessID: selected.Harness,
+		ConversationID: req.Source.ConversationID, AgentID: selected.ID, HarnessID: selected.Harness,
 		NodeID:     selected.Node,
 		UpstreamID: runner.ID(), Workspace: t.workspace.Path, CapabilityHash: t.capabilities.Fingerprint,
 		ProjectID: t.binding.ProjectID, ProjectVersion: t.binding.Version,
@@ -252,7 +252,7 @@ func (t *chatTurn) arm(ctx context.Context, e *lifecycle.Execution) (func(*attem
 	if err := c.store.SaveSession(t.session); err != nil {
 		return nil, err
 	}
-	c.setRunner(req.ConversationID, selected.ID, runner)
+	c.setRunner(req.Source.ConversationID, selected.ID, runner)
 	preferences := sessionPreferences(runner)
 	return func(r *attempt.Record) { r.Preferences = preferences }, nil
 }
@@ -268,7 +268,7 @@ func (t *chatTurn) started(ctx context.Context, e *lifecycle.Execution) error {
 	if err := t.compose(e, preface); err != nil {
 		return err
 	}
-	if err := c.bindExecutionGate(ctx, req.ConversationID, e.Record.ID); err != nil {
+	if err := c.bindExecutionGate(ctx, req.Source.ConversationID, e.Record.ID); err != nil {
 		return err
 	}
 	t.clock.mark("arm")
@@ -284,16 +284,16 @@ func (t *chatTurn) started(ctx context.Context, e *lifecycle.Execution) error {
 func (t *chatTurn) compose(e *lifecycle.Execution, preface string) error {
 	c, req, selected, capabilities := t.c, t.req, t.selected, t.capabilities
 	user := t.prompt
-	if req.SenderOpenID != "" || req.ChatType != "" {
-		speaker := req.SenderOpenID
+	if req.Actor.ID != "" || req.Source.ChatType != "" {
+		speaker := req.Actor.ID
 		if speaker == "" {
 			speaker = "-"
 		}
 		ownerFlag := "false"
-		if req.SenderOpenID != "" && req.SenderOpenID == c.ownerOpenID {
+		if req.Actor.ID != "" && req.Actor.ID == c.ownerOpenID {
 			ownerFlag = "true"
 		}
-		user = fmt.Sprintf("[steve: speaker=%s owner=%s chat=%s]\n%s", speaker, ownerFlag, req.ChatType, t.prompt)
+		user = fmt.Sprintf("[steve: speaker=%s owner=%s chat=%s]\n%s", speaker, ownerFlag, req.Source.ChatType, t.prompt)
 	}
 	if preface != "" {
 		user = preface + "\n\n" + user
@@ -350,7 +350,7 @@ func (t *chatTurn) ended(e *lifecycle.Execution) {
 	if e.Outcome.PromptSettled {
 		t.req.phase(view.PhaseFinishing)
 		if t.told != nil {
-			t.told(!t.c.stoppedTurn(t.req.ConversationID, t.selected.ID))
+			t.told(!t.c.stoppedTurn(t.req.Source.ConversationID, t.selected.ID))
 		}
 	}
 }
@@ -365,7 +365,7 @@ func (t *chatTurn) finish(ctx context.Context, e *lifecycle.Execution) (attempt.
 	t.session.Tainted = false
 	t.session.InstructionsApplied = true
 	if err := c.store.SaveSession(t.session); err != nil {
-		slog.Error(fmt.Sprintf("turn: save completed session state: %v", err), "attempt", e.Record.ID, "conversation", t.req.ConversationID, "agent", selected.ID)
+		slog.Error(fmt.Sprintf("turn: save completed session state: %v", err), "attempt", e.Record.ID, "conversation", t.req.Source.ConversationID, "agent", selected.ID)
 		out += "\n\n" + c.text.T(i18n.StateSaveFailed, protocol.CommandNew)
 	}
 	t.clock.mark("save")
@@ -421,7 +421,7 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 				return Result{}, UserError{Text: c.text.T(i18n.ProjectBusy, t.binding.ProjectID, holder.Agent, holder.TaskID, protocol.CommandProject)}
 			}
 			if errors.Is(step.Err, attempt.ErrStopConfirmationRequired) {
-				slog.Warn(fmt.Sprintf("turn: refused behind an execution not confirmed stopped: %v", step.Err), "conversation", req.ConversationID, "agent", selected.ID)
+				slog.Warn(fmt.Sprintf("turn: refused behind an execution not confirmed stopped: %v", step.Err), "conversation", req.Source.ConversationID, "agent", selected.ID)
 				return Result{}, c.unconfirmedWriterRefusal(parent, req, step.Err)
 			}
 			return Result{}, fmt.Errorf("open attempt: %w", step.Err)
@@ -441,7 +441,7 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Minute)
 		defer cancel()
 		if afterErr := c.afterCompletion(ctx, run.Record, t.result, t.pending, t.clock); afterErr != nil {
-			slog.Error(fmt.Sprintf("turn: completion: %v", afterErr), "attempt", run.Record.ID, "task", t.tracked, "conversation", req.ConversationID)
+			slog.Error(fmt.Sprintf("turn: completion: %v", afterErr), "attempt", run.Record.ID, "task", t.tracked, "conversation", req.Source.ConversationID)
 			return t.result, afterErr
 		}
 		return t.result, nil
@@ -453,7 +453,7 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 		// conversation on "start a new session first".
 		t.session.Tainted = false
 		if stateErr := c.store.SaveSession(t.session); stateErr != nil {
-			slog.Error(fmt.Sprintf("turn: save undriven session state: %v", stateErr), "attempt", run.Record.ID, "conversation", req.ConversationID, "agent", selected.ID)
+			slog.Error(fmt.Sprintf("turn: save undriven session state: %v", stateErr), "attempt", run.Record.ID, "conversation", req.Source.ConversationID, "agent", selected.ID)
 		}
 	}
 	if run.Driven && !t.finished {
@@ -471,14 +471,14 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 			t.session.Tainted = false
 			t.session.InstructionsApplied = true
 			if stateErr := c.store.SaveSession(t.session); stateErr != nil {
-				slog.Error(fmt.Sprintf("turn: save canceled session state: %v", stateErr), "attempt", run.Record.ID, "conversation", req.ConversationID, "agent", selected.ID)
+				slog.Error(fmt.Sprintf("turn: save canceled session state: %v", stateErr), "attempt", run.Record.ID, "conversation", req.Source.ConversationID, "agent", selected.ID)
 			}
 		default:
 			// An error is not a reset. Preserve the native ID; settlement
 			// evidence decides whether a later input may safely resume it.
 			t.session.Tainted = !run.Settled
 			if stateErr := c.store.SaveSession(t.session); stateErr != nil {
-				slog.Error("turn: preserve failed session state", "error", stateErr, "attempt", run.Record.ID, "conversation", req.ConversationID, "agent", selected.ID)
+				slog.Error("turn: preserve failed session state", "error", stateErr, "attempt", run.Record.ID, "conversation", req.Source.ConversationID, "agent", selected.ID)
 			}
 		}
 	}

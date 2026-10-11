@@ -18,9 +18,14 @@ func scheduleCoordinator(t *testing.T) (*Coordinator, *schedule.Store) {
 
 func schedRequest(input string) Request {
 	return Request{
-		Channel:        "feishu",
-		ConversationID: "chat", Input: input,
-		MessageID: "om_anchor", ChatID: "oc_chat", SenderOpenID: "ou_asker",
+		Source: Source{
+			Channel:        "feishu",
+			ConversationID: "chat",
+			MessageID:      "om_anchor",
+		},
+		Input: input,
+		Reply: ReplyContext{ChatID: "oc_chat"},
+		Actor: Actor{ID: "ou_asker"},
 	}
 }
 
@@ -29,7 +34,7 @@ func TestScheduledCommandsCannotCreateMoreSchedules(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			c, store := scheduleCoordinator(t)
 			req := schedRequest(command)
-			req.Origin = "schedule:original"
+			req.Source.Origin = "schedule:original"
 			result, err := c.Handle(t.Context(), req)
 			if err != nil {
 				t.Fatal(err)
@@ -44,7 +49,7 @@ func TestScheduledCommandsCannotCreateMoreSchedules(t *testing.T) {
 func TestScheduleCreationHonorsReviewedProject(t *testing.T) {
 	c, store := scheduleCoordinator(t)
 	req := schedRequest("/every 1h check CI")
-	req.ExpectedProject = "previous-project"
+	req.Admission.ExpectedProject = "previous-project"
 	result, err := c.Handle(t.Context(), req)
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +117,7 @@ func TestUncertainScheduleHasVisibleAndAuthorizedResolution(t *testing.T) {
 		t.Fatalf("uncertainty has no resolution UI: %+v %v", listed, err)
 	}
 	stranger := schedRequest("/schedules confirm " + jobs[0].ID)
-	stranger.SenderOpenID = "stranger"
+	stranger.Actor.ID = "stranger"
 	if _, err := c.Handle(t.Context(), stranger); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +161,10 @@ func TestScheduleListingAndCancel(t *testing.T) {
 	}
 
 	// A schedule belongs to its conversation, like a task does.
-	elsewhere, err := coordinator.Handle(t.Context(), Request{ConversationID: "other", Input: "/schedules cancel 1"})
+	elsewhere, err := coordinator.Handle(t.Context(), Request{
+		Source: Source{ConversationID: "other"},
+		Input:  "/schedules cancel 1",
+	})
 	if err != nil {
 		t.Fatalf("cross-conversation cancel: %v", err)
 	}
@@ -196,7 +204,11 @@ func TestRotateTaskOnlyClosesUnattendedWork(t *testing.T) {
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
 
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "chat", Input: "nightly report", Origin: "schedule:1",
+		Source: Source{
+			ConversationID: "chat",
+			Origin:         "schedule:1",
+		},
+		Input: "nightly report",
 	}); err != nil {
 		t.Fatalf("scheduled turn: %v", err)
 	}
@@ -216,7 +228,11 @@ func TestRotateTaskOnlyClosesUnattendedWork(t *testing.T) {
 
 	// The next firing opens a fresh task with a fresh budget.
 	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "chat", Input: "nightly report", Origin: "schedule:1",
+		Source: Source{
+			ConversationID: "chat",
+			Origin:         "schedule:1",
+		},
+		Input: "nightly report",
 	}); err != nil {
 		t.Fatalf("second scheduled turn: %v", err)
 	}

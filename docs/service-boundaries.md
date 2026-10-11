@@ -26,17 +26,38 @@ exchange; every other channel's interrupted dispatch becomes unknown. Registerin
 a receiver grants no replay capability. A future explicit capability must be
 supported by evidence of durable deduplication before broadening that policy.
 
+## Turn input contract
+
+`turn.Request` separates four concerns used by Console, Gateway, onboarding and
+every retained-turn recovery entry:
+
+- `Source` records channel, conversation, input message, chat context and origin.
+- `Actor.ID` is the adapter-authenticated native caller. Owner and project checks
+  still resolve that ID in the source channel; IDs are not rewritten across channels.
+- `ReplyContext` carries the adapter's chat and open-card metadata. The current
+  reply route remains the source address. Arbitrary cross-channel replies require
+  a separate authorization and delivery design.
+- `Admission` carries the exact Console exchange, project/task fences, resume
+  incarnation and queue policy. These remain preconditions checked by execution,
+  not authority conferred by source or delivery metadata.
+
+The request and its callbacks are in-process contracts. HTTP input bodies,
+durable Console exchanges, Gateway inputs, task records and attempt identities
+retain their existing formats; they are not serialized as `turn.Request`.
+`Handle` and retained-turn operations keep their signatures and existing
+authorization, original-attempt recovery, interrupt and maintenance behavior.
+Existing internal Go callers use the explicit components, with no parallel legacy
+fields or automatic identity conversions. A registered provider test exercises
+the same coordinator through task and attempt admission; it is not a mail adapter.
+
 ## Next boundaries
 
-1. Split turn source, actor and reply destination from execution admission while
-   keeping existing entry points compatible. Preserve requester, ExpectedProject,
-   ExpectedTask, ResumeAdmission and ExchangeID checks.
-2. Introduce a neutral identity service using existing identity and configuration
+1. Introduce a neutral identity service using existing identity and configuration
    authority, removing Console's dependency on `feishu.owner_open_id`.
-3. Evaluate a shared durable work entrance using the existing ledger and stable
+2. Evaluate a shared durable work entrance using the existing ledger and stable
    IDs, without prematurely merging Console's queue with Gateway's dispatch,
    reply and suppression responsibilities.
-4. Add durable business events, subscriptions, provider consumption results and
+3. Add durable business events, subscriptions, provider consumption results and
    a fallback Inbox. SSE remains a frontend read-model feed.
 
 Across these steps, retain command key + actor + payload identity, recovery of

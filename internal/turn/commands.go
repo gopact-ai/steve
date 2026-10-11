@@ -40,7 +40,7 @@ func (c commands) dispatch(ctx context.Context, req Request, selected agent.Agen
 	case protocol.CommandStatus:
 		result = c.status(req, selected)
 	case protocol.CommandCancel:
-		result, err = c.cancel(ctx, req.ConversationID, selected)
+		result, err = c.cancel(ctx, req.Source.ConversationID, selected)
 	case protocol.CommandSkills:
 		result, err = c.skillsCmd(ctx, req, selected, rest)
 	case protocol.CommandTasks:
@@ -82,7 +82,7 @@ func (c commands) dispatch(ctx context.Context, req Request, selected agent.Agen
 }
 
 func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) (Result, error) {
-	conversationID := req.ConversationID
+	conversationID := req.Source.ConversationID
 	release, admissionErr := c.beginSessionRetirement(ctx, conversationID, selected.ID)
 	if admissionErr != nil {
 		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel), Cause: admissionErr}
@@ -91,7 +91,7 @@ func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) 
 	// The tasks go first: one still unsettled refuses the reset while the
 	// session is intact, instead of leaving it archived under a task that
 	// cannot end.
-	if refused, err := c.closeTask(ctx, conversationID, []string{selected.ID}, req.ExchangeID); err != nil {
+	if refused, err := c.closeTask(ctx, conversationID, []string{selected.ID}, req.Admission.ExchangeID); err != nil {
 		return Result{}, c.closeRefusal(conversationID, refused, err)
 	}
 	session := c.store.Conversation(conversationID).Sessions[selected.ID]
@@ -147,7 +147,7 @@ func (c commands) closeSession(ctx context.Context, session state.Session) (*sta
 }
 
 func (c commands) status(req Request, selected agent.Agent) Result {
-	session := c.store.Conversation(req.ConversationID).Sessions[selected.ID]
+	session := c.store.Conversation(req.Source.ConversationID).Sessions[selected.ID]
 	sid := session.UpstreamID
 	if sid == "" {
 		sid = "none"
@@ -156,8 +156,8 @@ func (c commands) status(req Request, selected agent.Agent) Result {
 	fields := []view.Field{
 		{Label: "Agent", Value: selected.ID, IsMetric: true},
 	}
-	fields = append(fields, c.taskFields(req.ConversationID, selected.ID)...)
-	if injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) != home.ModeOwner {
+	fields = append(fields, c.taskFields(req.Source.ConversationID, selected.ID)...)
+	if injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID) != home.ModeOwner {
 		fields = append(fields,
 			view.Field{Label: "Mode", Value: "guest", IsMetric: true},
 			view.Field{Label: "Harness", Value: selected.Harness, Wide: true},

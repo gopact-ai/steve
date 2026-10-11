@@ -304,20 +304,22 @@ func (g *Gateway) processTask(msg feishu.InboundMessage, expectedTask string) er
 
 func (g *Gateway) taskRequest(msg feishu.InboundMessage, expectedTask string, ui *turnUI) turn.Request {
 	req := turn.Request{
-		Channel:        "feishu",
-		ConversationID: conversationID(msg),
-		Input:          g.promptText(msg),
-		ExpectedTask:   expectedTask,
-		Origin:         msg.Origin,
-		MessageID:      msg.MessageID,
-		ChatID:         msg.ChatID,
-		SenderOpenID:   msg.SenderOpenID,
-		ChatType:       protocol.ParseChatType(string(msg.ChatType)),
-		Mentioned:      msg.Mentioned,
-		Images:         inboundImages(msg),
+		Source: turn.Source{
+			Channel:        "feishu",
+			ConversationID: conversationID(msg),
+			Origin:         msg.Origin,
+			MessageID:      msg.MessageID,
+			ChatType:       protocol.ParseChatType(string(msg.ChatType)),
+			Mentioned:      msg.Mentioned,
+		},
+		Input:     g.promptText(msg),
+		Admission: turn.Admission{ExpectedTask: expectedTask},
+		Reply:     turn.ReplyContext{ChatID: msg.ChatID},
+		Actor:     turn.Actor{ID: msg.SenderOpenID},
+		Images:    inboundImages(msg),
 	}
 	if ui != nil {
-		req.CardID = ui.cardID
+		req.Reply.CardID = ui.cardID
 		req.OnProgress = ui.progress
 		req.OnPhase = ui.setPhase
 		req.OnAskUser = func(ctx context.Context, q view.Question) (view.Answer, error) {

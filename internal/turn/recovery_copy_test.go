@@ -29,7 +29,10 @@ func sharedCopy(t *testing.T) (*Coordinator, project.Project, attempt.Record, pr
 	if err := NewAbandonControl(c).ProjectAbandoned(t.Context(), r.ID); err != nil {
 		t.Fatal(err)
 	}
-	workspace, err := c.workspaceFor(t.Context(), Request{ConversationID: "console:new", SenderOpenID: "owner"}, agent.Agent{ID: "worker", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
+	workspace, err := c.workspaceFor(t.Context(), Request{
+		Source: Source{ConversationID: "console:new"},
+		Actor:  Actor{ID: "owner"},
+	}, agent.Agent{ID: "worker", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +47,10 @@ func TestAbandonmentCopyIsSharedAndNeverReadsTheUnsettledDirectory(t *testing.T)
 	if err := os.WriteFile(filepath.Join(p.Home.Path, "original"), []byte("old writer changed this\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	next, err := c.workspaceFor(t.Context(), Request{ConversationID: "console:other", SenderOpenID: "owner"}, agent.Agent{ID: "another", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
+	next, err := c.workspaceFor(t.Context(), Request{
+		Source: Source{ConversationID: "console:other"},
+		Actor:  Actor{ID: "owner"},
+	}, agent.Agent{ID: "another", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +65,10 @@ func TestAbandonmentCopyIsSharedAndNeverReadsTheUnsettledDirectory(t *testing.T)
 	if err != nil || episode.Phase != "ready" || episode.Workspace.ID != ws.ID {
 		t.Fatalf("copy ownership was not durable before work: %+v %v", episode, err)
 	}
-	if _, err := c.workspaceFor(t.Context(), Request{ConversationID: "console:elsewhere", SenderOpenID: "owner"}, agent.Agent{ID: "another", Node: "elsewhere", Harness: "mock"}, project.Binding{ProjectID: p.ID}); err == nil {
+	if _, err := c.workspaceFor(t.Context(), Request{
+		Source: Source{ConversationID: "console:elsewhere"},
+		Actor:  Actor{ID: "owner"},
+	}, agent.Agent{ID: "another", Node: "elsewhere", Harness: "mock"}, project.Binding{ProjectID: p.ID}); err == nil {
 		t.Fatal("a second node silently materialized another shared copy")
 	}
 	if err := c.artifacts.Discard(t.Context(), ws); err == nil {
@@ -80,7 +89,10 @@ func recoveryCopySpec(t *testing.T, c *Coordinator, p project.Project, ws projec
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec, _, err := c.turnSpec(t.Context(), Request{MessageID: "web-" + id, SenderOpenID: "owner"}, agent.Agent{ID: "worker", Node: ws.Node, Harness: "mock"}, tracked.ID, project.Binding{ProjectID: p.ID}, ws)
+	spec, _, err := c.turnSpec(t.Context(), Request{
+		Source: Source{MessageID: "web-" + id},
+		Actor:  Actor{ID: "owner"},
+	}, agent.Agent{ID: "worker", Node: ws.Node, Harness: "mock"}, tracked.ID, project.Binding{ProjectID: p.ID}, ws)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +198,10 @@ func TestUnpublishedRecoveryOutputBlocksReplacementEvenAfterAttemptFailure(t *te
 	if err := ledgerOf(t, c).Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec("DROP TRIGGER refuse_recovery_head"); return err }); err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.workspaceFor(t.Context(), Request{ConversationID: "console:retry", SenderOpenID: "owner"}, agent.Agent{ID: "worker", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
+	_, err = c.workspaceFor(t.Context(), Request{
+		Source: Source{ConversationID: "console:retry"},
+		Actor:  Actor{ID: "owner"},
+	}, agent.Agent{ID: "worker", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +236,10 @@ func TestRecoveryRetryUsesThePinnedArtifactRatherThanALaterCanonicalRef(t *testi
 	if err := os.WriteFile(filepath.Join(p.Home.Path, "original"), []byte("unsettled current disk"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	ws, err := c.workspaceFor(t.Context(), Request{ConversationID: "console:later", SenderOpenID: "owner"}, agent.Agent{ID: "worker", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
+	ws, err := c.workspaceFor(t.Context(), Request{
+		Source: Source{ConversationID: "console:later"},
+		Actor:  Actor{ID: "owner"},
+	}, agent.Agent{ID: "worker", Node: "node", Harness: "mock"}, project.Binding{ProjectID: p.ID})
 	if err != nil || ws.Base != base {
 		t.Fatalf("retry replaced the pinned artifact with a current name: %+v %v", ws, err)
 	}

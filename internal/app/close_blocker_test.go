@@ -90,9 +90,18 @@ func (f sharedConversation) hold(t *testing.T, held console.DurableState) {
 func (f sharedConversation) command(t *testing.T, input string) (turn.Result, error) {
 	t.Helper()
 	return f.coordinator.Handle(t.Context(), turn.Request{
-		Channel: "console", ConversationID: sharedConversationID, ChatID: console.ChatID,
-		MessageID: console.AnchorMark + "command", ExchangeID: "command", Input: input,
-		SenderOpenID: "owner", ChatType: protocol.ChatP2P, Mentioned: true, Locale: "en",
+		Source: turn.Source{
+			Channel:        "console",
+			ConversationID: sharedConversationID,
+			MessageID:      console.AnchorMark + "command",
+			ChatType:       protocol.ChatP2P,
+			Mentioned:      true,
+		},
+		Reply:     turn.ReplyContext{ChatID: console.ChatID},
+		Admission: turn.Admission{ExchangeID: "command"},
+		Input:     input,
+		Actor:     turn.Actor{ID: "owner"},
+		Locale:    "en",
 	})
 }
 

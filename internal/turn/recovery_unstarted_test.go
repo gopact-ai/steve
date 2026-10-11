@@ -44,7 +44,13 @@ func TestRetainedChatDeliversTheFailureOfAnAttemptThatNeverOpenedASession(t *tes
 	if failed.Session != "" || failed.Unsettled {
 		t.Fatalf("fixture = %+v; want a settled failure without a session", failed)
 	}
-	result, err := coordinator.ResumeRetainedChat(t.Context(), record.ID, Request{ConversationID: "chat", MessageID: "om_1", SenderOpenID: "owner"})
+	result, err := coordinator.ResumeRetainedChat(t.Context(), record.ID, Request{
+		Source: Source{
+			ConversationID: "chat",
+			MessageID:      "om_1",
+		},
+		Actor: Actor{ID: "owner"},
+	})
 	var blocked *agentexec.RecoveryBlocked
 	if errors.As(err, &blocked) || err == nil || err.Error() != cause || result.Attempt != record.ID {
 		t.Fatalf("recovery = %+v, %v; want the recorded failure delivered", result, err)

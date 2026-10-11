@@ -98,15 +98,22 @@ func TestWorkspacePreparationCannotBypassTaskRevocation(t *testing.T) {
 			defer release()
 			done := make(chan error, 1)
 			go func() {
-				_, err := c.Handle(ctx, Request{ConversationID: "chat", Input: "second", MessageID: "second-message", OnStage: func(stage view.Stage) {
-					if stage == view.StageWorkspace {
-						close(entered)
-						select {
-						case <-resume:
-						case <-ctx.Done():
+				_, err := c.Handle(ctx, Request{
+					Source: Source{
+						ConversationID: "chat",
+						MessageID:      "second-message",
+					},
+					Input: "second",
+					OnStage: func(stage view.Stage) {
+						if stage == view.StageWorkspace {
+							close(entered)
+							select {
+							case <-resume:
+							case <-ctx.Done():
+							}
 						}
-					}
-				}})
+					},
+				})
 				done <- err
 			}()
 			select {

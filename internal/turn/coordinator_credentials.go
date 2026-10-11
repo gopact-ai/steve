@@ -18,7 +18,7 @@ import (
 func (t *chatTurn) prepareCredentials(ctx context.Context, saved state.Session, caps capability.Capabilities, extras []capability.Extra, endpoint string) (state.Session, capability.Capabilities, error) {
 	c, req, selected := t.c, t.req, t.selected
 	if saved.PendingAgentToken == "" {
-		_, err := c.gate.PrepareExtras(req.ConversationID, selected.ID, saved.AgentToken, endpoint)
+		_, err := c.gate.PrepareExtras(req.Source.ConversationID, selected.ID, saved.AgentToken, endpoint)
 		if err == nil {
 			return saved, caps, nil
 		}
@@ -42,7 +42,7 @@ func (t *chatTurn) prepareCredentials(ctx context.Context, saved state.Session, 
 			return saved, caps, err
 		}
 	}
-	next, err := c.gate.PrepareExtras(req.ConversationID, selected.ID, saved.PendingAgentToken, endpoint)
+	next, err := c.gate.PrepareExtras(req.Source.ConversationID, selected.ID, saved.PendingAgentToken, endpoint)
 	if err != nil {
 		return saved, caps, fmt.Errorf("prepare replacement conversation authorization: %w", err)
 	}
@@ -53,7 +53,7 @@ func (t *chatTurn) prepareCredentials(ctx context.Context, saved state.Session, 
 	updated := append([]capability.Extra(nil), extras...)
 	updated[0] = next[0]
 	if saved.PluginRuntime != nil {
-		mode := injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
+		mode := injectionMode(req.Source.ChatType, req.Actor.ID, c.ownerOpenID)
 		caps, err = c.assembler.AssembleExtraPinned(selected, mode, updated, saved.PluginSkillsFingerprint)
 	} else {
 		caps, err = c.assemble(selected, req, updated)

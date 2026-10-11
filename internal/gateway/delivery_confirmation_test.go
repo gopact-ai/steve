@@ -24,7 +24,7 @@ func TestDeliveryConfirmationWaitsForParentAndBindsTask(t *testing.T) {
 		t.Fatalf("in-memory dispatch reported durable success: %v", err)
 	}
 	req := <-p.started
-	if req.ExpectedTask != r.TaskID || req.ConversationID != r.ConversationID || req.Input != "@worker continue" {
+	if req.Admission.ExpectedTask != r.TaskID || req.Source.ConversationID != r.ConversationID || req.Input != "@worker continue" {
 		t.Fatalf("lost binding: %+v", req)
 	}
 	select {
@@ -82,7 +82,7 @@ func TestManualResumeRetainsExpectedTask(t *testing.T) {
 	}()
 	select {
 	case request := <-processor.started:
-		if request.ExpectedTask != row.ID || request.ResumeAdmission != admission {
+		if request.Admission.ExpectedTask != row.ID || request.Admission.ResumeAdmission != admission {
 			t.Fatalf("resume lost task binding: %+v", request)
 		}
 	case <-time.After(time.Second):

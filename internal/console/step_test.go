@@ -105,7 +105,7 @@ func TestParentAndLateChildTimelinesSurviveRestart(t *testing.T) {
 	var s *Service
 	s = New(stepHandler{answer: func(req turn.Request) turn.Result {
 		req.OnProgress(view.Progress{Timeline: parentTimeline})
-		s.UpdateStep(req.ConversationID, "72", child)
+		s.UpdateStep(req.Source.ConversationID, "72", child)
 		return turn.Result{Text: "The reply remains the complete answer."}
 	}}, "owner", nil)
 	if err := s.Persist(doc); err != nil {
@@ -154,7 +154,7 @@ func TestChildFinishesBetweenHandlerReturnAndReplySave(t *testing.T) {
 	step := readmodel.FromStepProgress("#59", consoleapi.Progress{Model: "child-model"}, consoleapi.StepInfo{Kind: "delegate", State: "running"})
 	var s *Service
 	s = New(stepHandler{answer: func(req turn.Request) turn.Result {
-		s.UpdateStep(req.ConversationID, "59", step)
+		s.UpdateStep(req.Source.ConversationID, "59", step)
 		return turn.Result{Text: "parent finished", Attempt: "parent-attempt"}
 	}}, "owner", nil)
 	s.SetInspector(inspector)
