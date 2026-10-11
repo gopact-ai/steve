@@ -4,9 +4,9 @@ import { Panel } from "@/components/steve/page";
 import { AssistantFeedback } from "@/components/steve/assistant-projection";
 import { useI18n } from "@/providers/locale-provider";
 import { bytes, dateTime, number } from "@/lib/format";
-import type { ServiceBacklog } from "@/lib/assistant-types";
+import type { EventFlowSnapshot, ServiceBacklog } from "@/lib/assistant-types";
 
-export function EventBusOverview({ value, error, updated, refresh }: { value: ServiceBacklog | null; error: string; updated: string; refresh: () => void }) {
+export function EventBusOverview({ value, error, updated, refresh, flow }: { value: ServiceBacklog | null; error: string; updated: string; refresh: () => void; flow?: EventFlowSnapshot | null }) {
     const { t, locale } = useI18n();
     const stages = [
         { id: "event_outbox", label: t("assistant.busRouting"), hint: t("assistant.busRoutingHint") },
@@ -15,13 +15,14 @@ export function EventBusOverview({ value, error, updated, refresh }: { value: Se
         { id: "event_unknown", label: t("assistant.unknown"), hint: t("assistant.busUnknownHint") },
         { id: "event_inbox", label: t("assistant.eventsInbox"), hint: t("assistant.busInboxHint") },
     ];
+    const queues: ServiceBacklog["queues"] = { ...value?.queues, ...(flow ? { event_outbox: flow.queues.routing, event_pending: flow.queues.pending, event_claimed: flow.queues.claimed, event_accepted: flow.queues.accepted, event_unknown: flow.queues.unknown } : {}) };
     return <Panel title={t("assistant.busOverview")} description={t("assistant.busDescription")} aside={<Button size="sm" color="secondary" iconLeading={RefreshCw01} onClick={refresh}>{t("assistant.refresh")}</Button>}>
         <AssistantFeedback error={error} loading={!value && !error} onRefresh={refresh} />
         {value ? <>
             <dl className="grid min-w-0 grid-cols-2 gap-x-5 gap-y-4 lg:grid-cols-5">
                 {stages.map((stage) => {
-                    const count = stage.id === "processing" ? (value.queues.event_claimed?.pending || 0) + (value.queues.event_accepted?.pending || 0) : value.queues[stage.id]?.pending || 0;
-                    const oldest = stage.id === "processing" ? [value.queues.event_claimed?.oldest, value.queues.event_accepted?.oldest].filter(Boolean).sort()[0] : value.queues[stage.id]?.oldest;
+                    const count = stage.id === "processing" ? (queues.event_claimed?.pending || 0) + (queues.event_accepted?.pending || 0) : queues[stage.id]?.pending || 0;
+                    const oldest = stage.id === "processing" ? [queues.event_claimed?.oldest, queues.event_accepted?.oldest].filter(Boolean).sort()[0] : queues[stage.id]?.oldest;
                     return <div key={stage.id} className="flex min-w-0 flex-col gap-1.5" data-bus-queue={stage.id}>
                         <dt className="text-xs font-medium text-secondary">{stage.label}</dt>
                         <dd className={`text-2xl font-semibold tabular-nums ${stage.id === "event_unknown" && count ? "text-warning-primary" : "text-primary"}`}>{number(count, locale)}</dd>

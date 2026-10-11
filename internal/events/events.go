@@ -67,6 +67,7 @@ type Delivery struct {
 	Incarnation uint64       `json:"incarnation,omitempty"`
 	Runtime     string       `json:"runtime,omitempty"`
 	ClaimUntil  time.Time    `json:"claim_until,omitzero"`
+	ClaimedAt   time.Time    `json:"claimed_at,omitzero"`
 	Receipt     string       `json:"receipt,omitempty"`
 	Detail      string       `json:"detail,omitempty"`
 	Resolution  *Resolution  `json:"resolution,omitempty"`

@@ -7,7 +7,7 @@ import { Button } from "@/components/base/buttons/button";
 import { Panel } from "@/components/steve/page";
 import { Nothing } from "@/components/steve/ui";
 import { AssistantFeedback, AssistantPager } from "@/components/steve/assistant-projection";
-import { EventBusOverview } from "@/components/steve/event-bus-overview";
+import { EventBusFlow } from "@/components/steve/event-bus-flow";
 import { EventBusInspector } from "@/components/steve/event-bus-inspector";
 import { DeliveryState } from "@/components/steve/event-bus-state";
 import { useAssistantPage } from "@/hooks/use-assistant-page";
@@ -29,7 +29,7 @@ export function EventBus() {
     const detailLink = (key: "delivery" | "event", id: string) => { const next = new URLSearchParams(params); next.delete("delivery"); next.delete("event"); next.set(key, id); return `/connections?${next}`; };
     const close = () => setParams((before) => { const next = new URLSearchParams(before); next.delete("delivery"); next.delete("event"); return next; });
     return <>
-        <EventBusOverview {...overview} refresh={() => { void overview.refresh(); resource.refresh(); providers.refresh(); }} />
+        <EventBusFlow overview={overview} refreshOverview={() => { void overview.refresh(); resource.refresh(); providers.refresh(); }} />
         <Panel title={t("assistant.busRecords")} description={t("assistant.busRecordsHint")}
             badge={resource.page && !resource.error ? <Badge type="pill-color" size="sm">{t("assistant.busPageCount", { count: number(resource.page.items.length, locale) })}</Badge> : null}
             toolbar={<Tabs selectedKey={view} onSelectionChange={(key) => setParams((before) => { const next = new URLSearchParams(before); next.set("view", String(key)); next.delete("delivery"); next.delete("event"); return next; })}><Tabs.List aria-label={t("assistant.busRecords")} type="button-border" size="sm" items={[{ id: "deliveries", label: t("assistant.busDeliveries") }, { id: "events", label: t("assistant.busEvents") }]}>{(item) => <Tabs.Item {...item} />}</Tabs.List></Tabs>}

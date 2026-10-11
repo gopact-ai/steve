@@ -32,6 +32,7 @@ func (s *Server) assistantRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /console/subscriptions/{id}", s.guard(s.assistantSubscription))
 	mux.HandleFunc("GET /console/business-events/{id}", s.guard(s.assistantEvent))
 	mux.HandleFunc("GET /console/event-deliveries/{id}", s.guard(s.assistantDelivery))
+	mux.HandleFunc("GET /console/event-flow", s.guard(s.assistantFlow))
 	mux.HandleFunc("POST /console/business-events/{id}/reprocess", s.guard(s.assistantReprocess))
 	mux.HandleFunc("POST /console/inbox/{id}/resolve", s.guard(s.assistantResolve))
 	mux.HandleFunc("POST /console/event-deliveries/{id}/retry", s.guard(s.assistantRetry))

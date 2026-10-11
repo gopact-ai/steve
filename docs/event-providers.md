@@ -188,8 +188,32 @@ Do not retry an uncertain external effect without reconciling the original actio
 claim, claimed/accepted processing, unknown effects and open Inbox entries. These
 counts have different units: one event may create several deliveries and attention
 entries. External intake limits and service hot/compressed storage are shown
-separately. A failed read does not display healthy zero counts. Reads refresh every
-ten seconds while the page is visible; hidden pages do not continue polling.
+separately. A failed read does not display healthy zero counts. Queue/activity
+reads refresh every two seconds; Inbox, limits and storage refresh every ten
+seconds while the page is visible. Hidden pages do not continue polling.
+
+The **Bus Activity** instrument draws independently flowing publication and claim
+particles over Magic UI Animated Beam curves between publisher, queue and
+consumer nodes. The MIT component is adapted to play once per observed record,
+with shared path measurement instead of continuously looping demonstration
+traffic. One buffer pixel represents one pending delivery,
+up to 128 pixels, with an explicit overflow count. Unknown effects remain in an
+amber holding area. Its owner-only `GET /console/event-flow` reads queue counts,
+the latest 64 immutable event intake receipts and 64 claim fingerprints in one
+ledger snapshot every two seconds. It never fetches payloads or claim credentials.
+Read indexes bound recent-record lookup without decompressing archived events.
+Queue counters share this snapshot with the graph.
+
+Particles retain their occurrence timing within each sample, so independent
+input/output can overlap rather than playing exclusive batches. This is bounded
+observability with a short delay, not a lossless transport or rate measurement:
+activity exceeding a sample window may be omitted. First load, reconnect and
+return from a hidden tab establish a baseline rather than replaying old activity.
+Acknowledgment updates do not create a second claim particle. Animation can be
+paused without pausing reads; reduced-motion preferences keep a static queue.
+The opt-in `STEVE_FIXTURE_BUS_MOTION=1` disposable acceptance fixture runs a real
+producer and consumer concurrently with different rates; production never injects
+preview events.
 
 The **Events** journal includes routed and unrouted envelopes, including compressed
 history. Its owner-only `GET /console/business-events?cursor=...` pages contain at

@@ -107,7 +107,8 @@ func (s *Service) claim(ctx context.Context, p identity.Principal, id string) (o
 		d.Token = identity.RandomID()
 		d.Incarnation = s.Book.Incarnation()
 		d.Runtime = s.Runtime
-		d.ClaimUntil = time.Now().UTC().Add(time.Minute)
+		d.ClaimedAt = time.Now().UTC()
+		d.ClaimUntil = d.ClaimedAt.Add(time.Minute)
 		if err := saveDelivery(tx, d); err != nil {
 			return err
 		}

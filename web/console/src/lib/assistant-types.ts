@@ -10,10 +10,16 @@ export interface Subscription {
 }
 export interface BusinessEvent { id: string; source: string; key: string; type: string; subject?: string; payload: unknown; causation?: string; depth: number; at: string; attention: boolean }
 export interface EventJournalEntry extends Omit<BusinessEvent, "payload" | "attention"> { routed: boolean }
+export interface EventFlowSnapshot {
+    observed_at: string;
+    events: { id: string; at: string }[];
+    claims: { id: string; claim: string; until: string; at: string }[];
+    queues: Record<"routing" | "pending" | "claimed" | "accepted" | "unknown", { pending: number; oldest?: string }>;
+}
 export interface EventDelivery {
     id: string; revision: number; event_id: string; rule: Subscription;
     state: "pending" | "claimed" | "accepted" | "done" | "failed" | "unknown" | "cancelled";
-    claim_token?: string; claim_until?: string; receipt?: string; detail?: string; resolution?: unknown; updated_at: string;
+    claim_token?: string; claim_until?: string; claimed_at?: string; receipt?: string; detail?: string; resolution?: unknown; updated_at: string;
 }
 export interface EventProvider {
     id: string; principal: string; name: string; plugin_id?: string; version?: string; generation: number;

@@ -31,6 +31,7 @@ type Events interface {
 	Deliveries(context.Context, string) (durable.Page[events.Delivery], error)
 	Delivery(context.Context, string) (events.Delivery, error)
 	Journal(context.Context, string) (durable.Page[events.JournalEntry], error)
+	Flow(context.Context) (events.FlowSnapshot, error)
 	Event(context.Context, string) (events.Event, error)
 	ResolveInbox(context.Context, string) error
 	Reprocess(context.Context, string) error

@@ -100,6 +100,64 @@ try {
     assert.deepEqual(await readDelivery(connection.bus.done),before,"bus inspection changed the consumer's receipt");
     assert.deepEqual(writes,[],"browsing the bus invoked a mutation or consumer action");
     console.log("PASS bus overview, successful receipts, frozen subscriptions, deep links, owner-only compact journal and narrow read-failure recovery remain read-only");
+
+    const api = async (resource, body, token="assistant-fixture-owner", method="POST") => {
+        const response = await fetch(connection.url+resource,{method,headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify(body)});
+        assert.equal(response.status,200,"fixture operation failed: "+resource+" "+await response.clone().text());
+        return response.json();
+    };
+    const observe = async () => (await fetch(connection.url+"/console/event-flow",{headers:ownerHeaders})).json();
+    assert.equal((await fetch(connection.url+"/console/event-flow")).status,401,"live flow lost its owner guard");
+    await page.locator('[data-bus-flow="ready"]').waitFor();
+    assert.equal(await page.locator(".bus-flow-particle").count(),0,"first load replayed historical activity");
+    const flowProducer=await api("/console/connections",{idempotency_key:"flow-producer",name:"Flow Producer",kind:"provider",event_types:["flow.notice"]});
+    const flowConsumer=await api("/console/connections",{idempotency_key:"flow-consumer",name:"Flow Consumer",kind:"provider"});
+    await api("/console/subscriptions/flow-rule",{name:"Observe concurrent flow",enabled:true,event_type:"flow.notice",mode:"provider",handler:flowConsumer.grant.id},undefined,"PUT");
+    const startFlow=await observe();
+    const publish=async(key)=>api("/services/events",{key,type:"flow.notice",payload:{test:"live flow"}},flowProducer.token);
+    const intake=await publish("overlap-1"); await publish("overlap-2"); await publish("overlap-3");
+    let claimed;
+    for(let attempt=0;attempt<30;attempt++) {
+        const response=await fetch(connection.url+"/services/events/claim",{method:"POST",headers:{Authorization:"Bearer "+flowConsumer.token}});
+        assert.equal(response.status,200); const result=await response.json();
+        if(result.found) { claimed=result; break; }
+        await new Promise((resolve)=>setTimeout(resolve,100));
+    }
+    assert.ok(claimed?.delivery,"real consumer failed to claim the published input");
+    await page.waitForFunction(()=>Number(document.querySelector('[data-flow-entered]')?.getAttribute("data-flow-entered"))>0&&Number(document.querySelector('[data-flow-taken]')?.getAttribute("data-flow-taken"))>0);
+    assert.equal(await page.evaluate(()=>document.querySelector('.bus-flow-values strong').textContent===document.querySelector('[data-bus-queue="event_pending"] dd').textContent),true,"graph and queue counter used different snapshots");
+    await page.waitForFunction((count)=>document.querySelectorAll('.bus-flow-cell[data-filled="true"]').length===count,startFlow.queues.pending.pending+2);
+    const claimFlow=await observe();const mark=claimFlow.claims.find((item)=>item.id===claimed.delivery.id);
+    assert.ok(mark?.at&&mark.claim,"flow omitted original claim timing");
+    assert.ok(!JSON.stringify(claimFlow).includes(claimed.delivery.claim_token),"flow leaked the consumer's acknowledgment credential");
+    assert.ok(!JSON.stringify(claimFlow).includes('"payload"'),"animation fetched external event payloads");
+    await api("/services/events/deliveries/"+claimed.delivery.id+"/ack",{claim_token:claimed.delivery.claim_token,state:"done",receipt:"flow-receipt"},flowConsumer.token);
+    const acknowledgedFlow=await observe();
+    assert.deepEqual(acknowledgedFlow.claims.find((item)=>item.id===claimed.delivery.id),mark,"acknowledgment rewrote the claim particle's time or identity");
+    await page.waitForFunction(()=>document.querySelectorAll('.bus-flow-particle').length===0);
+    await page.waitForResponse((response)=>response.url().endsWith('/console/event-flow')&&response.status()===200);
+    assert.equal(await page.locator('.bus-flow-particle').count(),0,"a quiet bus retained or repeated completed beams");
+    await publish("overlap-1");
+    assert.equal((await observe()).events.filter((item)=>item.id===intake.id).length,1,"duplicate publication created extra activity");
+    await page.getByRole("button",{name:"Pause Animation",exact:true}).press("Enter");
+    await page.locator('[data-motion="paused"]').waitFor();await publish("while-paused");
+    await page.waitForFunction((count)=>Number(document.querySelector('.bus-flow-values strong').textContent)===count,startFlow.queues.pending.pending+3);
+    assert.equal(await page.locator(".bus-flow-particle").count(),0,"pause stopped neither the motion nor its retained particles");
+    await page.getByRole("button",{name:"Resume Animation",exact:true}).click();
+    await page.emulateMedia({reducedMotion:"reduce"});
+    await page.getByRole("button",{name:"Reduced Motion",exact:true}).waitFor();await publish("while-reduced");
+    await page.waitForFunction((count)=>document.querySelectorAll('.bus-flow-cell[data-filled="true"]').length===count,startFlow.queues.pending.pending+4);
+    assert.equal(await page.locator(".bus-flow-particle").count(),0,"reduced motion retained moving packets");
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,"narrow neon board overflowed the page");
+    await page.emulateMedia({reducedMotion:"no-preference"});
+    let flowFailure=true;await page.route("**/console/event-flow",(route)=>flowFailure?route.fulfill({status:503,json:{error:"Flow unavailable for acceptance"}}):route.continue());
+    await page.getByText("Flow unavailable for acceptance",{exact:false}).waitFor();
+    assert.equal(await page.locator('[data-bus-flow="ready"]').count(),0,"failed live read animated stale facts");
+    flowFailure=false;await page.getByRole("button",{name:"Refresh",exact:true}).first().click();
+    await page.locator('[data-bus-flow="ready"]').waitFor();
+    assert.equal(await page.locator(".bus-flow-particle").count(),0,"read recovery replayed old claims");
+    assert.deepEqual(writes,[],"the animation invoked a consumer action");
+    console.log("PASS overlapping real publication/claim, shared queue snapshots, secret-free stable claim timing, pause/reduced motion and read recovery");
     assert.deepEqual(errors,[]);console.log("PASS keyboard, narrow layout and read-failure recovery keep decisions grounded in committed facts");
 } finally {
     await browser?.close();await server?.close();

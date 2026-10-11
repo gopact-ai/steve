@@ -81,6 +81,9 @@ func run() error {
 	}
 	defer server.Close()
 	go services.Run(ctx)
+	if os.Getenv("STEVE_FIXTURE_BUS_MOTION") == "1" {
+		go previewBusMotion(ctx, services, provider.Grant.ID, busRecords["consumer"])
+	}
 	server.SetConsole(conversation)
 	server.SetAssistant(&serviceapi.Services{Maintenance: services, Providers: services.Providers, Identity: services.Identity, Events: services.Events, Work: services.Work, Clients: services.Clients})
 	done := make(chan error, 1)

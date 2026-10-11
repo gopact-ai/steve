@@ -73,4 +73,37 @@ func TestJournalRetainsColdEnvelopesAndDoesNotConsumeOrReturnPayloads(t *testing
 	if _, exists, err := durable.Read[string](t.Context(), book, OutboxKind, ids[0]); err != nil || !exists {
 		t.Fatalf("observation consumed the pending event: exists=%v err=%v", exists, err)
 	}
+	flow, err := service.Flow(t.Context())
+	if err != nil || len(flow.Events) != 34 || flow.Queues["routing"].Pending != 1 {
+		t.Fatalf("live observation lost original receipts: %+v, %v", flow, err)
+	}
+	coldRetained := false
+	for _, event := range flow.Events {
+		if event.ID == ids[1] {
+			coldRetained = true
+		}
+	}
+	if !coldRetained {
+		t.Fatal("compacting an event removed its live intake receipt")
+	}
+	// More than a window's worth of newer input must be bounded by occurrence
+	// time rather than the random event ID or an archived binding's rewrite.
+	for i := range 70 {
+		if err := book.Update(t.Context(), func(tx *ledger.Tx) error {
+			_, err := AppendTx(tx, Event{Source: "server:flow-test", Key: fmt.Sprint(i), Type: "test.notice", At: at.Add(time.Duration(i+1) * time.Second), Payload: json.RawMessage(`{}`)})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	flow, err = service.Flow(t.Context())
+	if err != nil || len(flow.Events) != 64 || flow.Queues["routing"].Pending != 71 {
+		t.Fatalf("flow observation was unbounded or consumed input: %+v, %v", flow, err)
+	}
+	for _, event := range flow.Events {
+		stamp, err := time.Parse(time.RFC3339Nano, event.At)
+		if err != nil || !stamp.After(at) {
+			t.Fatalf("recent flow contained older history: %+v", event)
+		}
+	}
 }
