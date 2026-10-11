@@ -9,6 +9,7 @@ import { Drawer } from "@/components/steve/drawer";
 import { Nothing } from "@/components/steve/ui";
 import { ConnectionEditor } from "@/components/steve/connection-editor";
 import { SubscriptionEditor } from "@/components/steve/subscription-editor";
+import { EventBus } from "@/components/steve/event-bus";
 import { AssistantFeedback, AssistantPager } from "@/components/steve/assistant-projection";
 import { useAssistantPage } from "@/hooks/use-assistant-page";
 import { useI18n } from "@/providers/locale-provider";
@@ -20,14 +21,14 @@ import type { ClientRegistration, Connection, Subscription } from "@/lib/assista
 
 export function ConnectionsPage() {
     const { t } = useI18n(); const [params, setParams] = useSearchParams();
-    const section = ["connections", "subscriptions", "clients"].includes(params.get("section") || "") ? params.get("section")! : "connections";
+    const section = ["bus", "connections", "subscriptions", "clients"].includes(params.get("section") || "") ? params.get("section")! : "connections";
     return <div className="workbench-page flex min-w-0 flex-col">
         <PageHeader title={t("assistant.title")} description={t("assistant.description")}>
             <Tabs selectedKey={section} onSelectionChange={(key) => setParams({ section: String(key) })}>
-                <Tabs.List type="underline" size="sm" items={[{ id: "connections", label: t("assistant.connections") }, { id: "subscriptions", label: t("assistant.subscriptions") }, { id: "clients", label: t("assistant.clients") }]}>{(item) => <Tabs.Item {...item} />}</Tabs.List>
+                <Tabs.List type="underline" size="sm" aria-label={t("assistant.title")} className="flex-wrap" items={[{ id: "bus", label: t("assistant.bus") }, { id: "connections", label: t("assistant.connections") }, { id: "subscriptions", label: t("assistant.subscriptions") }, { id: "clients", label: t("assistant.clients") }]}>{(item) => <Tabs.Item {...item} />}</Tabs.List>
             </Tabs>
         </PageHeader>
-        <PageBody>{section === "subscriptions" ? <Subscriptions /> : section === "clients" ? <Clients /> : <Connections />}</PageBody>
+        <PageBody>{section === "bus" ? <EventBus /> : section === "subscriptions" ? <Subscriptions /> : section === "clients" ? <Clients /> : <Connections />}</PageBody>
     </div>;
 }
 

@@ -15,6 +15,13 @@ func (s *Service) InboxEntries(ctx context.Context, after string) (durable.Page[
 func (s *Service) Deliveries(ctx context.Context, after string) (durable.Page[Delivery], error) {
 	return durable.PageOf[Delivery](ctx, s.Book, DeliveryKind, after)
 }
+func (s *Service) Delivery(ctx context.Context, id string) (Delivery, error) {
+	out, found, err := durable.Read[Delivery](ctx, s.Book, DeliveryKind, id)
+	if err == nil && !found {
+		err = errors.New("delivery not found")
+	}
+	return out, err
+}
 func (s *Service) Event(ctx context.Context, id string) (Event, error) {
 	out, found, err := durable.Read[Event](ctx, s.Book, EventKind, id)
 	if err == nil && !found {

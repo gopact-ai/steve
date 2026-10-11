@@ -48,7 +48,7 @@ func run() error {
 	}
 	defer conversation.Shutdown(context.Background())
 	services := servicehub.New(book, "fixture-owner", conversation)
-	provider, err := services.Identity.Enroll(ctx, identity.Grant{Key: "mail-fixture", Name: "Mail Fixture", Kind: "provider", EventTypes: []string{"mail.received"}})
+	provider, err := services.Identity.Enroll(ctx, identity.Grant{Key: "mail-fixture", Name: "Mail Fixture", Kind: "provider", EventTypes: []string{"mail.received", "fixture.notice"}})
 	if err != nil {
 		return err
 	}
@@ -57,6 +57,10 @@ func run() error {
 		return err
 	}
 	if err := services.Events.Route(ctx, event.ID); err != nil {
+		return err
+	}
+	busRecords, err := seedBus(ctx, services, provider.Grant)
+	if err != nil {
 		return err
 	}
 	client, err := services.Identity.Enroll(ctx, identity.Grant{Key: "client-fixture", Name: "Mac Fixture", Kind: "client", Capabilities: []identity.CapabilityGrant{{Capability: "notifications.show", Conversation: "console:main", Approval: true}}})
@@ -78,12 +82,12 @@ func run() error {
 	defer server.Close()
 	go services.Run(ctx)
 	server.SetConsole(conversation)
-	server.SetAssistant(&serviceapi.Services{Identity: services.Identity, Events: services.Events, Work: services.Work, Clients: services.Clients})
+	server.SetAssistant(&serviceapi.Services{Maintenance: services, Providers: services.Providers, Identity: services.Identity, Events: services.Events, Work: services.Work, Clients: services.Clients})
 	done := make(chan error, 1)
 	go func() { done <- server.Serve() }()
 	// Test-only fixture IDs are useful for comparing browser decisions with
 	// committed facts. Credential values are never emitted.
-	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"url": server.URL(), "event": event.ID, "client": client.Grant.ID, "generation": reg.Generation}); err != nil {
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"url": server.URL(), "event": event.ID, "client": client.Grant.ID, "generation": reg.Generation, "bus": busRecords}); err != nil {
 		return err
 	}
 	select {

@@ -174,24 +174,6 @@ func (s *Service) Heartbeat(ctx context.Context, p identity.Principal, generatio
 	})
 }
 
-func (s *Service) Registrations(ctx context.Context, after string) (durable.Page[Registration], error) {
-	page, err := durable.PageOf[Registration](ctx, s.Book, RegistrationKind, after)
-	if err != nil {
-		return page, err
-	}
-	err = s.Book.Read(ctx, func(tx *ledger.ReadTx) error {
-		for i := range page.Items {
-			health, err := HealthTx(tx, page.Items[i].ID)
-			if err != nil {
-				return err
-			}
-			page.Items[i].State = health.State
-		}
-		return nil
-	})
-	return page, err
-}
-
 func (s *Service) SelfRegistration(ctx context.Context, p identity.Principal) (out Registration, err error) {
 	err = s.Book.Read(ctx, func(tx *ledger.ReadTx) error {
 		g, err := s.Identity.Check(tx, p)

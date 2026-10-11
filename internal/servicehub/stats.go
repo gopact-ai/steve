@@ -46,6 +46,7 @@ func (s *Services) Stats(ctx context.Context) (out Stats, err error) {
 		}{
 			{"event_pending", events.DeliveryKind, "$.updated_at", []string{events.StatePending}},
 			{"event_claimed", events.DeliveryKind, "$.updated_at", []string{events.StateClaimed}},
+			{"event_accepted", events.DeliveryKind, "$.updated_at", []string{events.StateAccepted}},
 			{"event_unknown", events.DeliveryKind, "$.updated_at", []string{events.StateUnknown}},
 			{"client_pending", clientcap.CallKind, "$.at", []string{clientcap.StatePending}},
 			{"client_approval", clientcap.CallKind, "$.at", []string{clientcap.StateApproval}},

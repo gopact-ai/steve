@@ -29,6 +29,8 @@ type Events interface {
 	Subscriptions(context.Context, string) (durable.Page[events.Subscription], error)
 	InboxEntries(context.Context, string) (durable.Page[events.Inbox], error)
 	Deliveries(context.Context, string) (durable.Page[events.Delivery], error)
+	Delivery(context.Context, string) (events.Delivery, error)
+	Journal(context.Context, string) (durable.Page[events.JournalEntry], error)
 	Event(context.Context, string) (events.Event, error)
 	ResolveInbox(context.Context, string) error
 	Reprocess(context.Context, string) error

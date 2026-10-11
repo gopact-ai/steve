@@ -182,6 +182,31 @@ under existing revisions; a new revision creates a new delivery. Retrying a fail
 or unknown delivery is an explicit operator action and replaces its claim token.
 Do not retry an uncertain external effect without reconciling the original action.
 
+## Observe event flow in the console
+
+**Connections & Events → Message Bus** shows routing backlog, deliveries awaiting
+claim, claimed/accepted processing, unknown effects and open Inbox entries. These
+counts have different units: one event may create several deliveries and attention
+entries. External intake limits and service hot/compressed storage are shown
+separately. A failed read does not display healthy zero counts. Reads refresh every
+ten seconds while the page is visible; hidden pages do not continue polling.
+
+The **Events** journal includes routed and unrouted envelopes, including compressed
+history. Its owner-only `GET /console/business-events?cursor=...` pages contain at
+most 32 envelopes and omit Payloads. **Deliveries** includes successful, pending,
+failed and unknown records. Inspection uses owner-only
+`GET /console/event-deliveries/{id}` and `GET /console/business-events/{id}` to show
+the original event, frozen subscription version, destination, claim evidence and
+receipt. Drawer links and page cursors survive reload. The journal is a stable
+ID-keyset browse, not a live chronological log. Viewing never claims, acknowledges,
+reprocesses or retries a delivery; those decisions remain in Inbox/subscriptions.
+
+"Routed" means subscription fanout committed. "Intelligent Work Accepted" means
+the Work service admitted a task; its receipt alone does not prove completion.
+An Inbox subscription is labelled "Sent to Inbox", not consumer completion. Plugin
+discovery includes enrolled producers/consumers without health registration and
+labels their health unregistered rather than offline.
+
 ## Call the user's intelligence
 
 An authorized provider submits `POST /services/work`:
