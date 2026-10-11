@@ -76,10 +76,8 @@ func assembleDelegation(life lifetime, input inputAssembly, boot runtimeAssembly
 		// lifetime does not hold the drain until it finishes on its own.
 		stop := boot.Stop()
 		life.Defer(func() { stop(); gate.Close() })
-		if environment != nil {
-			if err := gate.SetStore(newApplicationMCPStore(book), environment.Fail); err != nil {
-				return nil, fmt.Errorf("configure shared collaboration tools: %w", err)
-			}
+		if err := configureApplicationMCPStore(ctx, gate, book, environment); err != nil {
+			return nil, fmt.Errorf("configure shared collaboration tools: %w", err)
 		}
 		if err := os.WriteFile(portPath, []byte(fmt.Sprintf("%d\n", gate.Port())), 0o600); err != nil {
 			slog.Error(fmt.Sprintf("steve: remember agent messaging port: %v", err))
@@ -96,10 +94,10 @@ func assembleDelegation(life lifetime, input inputAssembly, boot runtimeAssembly
 		wireDelegateQuestions(delegation, cons)
 		if environment != nil {
 			wireDelegateRecovery(delegation, cons)
-			delegation.SetSpawnGuard(func(ctx context.Context, tx *ledger.Tx) error {
-				return agentmcp.AuthorizeContext(ctx, applicationMCPTx{tx})
-			})
 		}
+		delegation.SetSpawnGuard(func(ctx context.Context, tx *ledger.Tx) error {
+			return agentmcp.AuthorizeContext(ctx, applicationMCPTx{tx})
+		})
 		// Children an earlier process left behind have no other owner, with
 		// or without a cluster: a standalone hub restarts too, and a child
 		// row it opened before dying stays open until this pass settles it.
@@ -230,4 +228,11 @@ func delegateObserver(ctx context.Context, hub string, admin *adminsvc.Service, 
 			cons.UpdateStep(c.Conversation, c.Task, readmodel.FromStepProgress("#"+c.Task, progress, info))
 		}
 	}
+}
+
+func mcpStoreFailure(environment *Environment) func(error) {
+	if environment == nil {
+		return nil
+	}
+	return environment.Fail
 }

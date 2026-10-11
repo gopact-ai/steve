@@ -23,6 +23,8 @@ type GrantScope struct {
 	ExecutionGeneration uint64 `json:"execution_generation"`
 	NodeID              string `json:"node_id"`
 	SessionID           string `json:"session_id"`
+	// LocalRuntime pins a hub-owned native process to this activation.
+	LocalRuntime string `json:"local_runtime,omitempty"`
 }
 
 var ErrGrantDenied = errors.New("agent MCP execution grant is not authorized")

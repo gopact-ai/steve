@@ -29,6 +29,7 @@ const NAV_MIN = 168;
 const NAV_MAX = 360;
 
 const PluginsPage = lazy(() => import("@/pages/plugins").then((module) => ({ default: module.PluginsPage })));
+const ConnectionsPage = lazy(() => import("@/pages/connections").then((module) => ({ default: module.ConnectionsPage })));
 const FleetPage = lazy(() => import("@/pages/fleet").then((module) => ({ default: module.FleetPage })));
 const DashboardPage = lazy(() => import("@/pages/dashboard").then((module) => ({ default: module.DashboardPage })));
 const SkillsPage = lazy(() => import("@/pages/skills").then((module) => ({ default: module.SkillsPage })));
@@ -73,6 +74,7 @@ function Shell() {
             { href: "/inbox", label: t("nav.inbox"), icon: Inbox01, badge: snap.inbox.length + (snap.conflicts?.length || 0) },
         ] },
         { id: "manage", title: t("nav.manage"), items: [
+            { href: "/connections", label: t("assistant.nav"), icon: Dataflow03, badge: 0 },
             { href: "/projects", label: t("nav.projects"), icon: Folder, badge: 0 },
             { href: "/fleet", label: t("nav.fleet"), icon: Server01, badge: 0 },
             { href: "/skills", label: t("nav.skills"), icon: Zap, badge: 0 },
@@ -142,6 +144,7 @@ function Shell() {
                 <Route path="/skills" element={<SkillsPage />} />
                 <Route path="/mcp" element={<MCPPage />} />
                 <Route path="/plugins" element={<PluginsPage />} />
+                <Route path="/connections" element={<ConnectionsPage />} />
                 <Route path="/home" element={<HomePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/inbox" element={<InboxPage />} />

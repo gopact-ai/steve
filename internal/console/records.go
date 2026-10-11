@@ -443,6 +443,9 @@ func (s *Service) saveRecords() error {
 		return err
 	}
 	if err := s.book.Update(context.Background(), func(tx *ledger.Tx) error {
+		if err := s.observeAdmissionTx(tx, changes); err != nil {
+			return err
+		}
 		return writeConsoleChangesTx(tx, s.records.revision, changes)
 	}); err != nil {
 		return err
@@ -455,6 +458,11 @@ func (s *Service) saveRecords() error {
 			delete(s.records.values, change.key)
 		} else {
 			s.records.values[change.key] = change.value
+		}
+	}
+	for _, list := range s.exchanges {
+		for _, e := range list {
+			e.acceptGuard = nil
 		}
 	}
 	return nil

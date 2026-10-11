@@ -211,6 +211,7 @@ type Landing struct {
 }
 
 type Hub struct {
+	Services     []string  `json:"services,omitempty"`
 	Node         string    `json:"node"`
 	Started      time.Time `json:"started"`
 	Capabilities []string  `json:"capabilities,omitempty"`

@@ -14,7 +14,10 @@
 | `turn`、`delegate`、`exec` | 对话回合、委派与计划的业务编排 | task、attempt、artifact、project、harness 等领域服务 |
 | `execution`、`agentexec` | 执行作用域、停止等待，以及规划/验证的单次执行壳 | task、attempt、harness 与资源准入端口 |
 | `schedule` | 定时规则、触发认领与受理回执 | 持久化文档；通道投递由组合入口装配 |
-| `identity` | 从现有配置解析 Console 与已注册渠道的原生 owner | 仅标准库；不可变快照，不另建身份存储 |
+| `identity` | 原生渠道 owner 配置快照、显式授权的 provider/client 连接身份与撤销 | ledger、durable；原生身份不隐式转换 |
+| `ingress`、`durable` | 稳定输入身份、原始适配器回执、类型化账本查询与分页 | ledger；受理记录和原领域事实一起提交 |
+| `events`、`work`、`clientcap` | 业务事件/订阅/Inbox、受控智能入口、授权客户端能力聚合 | identity、ledger；通过端口复用现有队列与 ACP 执行 |
+| `servicehub`、`serviceapi` | 模块装配与恢复循环、HTTP 使用的窄服务端口 | 服务领域；不引入第二个 harness |
 | `task`、`project`、`attempt` | 任务树预算、工作区归属、执行状态与租约 | ledger；不依赖 HTTP 或页面实现 |
 | `ledger` | 文档、事务、命名引用、租约与审计 | SQLite 与本地持久化（单文件文档用 `filedoc`） |
 | `artifact` | 产物清单、内容副本、落地与恢复记录 | `artifact/gitrepo`、项目、账本、节点操作端口 |
@@ -40,6 +43,38 @@
 `gateway` 仍包含飞书启动及主动投递逻辑；配置了飞书凭据才创建该适配器。独立 Console 使用 `gateway.owner_id`，无需建立飞书连接。`channel.Messenger` 统一 Agent 的进度消息操作；通道特有的卡片、设备授权和回调留在适配器内。
 
 Console 与 Gateway 通过 `turn.InputExecutor` 调用执行能力，输入契约明确区分 `Source`、原生 `Actor.ID`、`ReplyContext` 和执行 `Admission`。输入持久受理与外部回复对账由适配器负责，执行层保留授权、任务准入与原 attempt 恢复。组合入口的同一份渠道接收器注册表负责定时触发、任务通知、手动恢复、已受理恢复的唤醒及子任务交接；业务路由仅使用持久渠道字段，不从聊天或消息 ID 猜测目标。渠道声明续接重放能力并提供对应回执查询，注册本身不赋予幂等投递保证。迁移细节见 [服务边界](service-boundaries.md)。
+
+## 统一服务框架
+
+```mermaid
+flowchart LR
+  U[GUI / 手机 / TUI] --> H[HTTP 与会话适配器]
+  P[邮件 / 日程 / IM 事件 Provider] --> I[连接身份与作用域]
+  I --> D[持久输入入口]
+  H --> D
+  D --> E[业务事件与事务 Outbox]
+  E --> S[冻结版本的订阅与处理回执]
+  S --> B[兜底 Inbox]
+  S --> W[受控 Work]
+  S --> P
+  W --> C[现有 Conversation 队列]
+  C --> X[Task / Attempt / ACP]
+  X --> A[用户管理的 Harness 与固定运行环境]
+  X --> R[授权客户端能力 Broker]
+  R --> U
+  X --> F[原始执行和回复回执]
+  F --> E
+  D --- L[(同一个 Ledger)]
+  E --- L
+  W --- L
+  R --- L
+```
+
+业务事件消费独立于前端 SSE。插件的接入授权、事件订阅与智能处理分别有持久记录；
+注册能力不会获得 owner 权限，收到请求也不等于执行成功。控制台在“接入与事件”
+管理连接和订阅，在“待处理”检查兜底事件、客户端审批及未知结果。
+[服务边界](service-boundaries.md) 记录实际职责与兼容边界，
+[事件与客户端协议](event-providers.md) 给出插件接入方式。
 
 ## 权威与提交点
 

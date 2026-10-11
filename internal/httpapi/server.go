@@ -25,6 +25,7 @@ import (
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/sameorigin"
+	"github.com/gopact-ai/steve/internal/serviceapi"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -57,6 +58,7 @@ type ServerConfig struct {
 
 // Server exposes the snapshot, the change stream and the dashboard.
 type Server struct {
+	assistant      *serviceapi.Services
 	plugins        consoleapi.PluginsService
 	coordination   consoleapi.CoordinationService
 	ssh            SSHService
@@ -118,6 +120,7 @@ func (s *Server) Serve() error {
 	s.sshRoutes(mux)
 	s.pluginRoutes(mux)
 	s.coordinationRoutes(mux)
+	s.assistantRoutes(mux)
 	mux.HandleFunc("GET /console/desktop", s.guard(s.consoleDesktop))
 	mux.HandleFunc("GET /console/desktop/agents", s.guard(s.consoleDesktopAgents))
 	mux.HandleFunc("POST /console/desktop/agents", s.guard(s.consoleDesktopAgents))

@@ -1,7 +1,7 @@
 // Mirrors internal/readmodel: the snapshot the hub serves at /state and the
 // events it streams at /events. Every list is present, empty or not.
 export interface Advert { version?: number; node?: string; build_version?: string; hostname?: string; ips?: string[]; os?: string; arch?: string; harnesses?: Harness[]; capabilities?: string[] }
-export interface Hub { node: string; started: string; capabilities?: string[]; level?: string; version?: string; advert?: Advert }
+export interface Hub { services?: string[]; node: string; started: string; capabilities?: string[]; level?: string; version?: string; advert?: Advert }
 export interface Harness { id: string; command?: string; version?: string; model?: string; models?: string[]; missing?: string; slots?: number }
 export interface Evidence { kind: "declared" | "observed" | "derived"; method?: string; result?: string; ok: boolean; at?: string }
 export interface Capability {

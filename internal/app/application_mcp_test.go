@@ -31,13 +31,17 @@ func (r applicationMCPReplicator) Propose(_ context.Context, write ledger.Replic
 	return r.book.ApplyReplicated(write.ID, write.ExpectedVersion+1, write.Payload)
 }
 
-func applicationGrantGate(t *testing.T, book *ledger.Ledger) *agentmcp.Server {
+func applicationGrantGate(t *testing.T, book *ledger.Ledger, local ...bool) *agentmcp.Server {
 	t.Helper()
 	gate, err := agentmcp.New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := gate.SetStore(newApplicationMCPStore(book), nil); err != nil {
+	configure := func() error { return gate.SetStore(newApplicationMCPStore(book), nil) }
+	if len(local) > 0 && local[0] {
+		configure = func() error { return configureApplicationMCPStore(t.Context(), gate, book, nil) }
+	}
+	if err := configure(); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())

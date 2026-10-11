@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -181,7 +182,9 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	if strings.Contains(input, "ignore-cancel") {
 		return a.ignoreCancel(ctx, req.SessionID)
 	}
-	if strings.Contains(input, "perm") {
+	// The script keyword is a word, not the "perm" substring in injected
+	// context such as "permission" or "permanent".
+	if slices.Contains(strings.Fields(input), "perm") {
 		if err := a.requestPermission(ctx, req.SessionID); err != nil {
 			return nil, err
 		}

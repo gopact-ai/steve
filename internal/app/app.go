@@ -113,6 +113,7 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	if err := assembleRecovery(input, runtime, ledger, execution, console); err != nil {
 		return nil, err
 	}
+	assembleAssistant(runtime, console, delegation)
 	assembleNodeReceipts(input, runtime, ledger, fleet)
 	built = true
 	return &App{life: life, stop: runtime.Stop(), run: func() error {

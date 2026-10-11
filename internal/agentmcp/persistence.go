@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -118,6 +119,18 @@ func (s *Server) SetStore(store Store, onFailure func(error)) error {
 	return nil
 }
 
+// SetLocalExecutionRuntime opts a standalone hub into fixed local-process
+// grants. The authoritative store must check this activation on every use.
+func (s *Server) SetLocalExecutionRuntime(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "" || s.store != nil || len(s.tokens) != 0 || len(s.anchors) != 0 {
+		return ErrGrantDenied
+	}
+	s.localRuntime = id
+	return nil
+}
+
 func (s *Server) failLocked(err error) error {
 	if err == nil {
 		return nil
@@ -215,16 +228,21 @@ func (s *Server) prepareLocked(b binding, token string) error {
 // Retained replay is idempotent. The store permits a new scope only for an
 // explicit next chat turn after the prior execution settled in this session.
 func (s *Server) BindExecution(ctx context.Context, b Binding, scope GrantScope) error {
-	if b.ConversationID == "" || b.AgentID == "" || scope.TaskID == "" || scope.AttemptID == "" || scope.NodeID == "" || scope.ExecutionGeneration == 0 || !nodewire.IsManagedSession(scope.SessionID) || (b.TaskID != "" && b.TaskID != scope.TaskID) {
-		return ErrGrantDenied
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.storeErr != nil {
-		return s.storeErr
-	}
 	if s.store == nil {
 		return nil
+	}
+	if scope.NodeID == "" && s.localRuntime != "" && (scope.LocalRuntime == "" || scope.LocalRuntime == s.localRuntime) {
+		scope.LocalRuntime = s.localRuntime
+	}
+	native := scope.NodeID != "" && scope.LocalRuntime == "" && nodewire.IsManagedSession(scope.SessionID)
+	local := scope.NodeID == "" && s.localRuntime != "" && scope.LocalRuntime == s.localRuntime && scope.SessionID != "" && len(scope.SessionID) <= 512 && !strings.ContainsAny(scope.SessionID, "\x00\r\n")
+	if b.ConversationID == "" || b.AgentID == "" || scope.TaskID == "" || scope.AttemptID == "" || scope.ExecutionGeneration == 0 || !native && !local || (b.TaskID != "" && b.TaskID != scope.TaskID) {
+		return ErrGrantDenied
+	}
+	if s.storeErr != nil {
+		return s.storeErr
 	}
 	err := s.store.Update(ctx, func(tx StoreTx) error {
 		var index grantIndex

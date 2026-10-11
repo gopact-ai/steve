@@ -85,23 +85,71 @@ Gateway keeps its asynchronous confirmation callback and conservative external
 delivery semantics. Unknown channels supply no receipt evidence, and registering
 a receiver does not change the schedule store's interrupted-delivery policy.
 
-## Next boundaries
+## Durable service ingress and intelligent Work
 
-1. Add explicit cross-channel principal bindings only with a reviewed migration
-   of legacy project grants and retained work identities.
-2. Evaluate a shared durable work entrance using the existing ledger and stable
-   IDs, without prematurely merging Console's queue with Gateway's dispatch,
-   reply and suppression responsibilities.
-3. Add durable business events, subscriptions, provider consumption results and
-   a fallback Inbox. SSE remains a frontend read-model feed.
+`internal/ingress` records immutable kind/source/key + authenticated actor,
+conversation, canonical payload digest and the adapter's receipt. Console admission
+and Feishu's existing input-command acceptance write that record in their own
+ledger transaction. Imported history is not emitted as fresh input. Console and
+Gateway retain their own execution queues and external delivery recovery.
 
-Across these steps, retain command key + actor + payload identity, recovery of
-original attempts for uncertain dispatch, conversation serialization, cancel and
-steer, maintenance and retirement fencing, leases and stop proofs. Coordinator
-responsibilities can then be narrowed across Conversation, Work, Execution,
-Interaction and Automation. The current schedule change does not alter queues,
-identity storage or external delivery recovery. Task routing now uses explicit
-receiver registration while retaining the original adapter semantics.
+`internal/work` is the provider/automation intelligence port. An owner-created
+connection grant names exact Console conversation/project pairs. Work rejects
+platform control commands, checks the existing binding and rereads live authority
+at admission. The Work receipt and original Console Exchange ID commit in the
+same transaction as queue admission. Final results are retained on the Work record
+in the transaction committing the Console reply, so transcript deletion cannot
+silently replace an accepted task with a new ACP turn. Unfinished work whose
+original exchange cannot be found is reported as unknown.
+
+## Business events, subscriptions and fallback Inbox
+
+`internal/events` owns a durable business log, transactional outbox, frozen
+subscription revisions, consumer claims and processing receipts. `servicehub`
+composes identity, events, Work and client capabilities and owns their bounded
+recovery pump. It contains no harness or transport implementation. HTTP consumes
+`serviceapi` ports; ACP continues through the existing execution system.
+
+Subscriptions route events to Inbox, intelligent Work, or an enrolled provider.
+Unmatched external events and failed/uncertain processing remain visible. Owners
+can inspect an event, add a subscription and reprocess it. Existing deliveries
+under the same revision retain their receipts; changing a rule then reprocessing
+is an explicit decision to create a delivery under the new revision.
+
+Derived events require opt-in; recorded causation is bounded at eight levels.
+Terminal facts still commit at the limit, but effect subscriptions stop and leave
+an Inbox entry. Ordinary completion facts do not flood the Inbox. SSE remains a
+read-model feed and is never a reliable business consumer.
+
+## Connection identity and client capabilities
+
+`identity.Service` persists scoped, revocable provider/client delegations. Only
+credential digests are stored. Connection tokens never pass the Console owner
+guard. Native channel owners, project grants and retained actor IDs remain in their
+existing namespaces; no implicit cross-channel principal migration is performed.
+
+`clientcap` separates advertised availability from permission. Explicit grants
+bind a capability to a conversation. Registration has a process generation and
+45-second heartbeat; claims have stable invocation IDs and unique tokens.
+Optional approval appears in the Inbox. Interrupted native effects become unknown
+and are never automatically replayed. The original claim token can submit a late
+receipt after server restart; a replacement claim cannot adopt that proof.
+
+The ACP bridge offers capability discovery, invocation and result tools only to a
+private Console execution. Admission and dispatch both check its original task,
+attempt, process generation and live lease. Delegated/shared channel sessions do
+not inherit the private client's authority. No arbitrary code-execution capability
+is implicitly registered.
+
+## Remaining product extensions
+
+This is a modular server foundation, with existing Console/Gateway execution
+adapters behind the service ports. Native mail/calendar/IM providers and macOS/iOS
+capability implementations can use the versioned HTTP contract in
+[event-providers](event-providers.md). They are not installed by this change.
+Existing Skills/MCP immutable runtime bundles and user-managed harness versions
+continue unchanged. A2A adapters and explicit cross-channel account/grant migration
+are separate extensions requiring their own contracts and compatibility evidence.
 
 ## Validation cadence
 
