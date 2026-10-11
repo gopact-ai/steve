@@ -108,6 +108,15 @@ func (s *Store) SetAside(id string, to State) ([]string, error) {
 	return s.setAside(context.Background(), id, to, true, nil)
 }
 
+// SetAsideChecked revokes an authorized task tree in the same transaction.
+func (s *Store) SetAsideChecked(ctx context.Context, id string, to State, guard func(*ledger.Tx) error) ([]string, error) {
+	var commit func(*ledger.Tx, []string) error
+	if guard != nil {
+		commit = func(tx *ledger.Tx, _ []string) error { return guard(tx) }
+	}
+	return s.setAside(ctx, id, to, true, commit)
+}
+
 // CancelWith records related control intent in the same transaction as the
 // task-tree revocation. The callback uses only tx, never another store write
 // or an external call. Repeating cancellation does not revoke epochs again.
@@ -164,6 +173,10 @@ func (s *Store) setAside(ctx context.Context, id string, to State, repeat bool, 
 // reason it moves on a stop — a late result must not revive a task its owner
 // has already closed.
 func (s *Store) Settle(id string, as Settlement) (Task, error) {
+	return s.SettleChecked(context.Background(), id, as, nil)
+}
+
+func (s *Store) SettleChecked(ctx context.Context, id string, as Settlement, guard func(*ledger.Tx) error) (Task, error) {
 	if as != "" && !as.Valid() {
 		return Task{}, fmt.Errorf("invalid settlement %s", as)
 	}
@@ -185,7 +198,7 @@ func (s *Store) Settle(id string, as Settlement) (Task, error) {
 		t.ExecutionEpoch++
 	}
 	t.UpdatedAt = s.now()
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceRecordsLocked(ctx, next, guard); err != nil {
 		return Task{}, err
 	}
 	return *t.clone(), nil

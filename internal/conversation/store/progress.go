@@ -4,8 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
-	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -18,10 +17,10 @@ const progressEvery = 100 * time.Millisecond
 type progressStream struct {
 	mu         sync.Mutex
 	work       *process
-	publish    func(consoleapi.Progress)
+	publish    func(conversationapi.Progress)
 	taskID     string
-	latest     consoleapi.Progress
-	published  consoleapi.Progress
+	latest     conversationapi.Progress
+	published  conversationapi.Progress
 	last       time.Time
 	timer      *time.Timer
 	generation uint64
@@ -31,9 +30,9 @@ type progressStream struct {
 
 func (s *Service) progress(conversation, exchangeID string, work *process) *progressStream {
 	stream := &progressStream{work: work}
-	stream.publish = func(p consoleapi.Progress) {
+	stream.publish = func(p conversationapi.Progress) {
 		if s.model != nil {
-			s.model.Publish(readmodel.Event{Kind: "console.progress", Conversation: conversation, ExchangeID: exchangeID, TaskID: stream.taskID, Progress: &p})
+			s.model.Publish(conversationapi.Event{Kind: "console.progress", Conversation: conversation, ExchangeID: exchangeID, TaskID: stream.taskID, Progress: &p})
 		}
 	}
 	return stream
@@ -49,7 +48,7 @@ func (s *progressStream) Bind(taskID string) {
 }
 
 func (s *progressStream) Update(p view.Progress) {
-	cut := readmodel.FromProgress(p)
+	cut := conversationapi.FromProgress(p)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -134,7 +133,7 @@ func (s *progressStream) flush() {
 	s.publish(s.latest)
 }
 
-func progressStatusChanged(prev, next consoleapi.Progress) bool {
+func progressStatusChanged(prev, next conversationapi.Progress) bool {
 	if (prev.Answer == "" && next.Answer != "") || (prev.Reasoning == "" && next.Reasoning != "") || (len(prev.Timeline) == 0 && len(next.Timeline) > 0) || len(prev.Tools) != len(next.Tools) || len(prev.Plan) != len(next.Plan) {
 		return true
 	}

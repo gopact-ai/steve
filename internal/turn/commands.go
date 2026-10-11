@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/control"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/view"
@@ -46,9 +48,9 @@ func (c commands) dispatch(ctx context.Context, req Request, selected agent.Agen
 	case protocol.CommandTasks:
 		result, err = c.tasksCmd(ctx, req, rest)
 	case protocol.CommandEvery, protocol.CommandAt:
-		result = c.scheduleCmd(req, selected, cmd, rest)
+		result = c.scheduleCmd(ctx, req, selected, cmd, rest)
 	case protocol.CommandSchedules:
-		result = c.schedulesCmd(req, rest)
+		result = c.schedulesCmd(ctx, req, rest)
 	case protocol.CommandModel:
 		result, err = c.modelCmd(ctx, req, selected, rest)
 	case protocol.CommandHistory:
@@ -56,7 +58,7 @@ func (c commands) dispatch(ctx context.Context, req Request, selected agent.Agen
 	case protocol.CommandPlan:
 		result, err = c.planCmd(ctx, req, rest)
 	case protocol.CommandPlans:
-		result = c.plansCmd(req, rest)
+		result, err = c.plansCmd(ctx, req, rest)
 	case protocol.CommandFleet:
 		if strings.TrimSpace(rest) == "probe" {
 			result = c.probeCmd(ctx)
@@ -95,6 +97,9 @@ func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) 
 		return Result{}, c.closeRefusal(conversationID, refused, err)
 	}
 	session := c.store.Conversation(conversationID).Sessions[selected.ID]
+	if err := c.controls.Check(ctx, req, project.RoleWrite); err != nil {
+		return Result{}, err
+	}
 	owed, err := c.closeSession(ctx, session)
 	if err != nil {
 		return Result{}, err
@@ -108,9 +113,9 @@ func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) 
 		owed.OwedAt = at
 		slog.Warn(fmt.Sprintf("turn: /new let go of session %s on node %s before its node could be reached; the close is owed", session.UpstreamID, session.NodeID),
 			"conversation", conversationID, "agent", selected.ID, "node", session.NodeID, "session", session.UpstreamID, "task", owed.TaskID, "attempt", owed.AttemptID)
-		err = c.store.ArchiveSessionOwingClose(conversationID, selected.ID, at, *owed)
+		err = c.store.ArchiveSessionOwingCloseChecked(ctx, conversationID, selected.ID, at, *owed, control.MutationGuard(ctx))
 	} else {
-		err = c.store.ArchiveSession(conversationID, selected.ID, at)
+		err = c.store.ArchiveSessionChecked(ctx, conversationID, selected.ID, at, control.MutationGuard(ctx))
 	}
 	if err != nil {
 		return Result{}, err

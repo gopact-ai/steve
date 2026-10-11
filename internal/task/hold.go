@@ -1,8 +1,11 @@
 package task
 
 import (
+	"context"
 	"fmt"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 // Held says the user stopped the task and nothing has been said to it since.
@@ -16,6 +19,10 @@ func (t Task) Held() bool { return !t.HeldAt.IsZero() }
 // the release is bound to the stamp a turn saw when it composed, so a
 // turn composed under the earlier stop cannot lift the later one.
 func (s *Store) Hold(id string) (Task, error) {
+	return s.HoldChecked(context.Background(), id, nil)
+}
+
+func (s *Store) HoldChecked(ctx context.Context, id string, guard func(*ledger.Tx) error) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	stored, ok := s.data.Tasks[id]
@@ -27,7 +34,7 @@ func (s *Store) Hold(id string) (Task, error) {
 		// Two stops within the clock's resolution are still two stops.
 		at = stored.HeldAt.Add(time.Nanosecond)
 	}
-	return s.setHoldLocked(id, at)
+	return s.setHoldCheckedLocked(ctx, id, at, guard)
 }
 
 // ReleaseHold lifts the hold a turn accounted for: seen is the stamp the
@@ -47,11 +54,15 @@ func (s *Store) ReleaseHold(id string, seen time.Time) (Task, error) {
 }
 
 func (s *Store) setHoldLocked(id string, at time.Time) (Task, error) {
+	return s.setHoldCheckedLocked(context.Background(), id, at, nil)
+}
+
+func (s *Store) setHoldCheckedLocked(ctx context.Context, id string, at time.Time, guard func(*ledger.Tx) error) (Task, error) {
 	next := s.draft()
 	held := next.edit(id)
 	held.HeldAt = at
 	held.UpdatedAt = s.now()
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceRecordsLocked(ctx, next, guard); err != nil {
 		return Task{}, err
 	}
 	return *held.clone(), nil

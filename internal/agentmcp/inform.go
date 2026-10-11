@@ -106,6 +106,9 @@ func helpText(topic string) (string, error) {
 }
 
 func (s *Server) steveContext(ctx context.Context, bind binding) (string, error) {
+	if err := s.authorizePlatform(ctx, bind, false); err != nil {
+		return "", err
+	}
 	s.mu.Lock()
 	if err := s.loadConversationLocked(ctx, bind.conversationID, nil); err != nil {
 		s.mu.Unlock()
@@ -153,6 +156,9 @@ func (s *Server) steveContext(ctx context.Context, bind binding) (string, error)
 }
 
 func (s *Server) steveProjects(ctx context.Context, bind binding) (string, error) {
+	if err := s.authorizePlatform(ctx, bind, false); err != nil {
+		return "", err
+	}
 	s.mu.Lock()
 	informer := s.informer
 	s.mu.Unlock()
@@ -214,18 +220,40 @@ func (s *Server) SetFleeter(f Fleeter) {
 	s.fleeter = f
 }
 
-func (s *Server) fleeterFor(bind binding, change bool) (Fleeter, error) {
+// SetPlatformAuthority installs original-execution resource/owner policy.
+func (s *Server) SetPlatformAuthority(check func(context.Context, Binding, bool) error) {
 	s.mu.Lock()
-	f, informer := s.fleeter, s.informer
+	defer s.mu.Unlock()
+	s.platformAuthority = check
+}
+
+func (s *Server) authorizePlatform(ctx context.Context, bind binding, change bool) error {
+	s.mu.Lock()
+	check := s.platformAuthority
+	s.mu.Unlock()
+	if check != nil {
+		return check(ctx, publicBinding(bind), change)
+	}
+	return nil
+}
+
+func (s *Server) fleeterFor(ctx context.Context, bind binding, change bool) (Fleeter, error) {
+	s.mu.Lock()
+	f, informer, check := s.fleeter, s.informer, s.platformAuthority
 	s.mu.Unlock()
 	if f == nil {
 		return nil, errors.New("fleet maintenance is not wired on this gateway")
+	}
+	if check != nil {
+		if err := check(ctx, Binding{ConversationID: bind.conversationID, AgentID: bind.agentID, TaskID: bind.taskID, DelegatedBy: bind.delegatedBy}, change); err != nil {
+			return nil, err
+		}
 	}
 	if change {
 		if informer == nil {
 			return nil, errors.New("cannot tell who is asking; the fleet stays as it is")
 		}
-		info, err := informer.Context(context.Background(), bind.conversationID, bind.agentID)
+		info, err := informer.Context(ctx, bind.conversationID, bind.agentID)
 		if err != nil {
 			return nil, err
 		}
@@ -237,7 +265,7 @@ func (s *Server) fleeterFor(bind binding, change bool) (Fleeter, error) {
 }
 
 func (s *Server) steveNodes(ctx context.Context, bind binding) (string, error) {
-	f, err := s.fleeterFor(bind, false)
+	f, err := s.fleeterFor(ctx, bind, false)
 	if err != nil {
 		return "", err
 	}
@@ -245,7 +273,7 @@ func (s *Server) steveNodes(ctx context.Context, bind binding) (string, error) {
 }
 
 func (s *Server) steveNodeAdd(ctx context.Context, bind binding, raw json.RawMessage) (string, error) {
-	f, err := s.fleeterFor(bind, true)
+	f, err := s.fleeterFor(ctx, bind, true)
 	if err != nil {
 		return "", err
 	}
@@ -262,7 +290,7 @@ func (s *Server) steveNodeAdd(ctx context.Context, bind binding, raw json.RawMes
 }
 
 func (s *Server) steveNodeRemove(ctx context.Context, bind binding, raw json.RawMessage) (string, error) {
-	f, err := s.fleeterFor(bind, true)
+	f, err := s.fleeterFor(ctx, bind, true)
 	if err != nil {
 		return "", err
 	}
@@ -277,7 +305,7 @@ func (s *Server) steveNodeRemove(ctx context.Context, bind binding, raw json.Raw
 }
 
 func (s *Server) steveNodeRefresh(ctx context.Context, bind binding, raw json.RawMessage) (string, error) {
-	f, err := s.fleeterFor(bind, false)
+	f, err := s.fleeterFor(ctx, bind, false)
 	if err != nil {
 		return "", err
 	}

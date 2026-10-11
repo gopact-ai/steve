@@ -56,7 +56,7 @@ func nextMilestoneEvent(t *testing.T, events <-chan readmodel.Event) readmodel.E
 func TestConsoleMilestoneSendUpdateRecall(t *testing.T) {
 	s, l, address := milestoneFixture(t)
 	sender := MessageSender{Console: s}
-	events, stop := s.model.Subscribe(context.Background())
+	events, stop := s.model.(*readmodel.Model).Subscribe(context.Background())
 	defer stop()
 	message := channel.Message{Content: "First milestone", Format: "markdown", Attribution: "builder · test"}
 	id, err := sender.Send(context.Background(), address, message)
@@ -112,7 +112,7 @@ func TestConsoleMilestoneRejectsInvalidDestinations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, stop := s.model.Subscribe(context.Background())
+	events, stop := s.model.(*readmodel.Model).Subscribe(context.Background())
 	defer stop()
 	before := s.Replies("side")
 	for _, invalid := range []channel.Address{
@@ -161,7 +161,7 @@ func TestConsoleMilestoneSaveFailureKeepsTranscriptAndEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := s.Replies("side")
-	events, stop := s.model.Subscribe(context.Background())
+	events, stop := s.model.(*readmodel.Model).Subscribe(context.Background())
 	defer stop()
 	if _, err := l.DB().Exec("PRAGMA query_only = ON"); err != nil {
 		t.Fatal(err)

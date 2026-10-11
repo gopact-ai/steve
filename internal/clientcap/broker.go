@@ -24,11 +24,13 @@ const AttentionKind = "client-capability-attention"
 
 var ErrOffline = errors.New("client is offline")
 var ErrCapabilityRemoved = errors.New("client no longer advertises this capability")
+var ErrContractChanged = errors.New("client capability contract changed; create and review a new invocation")
 
 func ReadyKind(id string) string { return "client-capability-ready:" + id }
 
 type Capability struct {
 	Name        string          `json:"name"`
+	Version     string          `json:"version,omitempty"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
 }
@@ -60,23 +62,30 @@ type Execution struct {
 	LocalRuntime string `json:"local_runtime,omitempty"`
 }
 type Invocation struct {
-	ID               string          `json:"id"`
-	Request          Request         `json:"request"`
-	Source           string          `json:"source"`
-	GrantID          string          `json:"grant_id,omitempty"`
-	Execution        *Execution      `json:"execution,omitempty"`
-	Depth            int             `json:"depth"`
-	State            string          `json:"state"` // approval, pending, claimed, done, failed, unknown, cancelled
-	Approved         bool            `json:"approved"`
-	Token            string          `json:"claim_token,omitempty"`
-	ClientGeneration uint64          `json:"client_generation,omitempty"`
-	Incarnation      uint64          `json:"incarnation,omitempty"`
-	Runtime          string          `json:"runtime,omitempty"`
-	ClaimUntil       time.Time       `json:"claim_until,omitzero"`
-	Result           json.RawMessage `json:"result,omitempty"`
-	Receipt          string          `json:"receipt,omitempty"`
-	Error            string          `json:"error,omitempty"`
-	At               time.Time       `json:"at"`
+	ID               string                    `json:"id"`
+	Revision         uint64                    `json:"revision"`
+	Request          Request                   `json:"request"`
+	Source           string                    `json:"source"`
+	GrantID          string                    `json:"grant_id,omitempty"`
+	Execution        *Execution                `json:"execution,omitempty"`
+	Depth            int                       `json:"depth"`
+	State            string                    `json:"state"` // approval, pending, claimed, done, failed, unknown, cancelled
+	Approved         bool                      `json:"approved"`
+	Contract         *Capability               `json:"contract,omitempty"`
+	ContractDigest   string                    `json:"contract_digest,omitempty"`
+	ClientPermission *identity.CapabilityGrant `json:"client_permission,omitempty"`
+	CallerPermission *identity.CapabilityGrant `json:"caller_permission,omitempty"`
+	Resolution       *Resolution               `json:"resolution,omitempty"`
+	Token            string                    `json:"claim_token,omitempty"`
+	ClientGeneration uint64                    `json:"client_generation,omitempty"`
+	Incarnation      uint64                    `json:"incarnation,omitempty"`
+	Runtime          string                    `json:"runtime,omitempty"`
+	ClaimUntil       time.Time                 `json:"claim_until,omitzero"`
+	Result           json.RawMessage           `json:"result,omitempty"`
+	Receipt          string                    `json:"receipt,omitempty"`
+	Error            string                    `json:"error,omitempty"`
+	At               time.Time                 `json:"at"`
+	UpdatedAt        time.Time                 `json:"updated_at,omitzero"`
 }
 type Completion struct {
 	Token   string          `json:"claim_token"`
@@ -86,9 +95,12 @@ type Completion struct {
 	Error   string          `json:"error,omitempty"`
 }
 type Broker struct {
-	Book     *ledger.Ledger
-	Identity *identity.Service
-	Runtime  string
+	Book      *ledger.Ledger
+	Identity  *identity.Service
+	Runtime   string
+	Limits    durable.Limits
+	WaitAfter time.Duration
+	scan      durable.Scanner
 	// CheckExecution checks the original task/attempt/generation and its lease
 	// inside request creation and client dispatch. It cannot adopt a newer turn.
 	CheckExecution func(*ledger.Tx, Invocation) error
@@ -96,11 +108,12 @@ type Broker struct {
 }
 
 func (b *Broker) Register(ctx context.Context, p identity.Principal, input Register) (out Registration, err error) {
+	input.Capabilities = append([]Capability(nil), input.Capabilities...)
 	if len(input.Capabilities) > 32 {
 		return out, errors.New("a client can register at most 32 capabilities")
 	}
 	seen := map[string]bool{}
-	for _, cap := range input.Capabilities {
+	for i, cap := range input.Capabilities {
 		if !identity.ValidName(cap.Name) || seen[cap.Name] || len(cap.Description) > 2048 || len(cap.InputSchema) > 16<<10 || !json.Valid(cap.InputSchema) {
 			return out, errors.New("invalid or duplicate capability")
 		}
@@ -109,6 +122,14 @@ func (b *Broker) Register(ctx context.Context, p identity.Principal, input Regis
 		if json.Unmarshal(cap.InputSchema, &schema) != nil || schema["type"] != "object" {
 			return out, errors.New("capability input schema must describe an object")
 		}
+		if len(cap.Version) > 128 {
+			return out, errors.New("capability version exceeds its limit")
+		}
+		canonical, err := durable.CanonicalJSON(cap.InputSchema)
+		if err != nil {
+			return out, err
+		}
+		input.Capabilities[i].InputSchema = canonical
 	}
 	err = b.Book.Update(ctx, func(tx *ledger.Tx) error {
 		grant, err := b.Identity.Check(tx, p)
@@ -271,16 +292,34 @@ func (b *Broker) Submit(ctx context.Context, p identity.Principal, input Request
 			}
 			return nil
 		}
-		_, permission, err := b.capability(tx, input)
+		if err := durable.CheckStateCapacityTx(tx, CallKind, "$.source", source, []string{StateApproval, StatePending, StateClaimed, StateUnknown}, b.Limits, 1); err != nil {
+			return err
+		}
+		client, permission, err := b.capability(tx, input)
 		if err != nil {
 			return err
 		}
-		if permission.Approval {
+		contract, digest, err := capabilityContract(client, input.Capability)
+		if err != nil {
+			return err
+		}
+		out.Contract = &contract
+		out.ContractDigest = digest
+		out.ClientPermission = &permission
+		if !p.Owner {
+			callerPermission, _ := requestPermission(grant, input)
+			out.CallerPermission = &callerPermission
+		}
+		if permission.Approval || out.CallerPermission != nil && out.CallerPermission.Approval {
 			out.State = StateApproval
 		} else {
 			out.Approved = true
 		}
 		if err := saveCall(tx, out); err != nil {
+			return err
+		}
+		out, _, err = durable.Get[Invocation](tx, CallKind, out.ID)
+		if err != nil {
 			return err
 		}
 		if out.State == StateApproval {
@@ -294,6 +333,16 @@ func (b *Broker) Submit(ctx context.Context, p identity.Principal, input Request
 }
 
 func saveCall(tx *ledger.Tx, call Invocation) error {
+	old, found, err := durable.Get[Invocation](tx, CallKind, call.ID)
+	if err != nil {
+		return err
+	}
+	if found {
+		call.Revision = old.Revision + 1
+	} else {
+		call.Revision = 1
+	}
+	call.UpdatedAt = time.Now().UTC()
 	if err := tx.PutBinding(CallKind, call.ID, call); err != nil {
 		return err
 	}
@@ -324,10 +373,16 @@ func (b *Broker) Approve(ctx context.Context, id string, allow bool) error {
 		if err != nil {
 			return err
 		}
+		if found && (allow && call.Approved || !allow && call.State == StateCancelled && !call.Approved) {
+			return nil
+		}
 		if !found || call.State != StateApproval {
 			return ledger.ErrConflict
 		}
 		if allow {
+			if err := b.checkUnclaimedTx(tx, call); err != nil && !errors.Is(err, ErrOffline) {
+				return err
+			}
 			call.State = StatePending
 			call.Approved = true
 		} else {
@@ -363,7 +418,10 @@ func (b *Broker) Poll(ctx context.Context, p identity.Principal, generation uint
 				return ledger.ErrConflict
 			}
 			client, _, err := b.capability(tx, call.Request)
-			if errors.Is(err, ErrCapabilityRemoved) || errors.Is(err, identity.ErrDenied) {
+			if err == nil {
+				err = b.checkUnclaimedTx(tx, call)
+			}
+			if permanentCallError(err) {
 				call.State = StateCancelled
 				call.Error = err.Error()
 				return saveCall(tx, call)
@@ -399,6 +457,10 @@ func (b *Broker) Poll(ctx context.Context, p identity.Principal, generation uint
 			call.ClaimUntil = time.Now().UTC().Add(time.Minute)
 			if err := saveCall(tx, call); err != nil {
 				return err
+			}
+			call.Revision++
+			if call.Revision == 0 {
+				call.Revision = 1
 			}
 			out = call
 			found = true

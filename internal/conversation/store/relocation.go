@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	turn "github.com/gopact-ai/steve/internal/turnapi"
 )
@@ -19,7 +19,7 @@ type relocationDriver interface {
 // A crash after persisting the exact plan choice must not ask for the same
 // authorization again. General recovery answers and free-form advice carry
 // no replacement authority and are deliberately excluded.
-func (s *Service) approvedRelocation(binding consoleapi.PendingQuestion, planID string) string {
+func (s *Service) approvedRelocation(binding conversationapi.PendingQuestion, planID string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	choice := "confirm-stopped-and-retry:" + planID

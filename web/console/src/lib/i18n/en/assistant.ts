@@ -34,7 +34,7 @@ export const assistantEn = {
     "assistant.revokeConfirm": "Revoke this connection? Further publishing, claiming and invoking will be denied. External actions already performed are not undone.",
     "assistant.tokenTitle": "Connection Credential",
     "assistant.tokenHint": "This credential appears once. Save it and provide it to this provider or client.",
-    "assistant.tokenLost": "The connection exists, but its credential cannot be shown again. Revoke it and enroll a new connection.",
+    "assistant.tokenLost": "The connection exists, but its credential cannot be shown again. Rotate this connection's credential to preserve its identity and processing receipts.",
     "assistant.save": "Save",
     "assistant.close": "Close",
     "assistant.edit": "Edit",

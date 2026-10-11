@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/protocol"
 )
 
@@ -27,9 +27,9 @@ func (s *Service) retryRecoveryStopLocked(e *queuedExchange) (*queuedExchange, e
 		}
 	}
 	if index < 0 {
-		return nil, consoleapi.ErrExchangeNotFound
+		return nil, conversationapi.ErrExchangeNotFound
 	}
-	if e.State != consoleapi.ExchangeFailed || e.Key == "" {
+	if e.State != conversationapi.ExchangeFailed || e.Key == "" {
 		return e, nil
 	}
 	address, parsed := s.parseInput(e.Input)
@@ -71,14 +71,14 @@ func (s *Service) retryRecoveryStopLocked(e *queuedExchange) (*queuedExchange, e
 		e.RecoveryStopTarget = &recoveryStopTarget{Conversation: e.Conversation, ExchangeID: found.ID, TaskID: foundTask, Requester: s.owner}
 	}
 	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
-		return nil, consoleapi.ErrConsoleClosing
+		return nil, conversationapi.ErrConsoleClosing
 	}
 	old := e
 	next := *e
 	e = &next
 	s.exchanges[e.Conversation][index] = e
 	ctx, cancel := context.WithCancel(s.exchangeContext(context.Background()))
-	e.State, e.ctx, e.cancel, e.done = consoleapi.ExchangeRunning, ctx, cancel, make(chan struct{})
+	e.State, e.ctx, e.cancel, e.done = conversationapi.ExchangeRunning, ctx, cancel, make(chan struct{})
 	s.running[e.Conversation]++
 	if err := s.save(); err != nil {
 		s.exchanges[e.Conversation][index] = old
@@ -103,14 +103,14 @@ func (s *Service) retryRecoveryStopLocked(e *queuedExchange) (*queuedExchange, e
 // owner. One that only waits on the stop of a task set aside is passed over
 // while a line runs past it, since the stop is then meant for that line.
 func (s *Service) recoveryStopCandidateLocked(conversation, controlID string, e *queuedExchange) bool {
-	if e.ID == controlID || (e.State != consoleapi.ExchangeRecovering && e.State != consoleapi.ExchangeAwaitingUser) {
+	if e.ID == controlID || (e.State != conversationapi.ExchangeRecovering && e.State != conversationapi.ExchangeAwaitingUser) {
 		return false
 	}
 	if !s.stopSettlingLocked(e) {
 		return true
 	}
 	for _, other := range s.exchanges[conversation] {
-		if other.ID != controlID && other.State == consoleapi.ExchangeRunning {
+		if other.ID != controlID && other.State == conversationapi.ExchangeRunning {
 			return false
 		}
 	}

@@ -41,7 +41,7 @@ func planQuestionBinding(ctx context.Context, cons *console.Service, tasks *task
 	}
 	conversation := tracked.Channel
 	exchange := ""
-	if console.IsConsole(conversation) {
+	if tracked.Transport == "console" {
 		if strings.HasPrefix(tracked.AnchorMessage, console.AnchorMark) {
 			exchange = strings.TrimPrefix(tracked.AnchorMessage, console.AnchorMark)
 		}
@@ -72,7 +72,7 @@ func localPlanQuestionBinding(ctx context.Context, cons *console.Service, tasks 
 		return consoleapi.PendingQuestion{}, true, errors.New("local plan question differs from its execution")
 	}
 	conversation := tracked.Channel
-	if !console.IsConsole(conversation) {
+	if tracked.Transport != "console" {
 		if conversation, err = recoveryConversationOf(ctx, cons, tracked); err != nil {
 			return consoleapi.PendingQuestion{}, true, err
 		}

@@ -18,7 +18,7 @@ import (
 
 func delegateQuestionBinding(ctx context.Context, cons *console.Service, binding delegate.QuestionBinding, requestID string) (consoleapi.PendingQuestion, error) {
 	conversation := binding.Conversation
-	if !console.IsConsole(conversation) {
+	if binding.Transport != "console" {
 		var err error
 		conversation, err = cons.EnsureRecoveryConversation(ctx, console.RecoveryConversation{ParentTaskID: binding.ParentTask, SourceChannel: sourceChannel(binding.Transport), SourceConversation: binding.Conversation, Project: binding.Project})
 		if err != nil {

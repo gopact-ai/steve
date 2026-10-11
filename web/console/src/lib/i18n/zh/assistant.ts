@@ -33,7 +33,7 @@ export const assistantZh = {
     "assistant.revokeConfirm": "撤销这个连接的授权？后续发布、领取和调用都会被拒绝。已经发生的外部动作不会撤回。",
     "assistant.tokenTitle": "连接凭据",
     "assistant.tokenHint": "凭据只显示一次。保存后交给这个插件或客户端。",
-    "assistant.tokenLost": "连接已接入，原凭据不会再次显示。请撤销这个连接，再重新接入。",
+    "assistant.tokenLost": "连接已接入，原凭据不会再次显示。请轮换当前连接的凭据，保留连接身份与处理回执。",
     "assistant.save": "保存",
     "assistant.close": "关闭",
     "assistant.edit": "编辑",

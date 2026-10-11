@@ -57,6 +57,10 @@ type data struct {
 // Create assigns the id and returns the stored copy. Goal is trimmed to keep
 // listings readable; the full prompt lives in the archive, not here.
 func (s *Store) Create(t Task) (Task, error) {
+	return s.CreateChecked(context.Background(), t, nil)
+}
+
+func (s *Store) CreateChecked(ctx context.Context, t Task, guard func(*ledger.Tx) error) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
@@ -88,7 +92,7 @@ func (s *Store) Create(t Task) (Task, error) {
 	next := s.draft()
 	next.NextID = s.data.NextID + 1
 	next.add(t.clone())
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceRecordsLocked(ctx, next, guard); err != nil {
 		return Task{}, err
 	}
 	return *t.clone(), nil

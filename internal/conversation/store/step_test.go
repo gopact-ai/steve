@@ -34,10 +34,10 @@ func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
 		Plan:      []consoleapi.PlanLine{{Text: "build", Status: "in_progress"}},
 		Tools:     []consoleapi.ToolCall{{ID: "tool-1", Name: "build", Status: "running"}},
 	}, consoleapi.StepInfo{Kind: "delegate", Goal: "build the release", State: "running"})
-	s.UpdateStep("main", "59", step)
+	s.UpdateExecutionStep("console:main", AnchorMark+first.ID, "59", step)
 	other := step
 	other.ID = "#60"
-	s.UpdateStep("main", "60", other)
+	s.UpdateExecutionStep("console:main", AnchorMark+first.ID, "60", other)
 	call.finish <- nil
 	<-first.done
 	if got := first.outcome.reply.Process; got == nil || len(got.Steps) != 2 || got.Steps[0].Model != "child-model" {
@@ -46,7 +46,7 @@ func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
 
 	// Late progress while idle updates the existing reply immediately.
 	step.Reasoning += "父回合已经结束"
-	s.UpdateStep("console:main", "59", step)
+	s.UpdateExecutionStep("console:main", AnchorMark+first.ID, "59", step)
 	second, _, err := s.enqueue(t.Context(), "main", "a different turn", nil, enqueueOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
 	step.Plan = []consoleapi.PlanLine{{Text: "build", Status: "completed"}}
 	step.Tools = []consoleapi.ToolCall{{ID: "tool-1", Name: "build", Status: "completed"}}
 	for range 100 {
-		s.UpdateStep("main", "59", step)
+		s.UpdateExecutionStep("console:main", AnchorMark+first.ID, "59", step)
 	}
 	<-encoded
 	if got := oldReplies[1].Process.Steps[0].State; got != "running" {
@@ -102,10 +102,12 @@ func TestParentAndLateChildTimelinesSurviveRestart(t *testing.T) {
 	doc := &memDoc{}
 	parentTimeline := []view.Span{{Kind: "text", Text: "parent narration", At: time.Now().UTC()}}
 	child := readmodel.FromStepProgress("#72", consoleapi.Progress{Timeline: []consoleapi.Span{{Kind: "thought", Text: "child thinking", At: time.Now().UTC()}}}, consoleapi.StepInfo{Kind: "delegate", State: "running"})
+	var sourceMessage string
 	var s *Service
 	s = New(stepHandler{answer: func(req turn.Request) turn.Result {
 		req.OnProgress(view.Progress{Timeline: parentTimeline})
-		s.UpdateStep(req.Source.ConversationID, "72", child)
+		sourceMessage = req.Source.MessageID
+		s.UpdateExecutionStep(req.Source.ConversationID, sourceMessage, "72", child)
 		return turn.Result{Text: "The reply remains the complete answer."}
 	}}, "owner", nil)
 	if err := s.Persist(doc); err != nil {
@@ -116,7 +118,7 @@ func TestParentAndLateChildTimelinesSurviveRestart(t *testing.T) {
 	}
 	child.State = "done"
 	child.Timeline = append(child.Timeline, consoleapi.Span{Kind: "text", Text: "child final", At: time.Now().UTC()})
-	s.UpdateStep("main", "72", child)
+	s.UpdateExecutionStep("console:main", sourceMessage, "72", child)
 	restored := New(turntest.IdleCoordinator{}, "owner", nil)
 	if err := restored.Persist(doc); err != nil {
 		t.Fatal(err)
@@ -154,7 +156,7 @@ func TestChildFinishesBetweenHandlerReturnAndReplySave(t *testing.T) {
 	step := readmodel.FromStepProgress("#59", consoleapi.Progress{Model: "child-model"}, consoleapi.StepInfo{Kind: "delegate", State: "running"})
 	var s *Service
 	s = New(stepHandler{answer: func(req turn.Request) turn.Result {
-		s.UpdateStep(req.Source.ConversationID, "59", step)
+		s.UpdateExecutionStep(req.Source.ConversationID, req.Source.MessageID, "59", step)
 		return turn.Result{Text: "parent finished", Attempt: "parent-attempt"}
 	}}, "owner", nil)
 	s.SetInspector(inspector)
@@ -168,7 +170,7 @@ func TestChildFinishesBetweenHandlerReturnAndReplySave(t *testing.T) {
 		t.Fatal("handler did not finish")
 	}
 	step.State, step.Answer = "done", "child finished after its parent returned"
-	s.UpdateStep("main", "59", step)
+	s.UpdateExecutionStep("console:main", AnchorMark+e.ID, "59", step)
 	close(inspector.release)
 	<-e.done
 	if got := s.Replies("main")[1].Process.Steps[0]; got.State != "done" || got.Answer != step.Answer {
@@ -185,15 +187,17 @@ func TestReplacementTurnKeepsSeparateChildrenWhileOldTurnFinishes(t *testing.T) 
 	}
 	oldCall := nextCall(t, h)
 	step := readmodel.FromStepProgress("#59", consoleapi.Progress{}, consoleapi.StepInfo{Kind: "delegate", State: "running"})
-	s.UpdateStep("main", "59", step)
+	s.UpdateExecutionStep("console:main", AnchorMark+first.ID, "59", step)
 	next, _, err := s.enqueue(t.Context(), "main", "!replacement", nil, enqueueOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	newCall := nextCall(t, h)
-	s.UpdateStep("main", "60", step)
+	other := step
+	other.ID = "#60"
+	s.UpdateExecutionStep("console:main", AnchorMark+next.ID, "60", other)
 	step.State = "done"
-	s.UpdateStep("main", "59", step)
+	s.UpdateExecutionStep("console:main", AnchorMark+first.ID, "59", step)
 	oldCall.finish <- nil
 	<-first.done
 	newCall.finish <- nil
@@ -203,5 +207,26 @@ func TestReplacementTurnKeepsSeparateChildrenWhileOldTurnFinishes(t *testing.T) 
 	}
 	if got := next.outcome.reply.Process.Steps; len(got) != 1 || got[0].ID != "#60" {
 		t.Fatalf("replacement lost or adopted another turn's child: %+v", got)
+	}
+}
+
+func TestStoredExecutionStepOwnsProducerBuffers(t *testing.T) {
+	snapshot := consoleapi.StepProcess{ID: "plan/build", Tools: []consoleapi.ToolCall{{Name: "original-tool"}}, Plan: []consoleapi.PlanLine{{Text: "original-plan"}}, Timeline: []consoleapi.Span{{Text: "original-timeline"}}, StepInfo: consoleapi.StepInfo{Refs: []string{"original-ref"}}}
+	var s *Service
+	s = New(stepHandler{answer: func(req turn.Request) turn.Result {
+		s.UpdateExecutionStep(req.Source.ConversationID, req.Source.MessageID, "task", snapshot)
+		snapshot.Tools[0].Name = "reused-tool"
+		snapshot.Plan[0].Text = "reused-plan"
+		snapshot.Timeline[0].Text = "reused-timeline"
+		snapshot.Refs[0] = "reused-ref"
+		return turn.Result{Text: "done"}
+	}}, "owner", nil)
+	reply, err := s.Send(t.Context(), "main", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := reply.Process.Steps[0]
+	if got.Tools[0].Name != "original-tool" || got.Plan[0].Text != "original-plan" || got.Timeline[0].Text != "original-timeline" || got.Refs[0] != "original-ref" {
+		t.Fatalf("producer rewrote observed history: %+v", got)
 	}
 }

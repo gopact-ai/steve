@@ -39,14 +39,14 @@ func TestDependenciesRespectDomainAndTransportBoundaries(t *testing.T) {
 			if owner == "gateway" && (dependency == "channel/feishu" || top == "card" || top == "turn") {
 				t.Errorf("%s: channel core imports provider/execution implementation %s", rel, dependency)
 			}
-			if owner == "conversation" && (top == "turn" || top == "gateway" || dependency == "channel/feishu") {
+			if owner == "conversation" && (top == "turn" || top == "gateway" || top == "consoleapi" || top == "readmodel" || dependency == "channel/feishu") {
 				t.Errorf("%s: conversation imports execution/provider implementation %s", rel, dependency)
 			}
 			// app is the composition root; other implementations consume API ports.
 			if top == "httpapi" && owner != "httpapi" && owner != "app" {
 				t.Errorf("%s: implementation imports HTTP transport %s", rel, dependency)
 			}
-			if owner == "consoleapi" && (top == "app" || top == "admin" || top == "cluster" || top == "httpapi" || top == "readmodel" || top == "console" || top == "gateway" || top == "turn") {
+			if (owner == "consoleapi" || owner == "conversationapi") && (top == "app" || top == "admin" || top == "cluster" || top == "httpapi" || top == "readmodel" || top == "console" || top == "gateway" || top == "turn") {
 				t.Errorf("%s: API contract imports implementation %s", rel, dependency)
 			}
 			if domains[owner] && (top == "app" || top == "admin" || top == "cluster" || top == "httpapi" || top == "consoleapi" || top == "readmodel" || top == "console" || top == "gateway" || top == "turn" || top == "delegate" || top == "exec") {

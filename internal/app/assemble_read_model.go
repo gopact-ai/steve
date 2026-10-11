@@ -10,11 +10,9 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ability"
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
-	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/readmodel"
-	steveview "github.com/gopact-ai/steve/internal/view"
 )
 
 func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, machines fleetAssembly, modelInfo modelsAssembly, work executionAssembly, planning plansAssembly) (readModelAssembly, error) {
@@ -36,7 +34,6 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 	plans := work.Plans()
 	schedules := work.Schedules()
 	tasks := work.Tasks()
-	stepRunner := planning.StepRunner()
 
 	// One read model, two renderers. `steve top` and the browser are both
 	// clients of this; neither reads the stores directly, so what the
@@ -101,13 +98,7 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 			})
 		}
 	}))
-	stepRunner.SetObserver(func(req exec.StepRequest, p steveview.Progress, ended bool) {
-		if ended {
-			view.StepEnded(req.TaskID, req.PlanID, req.StepID, req.Agent, req.Node, p)
-			return
-		}
-		view.StepProgress(req.TaskID, req.PlanID, req.StepID, req.Agent, req.Node, p)
-	})
+
 	return &readModelValues{repos: repos, shipper: shipper, view: view}, nil
 }
 

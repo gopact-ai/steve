@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/control"
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -97,7 +98,15 @@ func (s *applicationConfiguration) SaveContext(parent context.Context, path stri
 	if err != nil {
 		return err
 	}
-	next, err := s.store.SaveWithGuard(ctx, s.value.Revision, candidate, func(tx *ledger.Tx) error { return agentmcp.AuthorizeContext(ctx, applicationMCPTx{tx}) })
+	next, err := s.store.SaveWithGuard(ctx, s.value.Revision, candidate, func(tx *ledger.Tx) error {
+		if err := agentmcp.AuthorizeContext(ctx, applicationMCPTx{tx}); err != nil {
+			return err
+		}
+		if guard := control.MutationGuard(ctx); guard != nil {
+			return guard(tx)
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}

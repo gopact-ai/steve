@@ -1,14 +1,6 @@
 package consoleapi
 
-import "context"
+import "github.com/gopact-ai/steve/internal/conversationapi"
 
-// Abandonment distinguishes an accepted accounting decision from completion of
-// its session projection. Neither outcome claims that the original writer died.
-type Abandonment struct {
-	Accepted bool `json:"accepted"`
-	Pending  bool `json:"pending"`
-}
-
-type Abandons interface {
-	Abandon(context.Context, string, uint64) (Abandonment, error)
-}
+type Abandonment = conversationapi.Abandonment
+type Abandons = conversationapi.Abandons

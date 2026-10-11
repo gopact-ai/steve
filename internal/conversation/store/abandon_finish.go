@@ -7,13 +7,13 @@ import (
 	"slices"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 )
 
 // finishAbandonmentLocked commits the receipt, reply and terminal input before
 // publishing or releasing any waiter. A refusal restores only memory: the
 // durable abandonment remains queued for another reconciliation pass.
-func (s *Service) finishAbandonmentLocked(target *queuedExchange, receipt consoleapi.Reply) error {
+func (s *Service) finishAbandonmentLocked(target *queuedExchange, receipt conversationapi.Reply) error {
 	if target.RecoveryAbandon != nil && target.RecoveryAbandon.AttemptID != receipt.AttemptID {
 		return errors.New("abandonment receipt belongs to another execution")
 	}
@@ -21,7 +21,7 @@ func (s *Service) finishAbandonmentLocked(target *queuedExchange, receipt consol
 	priorReplies := slices.Clone(s.replies[target.Conversation])
 	priorExchanges := slices.Clone(s.exchanges[target.Conversation])
 	priorQuestions := maps.Clone(s.questions)
-	var interrupted []consoleapi.PendingQuestion
+	var interrupted []conversationapi.PendingQuestion
 	for id, q := range s.questions {
 		if q.ExchangeID == target.ID && q.State == "pending" {
 			q.State, q.UpdatedAt = "interrupted", time.Now().UTC()
@@ -40,7 +40,7 @@ func (s *Service) finishAbandonmentLocked(target *queuedExchange, receipt consol
 	}
 	receipt = s.recordLocked(receipt)
 	target.RecoveryAbandon, target.Receipt = &receipt, &receipt
-	target.ReplyID, target.State = receipt.ID, consoleapi.ExchangeCancelled
+	target.ReplyID, target.State = receipt.ID, conversationapi.ExchangeCancelled
 	target.outcome = outcome{reply: receipt}
 	s.trimExchangesLocked(target.Conversation)
 	if err := s.save(); err != nil {
@@ -53,7 +53,7 @@ func (s *Service) finishAbandonmentLocked(target *queuedExchange, receipt consol
 	return nil
 }
 
-func (s *Service) publishAbandonmentLocked(target *queuedExchange, receipt consoleapi.Reply, interrupted []consoleapi.PendingQuestion) {
+func (s *Service) publishAbandonmentLocked(target *queuedExchange, receipt conversationapi.Reply, interrupted []conversationapi.PendingQuestion) {
 	delete(s.processes, target.ID)
 	if target.cancel != nil {
 		target.cancel()

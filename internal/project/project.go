@@ -611,6 +611,10 @@ func (s *Store) Binding(ctx context.Context, conversationID string) (Binding, bo
 // a compare-and-set on the binding's name, so two concurrent switches
 // cannot both believe they won.
 func (s *Store) Bind(ctx context.Context, conversationID, projectID, by string) (Binding, error) {
+	return s.BindChecked(ctx, conversationID, projectID, by, nil)
+}
+
+func (s *Store) BindChecked(ctx context.Context, conversationID, projectID, by string, guard func(*ledger.Tx) error) (Binding, error) {
 	if _, ok, err := s.Get(ctx, projectID); err != nil {
 		return Binding{}, err
 	} else if !ok {
@@ -622,6 +626,11 @@ func (s *Store) Bind(ctx context.Context, conversationID, projectID, by string) 
 	}
 	b := Binding{ConversationID: conversationID, ProjectID: projectID, By: by, At: s.now().UTC()}
 	err = s.l.Update(ctx, func(tx *ledger.Tx) error {
+		if guard != nil {
+			if err := guard(tx); err != nil {
+				return err
+			}
+		}
 		version, err := tx.CompareAndSetName(bindingNameBase+conversationID+"/project", current.Version, projectID)
 		if err != nil {
 			return err
@@ -812,6 +821,10 @@ func normalizeGrant(projectID, principal string, role Role, by string, at time.T
 
 // Grant records a principal's role in a project.
 func (s *Store) Grant(ctx context.Context, projectID, principal string, role Role, by string) (Grant, error) {
+	return s.GrantChecked(ctx, projectID, principal, role, by, nil)
+}
+
+func (s *Store) GrantChecked(ctx context.Context, projectID, principal string, role Role, by string, guard func(*ledger.Tx) error) (Grant, error) {
 	var policyErr error
 	principal, policyErr = s.Principal(ctx, principal, "")
 	if policyErr != nil {
@@ -830,7 +843,14 @@ func (s *Store) Grant(ctx context.Context, projectID, principal string, role Rol
 	if by == "config" {
 		kind = kindConfigGrant
 	}
-	return g, s.l.PutBinding(ctx, kind, projectID+"/"+g.Principal, g)
+	return g, s.l.Update(ctx, func(tx *ledger.Tx) error {
+		if guard != nil {
+			if err := guard(tx); err != nil {
+				return err
+			}
+		}
+		return tx.PutBinding(kind, projectID+"/"+g.Principal, g)
+	})
 }
 
 // Grants lists a project's grants.
@@ -946,11 +966,20 @@ func (s *Store) ProposeDisclosure(ctx context.Context, req DisclosureRequest) er
 
 // ResolveDisclosure is the owner's decision.
 func (s *Store) ResolveDisclosure(ctx context.Context, id string, approved bool, by string) error {
+	return s.ResolveDisclosureChecked(ctx, id, approved, by, nil)
+}
+
+func (s *Store) ResolveDisclosureChecked(ctx context.Context, id string, approved bool, by string, guard func(*ledger.Tx) error) error {
 	to := DisclosureDenied
 	if approved {
 		to = DisclosureApproved
 	}
 	_, err := s.l.Transition(ctx, id, DisclosureProposed, to, by, nil, nil, func(tx *ledger.Tx, op *ledger.Operation) error {
+		if guard != nil {
+			if err := guard(tx); err != nil {
+				return err
+			}
+		}
 		var req DisclosureRequest
 		if err := json.Unmarshal(op.Data, &req); err != nil {
 			return err

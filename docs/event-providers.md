@@ -23,8 +23,9 @@ The owner uses **Connections & Events → Connections** or
 The response contains `grant` and a bearer `token`. Only a credential digest is
 stored; the credential is returned once. Repeating enrollment with the same
 key and declaration returns the existing grant with an empty token. A changed
-declaration conflicts. After response loss, revoke the old connection and enroll
-with a new key. Do not pass an owner token to a provider/client. Connections
+enrollment declaration conflicts. The connection's ID and principal remain its
+logical identity when credentials or scopes change; do not reinstall a provider
+to recover a lost secret. Do not pass an owner token to a provider/client. Connections
 cannot use `/console/*`; owner tokens cannot substitute for connection credentials
 on `/services/*`. Revocation applies to new requests and is reread inside protected
 transactions and Work admission.
@@ -34,6 +35,82 @@ Native project grants and existing channel actor IDs retain their old meanings.
 Connection IDs are separate principals; matching a native actor's string confers
 no authority. Work is explicitly delegated owner intelligence within a named
 conversation/project pair, not a new external user's identity.
+
+Owners rotate a lost or compromised credential with
+`POST /console/connections/{id}/credential`:
+
+```json
+{"revision":1,"idempotency_key":"recover-mail-credential-1"}
+```
+
+Use the grant's `credential_revision` as `revision`. The response contains the
+same `grant` identity and a replacement `token`, returned once. The old token and
+requests authenticated with its old generation lose authority inside protected
+transactions. An identical rotation retry returns an empty token without
+rotating again. If that response was lost, read the grant's current revision and
+rotate again with a new operation key. Existing event IDs, subscriptions, claims,
+Work and client registrations retain their identities. Accepted background
+records recheck their live grant scope rather than inheriting a bearer secret.
+Legacy connections and their string credential receipts remain valid at
+revision zero until explicitly rotated.
+
+`PUT /console/connections/{id}/scope` edits a stable connection's complete scope:
+
+```json
+{
+  "revision":1,
+  "name":"Mail provider",
+  "event_types":["mail.received"],
+  "work":{"console:mail":"scratch"},
+  "capabilities":[]
+}
+```
+
+Use `scope_revision`, which is independent of credential revisions. Omitted
+scope collections remove those delegations. The connection kind, ID and principal
+stay fixed. An identical lost-response save is idempotent; a stale changed save
+returns 409. Native client grants can advertise only their own client ID (empty
+`client` is filled with that ID). Enrollment retries keep their original request
+receipt and return the current grant. Scope edits, enrollment, rotation and
+retirement have secret-free audit records at `GET /console/connection-audit`.
+Revocation retires a connection; rotation or scope editing cannot reactivate it.
+
+## Provider discovery and health
+
+An externally managed provider can register its plugin metadata and versioned
+event contracts with `POST /services/provider/register`:
+
+```json
+{
+  "generation":0,
+  "plugin_id":"mail.host",
+  "version":"1.0.0",
+  "events":[{
+    "type":"mail.received",
+    "version":"1",
+    "description":"A newly received mailbox message",
+    "schema":{"type":"object","properties":{"subject":{"type":"string"}}}
+  }]
+}
+```
+
+Registration stays attached to the existing grant ID and cannot expand its event
+scope. It describes at most 64 unique event types, each with a bounded JSON Schema
+object. The server canonicalizes schema JSON and computes each contract's digest;
+the same provider/type/version cannot later describe different content, even
+after removal and reintroduction. Bump the contract version for an incompatible
+change. Schemas are discovery metadata; publishers and consumers perform their
+own payload validation. Registration does not install or start plugin code.
+
+Reconnect using the last observed registration generation. An identical
+lost-response retry returns that registration. Heartbeat every 15 seconds with
+`POST /services/provider/heartbeat` and `{"generation":1}`; availability expires
+after 45 seconds. Credential rotation retains this generation. A stale generation
+cannot refresh another provider process's health. `GET /services/provider` returns
+the caller's declaration; owners inspect keyset pages at
+`GET /console/event-providers?cursor=...`, including current online/offline/retired
+state. Existing providers without a registration keep their unversioned protocol
+and are reported as unregistered rather than guessed to be offline.
 
 ## Publish, subscribe and handle
 
@@ -48,6 +125,15 @@ JSON data (maximum 256 KiB):
   "payload": {"from": "sender@example.invalid", "subject": "Meeting"}
 }
 ```
+
+Registered providers may include `"schema_version":"1"` to select the advertised
+contract explicitly; omission selects the current declaration. First acceptance
+freezes its version, description, schema and digest on the event's `contract`.
+An unregistered legacy provider may omit the version. A withdrawn or incompatible
+explicit version cannot create a new event. Retrying the same immutable source/key
+request returns its original contract, even after a newer provider registration;
+the server-selected digest is not part of the publisher's request fingerprint.
+Changing an explicitly supplied version under an accepted key returns 409.
 
 The authenticated source is fixed by the server. Reusing the key with changed
 content or authority returns 409; the same immutable request returns its original

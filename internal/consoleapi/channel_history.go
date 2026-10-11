@@ -3,6 +3,7 @@ package consoleapi
 import (
 	"context"
 	"errors"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 )
 
 var (
@@ -11,9 +12,7 @@ var (
 )
 
 // ExchangeIdentity resolves the authoritative owner before queue controls run.
-type ExchangeIdentity interface {
-	ExchangeConversation(id string) (string, bool)
-}
+type ExchangeIdentity = conversationapi.ExchangeIdentity
 
 // ChannelHistory is a read-only projection of accepted channel inputs.
 // IDs remain opaque transport identities, never console-prefixed aliases.

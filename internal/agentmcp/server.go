@@ -162,6 +162,8 @@ type sentState struct {
 }
 
 type Server struct {
+	platformAuthority func(context.Context, Binding, bool) error
+
 	// text says the server's own words — milestone footers and tool
 	// replies — in the configured language.
 	text     i18n.Catalog

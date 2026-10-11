@@ -17,7 +17,7 @@ import (
 // summarise yesterday" are the whole surface: the spec is whatever leads, the
 // instruction is the rest, and the instruction is stored verbatim so it fires
 // as the message the user would have typed themselves.
-func (c commands) scheduleCmd(req Request, selected agent.Agent, cmd protocol.Command, rest string) Result {
+func (c commands) scheduleCmd(ctx context.Context, req Request, selected agent.Agent, cmd protocol.Command, rest string) Result {
 	title := c.text.T(i18n.CardSchedules)
 	if req.Source.Origin != "" {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleNotCreatedAutomatic)}
@@ -42,14 +42,14 @@ func (c commands) scheduleCmd(req Request, selected agent.Agent, cmd protocol.Co
 	if req.Source.Channel == "" {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleNotCreatedNoChannel)}
 	}
-	binding, err := c.bindingFor(context.Background(), req)
+	binding, err := c.bindingFor(ctx, req)
 	if err != nil {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleNotCreated, err.Error())}
 	}
 	if err := checkScheduledProject(req.Admission.ExpectedProject, binding.ProjectID); err != nil {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleNotCreated, err.Error())}
 	}
-	created, err := c.schedules.Create(schedule.Job{
+	created, err := c.controls.CreateSchedule(ctx, req, schedule.Job{
 		Channel: req.Source.Channel, ProjectID: binding.ProjectID,
 		ConversationID: req.Source.ConversationID,
 		ChatID:         req.Reply.ChatID,
@@ -72,7 +72,7 @@ func (c commands) scheduleCmd(req Request, selected agent.Agent, cmd protocol.Co
 // schedulesCmd lists and cancels. It reuses the task verbs on purpose: one
 // vocabulary for "show me" and "call it off", whichever kind of standing work
 // the user has in mind.
-func (c commands) schedulesCmd(req Request, rest string) Result {
+func (c commands) schedulesCmd(ctx context.Context, req Request, rest string) Result {
 	title := c.text.T(i18n.CardSchedules)
 	fields := strings.Fields(rest)
 	if verdict, ok := firingVerdict(fields); ok {
@@ -84,7 +84,7 @@ func (c commands) schedulesCmd(req Request, rest string) Result {
 		if req.Actor.ID == "" || (req.Actor.ID != job.Requester && !c.isOwner(req)) {
 			return Result{Title: title, Text: c.text.T(i18n.ScheduleResolveForbidden)}
 		}
-		if err := c.schedules.ResolveFiring(id, verdict, req.Actor.ID); err != nil {
+		if err := c.controls.ResolveSchedule(ctx, req, id, verdict); err != nil {
 			return Result{Title: title, Text: err.Error()}
 		}
 		if verdict == "retry" {
@@ -97,9 +97,12 @@ func (c commands) schedulesCmd(req Request, rest string) Result {
 		return Result{Title: title, Text: c.text.T(i18n.ScheduleUsage, protocol.CommandEvery)}
 	}
 	if verb == taskCancel {
-		return c.cancelSchedule(req.Source.ConversationID, id, title)
+		return c.cancelSchedule(ctx, req, id, title)
 	}
-	jobs := c.schedules.List(req.Source.ConversationID)
+	jobs, err := c.controls.ListSchedules(ctx, req)
+	if err != nil {
+		return Result{Title: title, Text: err.Error()}
+	}
 	if len(jobs) == 0 {
 		return Result{Title: title, Text: c.text.T(i18n.SchedulesEmpty, protocol.CommandEvery)}
 	}
@@ -141,7 +144,8 @@ func firingVerdict(fields []string) (string, bool) {
 	return "", false
 }
 
-func (c commands) cancelSchedule(conversationID, id, title string) Result {
+func (c commands) cancelSchedule(ctx context.Context, req Request, id, title string) Result {
+	conversationID := req.Source.ConversationID
 	if id == "" {
 		return Result{Title: title, Text: c.text.T(i18n.ScheduleUsage, protocol.CommandSchedules)}
 	}
@@ -150,7 +154,7 @@ func (c commands) cancelSchedule(conversationID, id, title string) Result {
 	if job, ok := c.schedules.Get(id); !ok || job.ConversationID != conversationID {
 		return Result{Title: title, Text: c.text.T(i18n.ScheduleUnknown, id)}
 	}
-	removed, ok, err := c.schedules.Delete(id)
+	removed, ok, err := c.controls.CancelSchedule(ctx, req, id)
 	if err != nil {
 		return Result{Title: title, Text: c.text.T(i18n.ScheduleCancelFailed, id, err)}
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -24,6 +25,11 @@ func (c commands) taskComplete(ctx context.Context, req Request, title string, t
 			return task.ErrCompleteRoot
 		}
 		guard := func(tx *ledger.Tx, ids map[string]bool) error {
+			if check := c.controls.TaskGuard(req, current.ID, project.RoleWrite); check != nil {
+				if err := check(tx); err != nil {
+					return err
+				}
+			}
 			return c.checkTaskCompletionTx(tx, ids, current.Channel, req.Admission.ExchangeID, false)
 		}
 		_, err := c.tasks.CompleteRoot(ctx, current.ID, current.Channel, guard)

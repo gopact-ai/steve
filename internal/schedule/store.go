@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -43,6 +44,7 @@ const MaxPerConversation = 8
 
 // Store persists jobs and their firings in one ledger document.
 type Store struct {
+	book   *ledger.Ledger
 	doc    ledger.Doc
 	mu     sync.Mutex
 	data   data
@@ -59,7 +61,7 @@ type data struct {
 // OpenLedger keeps the store in the ledger.
 func OpenLedger(l *ledger.Ledger) (*Store, error) {
 	doc := l.Document("schedules")
-	s := &Store{doc: doc, data: data{NextID: 1, Jobs: map[string]*Job{}, Firings: map[string]*Firing{}}, now: time.Now, active: map[string]bool{}}
+	s := &Store{book: l, doc: doc, data: data{NextID: 1, Jobs: map[string]*Job{}, Firings: map[string]*Firing{}}, now: time.Now, active: map[string]bool{}}
 	raw, ok, err := doc.Load()
 	if err != nil {
 		return nil, fmt.Errorf("read schedules: %w", err)
@@ -91,6 +93,10 @@ func OpenLedger(l *ledger.Ledger) (*Store, error) {
 // can never fire again, so a schedule the user cannot see working is rejected
 // at the moment they can still fix it.
 func (s *Store) Create(job Job) (Job, error) {
+	return s.CreateChecked(context.Background(), job, nil)
+}
+
+func (s *Store) CreateChecked(ctx context.Context, job Job, guard func(*ledger.Tx, Job) error) (Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
@@ -113,7 +119,11 @@ func (s *Store) Create(job Job) (Job, error) {
 	replacement := s.clone()
 	replacement.NextID = s.data.NextID + 1
 	replacement.Jobs[job.ID] = &job
-	if err := s.replaceLocked(replacement); err != nil {
+	var check func(*ledger.Tx) error
+	if guard != nil {
+		check = func(tx *ledger.Tx) error { return guard(tx, job) }
+	}
+	if err := s.replaceCheckedLocked(ctx, replacement, check); err != nil {
 		return Job{}, err
 	}
 	return job, nil
@@ -154,6 +164,10 @@ func (s *Store) Get(id string) (Job, bool) {
 // tombstone: unlike a task it has no history worth keeping — the runs it
 // produced are already tasks of their own.
 func (s *Store) Delete(id string) (Job, bool, error) {
+	return s.DeleteChecked(context.Background(), id, nil)
+}
+
+func (s *Store) DeleteChecked(ctx context.Context, id string, guard func(*ledger.Tx, Job) error) (Job, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	stored, ok := s.data.Jobs[id]
@@ -174,7 +188,12 @@ func (s *Store) Delete(id string) (Job, bool, error) {
 		}
 	}
 	delete(replacement.Jobs, id)
-	if err := s.replaceLocked(replacement); err != nil {
+	if err := s.replaceCheckedLocked(ctx, replacement, func(tx *ledger.Tx) error {
+		if guard != nil {
+			return guard(tx, removed)
+		}
+		return nil
+	}); err != nil {
 		return Job{}, false, err
 	}
 	return removed, true, nil
@@ -221,4 +240,27 @@ func (s *Store) replaceLocked(next data) error {
 	}
 	s.data = next
 	return nil
+}
+
+func (s *Store) replaceCheckedLocked(ctx context.Context, next data, guard func(*ledger.Tx) error) error {
+	if guard == nil {
+		return s.replaceLocked(next)
+	}
+	if s.book == nil {
+		return fmt.Errorf("schedule: checked mutation requires its ledger")
+	}
+	raw, err := json.MarshalIndent(next, "", "  ")
+	if err != nil {
+		return err
+	}
+	err = s.book.Update(ctx, func(tx *ledger.Tx) error {
+		if err := guard(tx); err != nil {
+			return err
+		}
+		return tx.StoreDocument("schedules", raw)
+	})
+	if err == nil {
+		s.data = next
+	}
+	return err
 }

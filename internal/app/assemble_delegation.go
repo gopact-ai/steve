@@ -13,9 +13,11 @@ import (
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/agentmcp"
+	"github.com/gopact-ai/steve/internal/attempt"
 	messagechannel "github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/delegate"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/readmodel"
@@ -108,7 +110,7 @@ func assembleDelegation(life lifetime, input inputAssembly, boot runtimeAssembly
 		}
 		delegation.RecoveryQuiet = time.Duration(cfg.Gateway.RecoveryQuiet)
 		delegation.RegisterIdle = nodes.RegisterIdle
-		delegation.SetObserver(delegateObserver(ctx, boot.NodeName(), admin, view, cons))
+		delegation.SetObserver(delegateObserver(ctx, boot.NodeName(), admin, view, cons, tasks, attempts))
 		gate.SetDelegator(delegation)
 		wireDelegateDelivery(delegation, taskChannels)
 		messaging = messagingCallbacks{
@@ -208,7 +210,7 @@ func readPort(path string) int {
 	return port
 }
 
-func delegateObserver(ctx context.Context, hub string, admin *adminsvc.Service, view *readmodel.Model, cons *console.Service) func(delegate.Child, steveview.Progress) {
+func delegateObserver(ctx context.Context, hub string, admin *adminsvc.Service, view *readmodel.Model, cons *console.Service, tasks *task.Store, attempts *attempt.Service) func(delegate.Child, steveview.Progress) {
 	return func(c delegate.Child, p steveview.Progress) {
 		where := c.Node
 		if where == "" {
@@ -221,12 +223,19 @@ func delegateObserver(ctx context.Context, hub string, admin *adminsvc.Service, 
 				info.Attempt, info.Files = changes.Attempt, changes.Files
 			}
 		}
-		view.DelegateProgress(c.Task, c.Agent, where, info, p)
 		if c.Transport == "console" {
-			progress := readmodel.FromProgress(p)
-			progress.Agent, progress.Node = c.Agent, where
-			cons.UpdateStep(c.Conversation, c.Task, readmodel.FromStepProgress("#"+c.Task, progress, info))
+			child, found := tasks.Header(c.Task)
+			if found && child.Parent == c.ParentTask && child.AuthorizationAttempt != "" {
+				original, err := attempts.Get(context.WithoutCancel(ctx), child.AuthorizationAttempt)
+				if err == nil && original.TaskID == c.ParentTask && child.Channel == c.Conversation {
+					progress := conversationapi.FromProgress(p)
+					progress.Agent, progress.Node = c.Agent, where
+					cons.UpdateExecutionStep(c.Conversation, original.TurnID, c.Task,
+						conversationapi.FromStepProgress("#"+c.Task, progress, info))
+				}
+			}
 		}
+		view.DelegateProgress(c.Task, c.Agent, where, info, p)
 	}
 }
 

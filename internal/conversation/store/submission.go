@@ -7,7 +7,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 )
 
 func clientKey(id string) string {
@@ -44,7 +44,7 @@ func (s *Service) submittedLocked(conversation, key, hash string) (*queuedExchan
 			// Platform delivery keys retain their original first-write-wins
 			// contract; client keys are bound to one immutable submission.
 			if strings.HasPrefix(key, "client:") && e.PayloadHash != hash {
-				return nil, consoleapi.ErrCommandConflict
+				return nil, conversationapi.ErrCommandConflict
 			}
 			return e, nil
 		}
@@ -52,7 +52,7 @@ func (s *Service) submittedLocked(conversation, key, hash string) (*queuedExchan
 	return nil, nil
 }
 
-func replyOutcome(reply consoleapi.Reply) outcome {
+func replyOutcome(reply conversationapi.Reply) outcome {
 	out := outcome{reply: reply}
 	if reply.Error != "" {
 		out.err = errors.New(reply.Error)

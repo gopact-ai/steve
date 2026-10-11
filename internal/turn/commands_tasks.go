@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
 	"strings"
@@ -31,9 +32,18 @@ func (c commands) tasksCmd(ctx context.Context, req Request, rest string) (Resul
 		return Result{Title: title, Text: c.text.T(i18n.TasksUsage, protocol.CommandTasks)}, nil
 	}
 	if verb == taskList {
-		return c.tasksList(req, title), nil
+		return c.tasksList(ctx, req, title)
 	}
 	tracked, found := c.taskTarget(req, id, verb)
+	if found {
+		want := project.RoleWrite
+		if verb == taskShow {
+			want = project.RoleRead
+		}
+		if _, checkErr := c.controls.Task(ctx, req, tracked.ID, want); checkErr != nil {
+			return Result{}, checkErr
+		}
+	}
 	if !found {
 		if verb == taskComplete || verb == taskResume {
 			text := c.text.T(i18n.TaskNone)
@@ -55,19 +65,19 @@ func (c commands) tasksCmd(ctx context.Context, req Request, rest string) (Resul
 	case taskShow:
 		return Result{Title: title, Text: c.taskDetail(tracked)}, nil
 	case taskPause:
-		return c.taskSetAside(ctx, title, tracked, task.StatePaused), nil
+		return c.taskSetAside(ctx, title, tracked, task.StatePaused)
 	case taskCancel:
-		return c.taskSetAside(ctx, title, tracked, task.StateCancelled), nil
+		return c.taskSetAside(ctx, title, tracked, task.StateCancelled)
 	case taskResume:
 		return c.taskPickUp(ctx, req, title, tracked)
 	case taskComplete:
 		return c.taskComplete(ctx, req, title, tracked)
 	case taskHandled:
-		return c.taskSettle(title, tracked, task.SettlementHandled), nil
+		return c.taskSettle(ctx, req, title, tracked, task.SettlementHandled)
 	case taskIgnored:
-		return c.taskSettle(title, tracked, task.SettlementIgnored), nil
+		return c.taskSettle(ctx, req, title, tracked, task.SettlementIgnored)
 	case taskReopen:
-		return c.taskSettle(title, tracked, ""), nil
+		return c.taskSettle(ctx, req, title, tracked, "")
 	}
 	return Result{Title: title, Text: c.text.T(i18n.TasksUsage, protocol.CommandTasks)}, nil
 }
@@ -81,7 +91,7 @@ func (c commands) taskTarget(req Request, id string, verb taskVerb) (task.Task, 
 		// Background work may have no conversation to scope. It still
 		// belongs to its recorded transport; missing transport is not
 		// permission for a console or chat adapter to claim the task.
-		if !ok || tracked.Transport != req.Source.Channel || tracked.Channel != "" && tracked.Channel != req.Source.ConversationID {
+		if !ok || tracked.Transport != req.Source.Channel || (tracked.Channel == "" || tracked.Channel != req.Source.ConversationID) {
 			return task.Task{}, false
 		}
 		return tracked, true
@@ -137,27 +147,30 @@ func (c commands) taskTarget(req Request, id string, verb taskVerb) (task.Task, 
 // taskSetAside pauses or cancels, in that order: move the record first so a
 // turn that happens to finish during the stop cannot flip the task back to
 // running, then stop the turn that is actually burning time.
-func (c commands) taskSetAside(ctx context.Context, title string, tracked task.Task, to task.State) Result {
-	result, _, _ := c.setTaskAside(ctx, title, tracked, to, false)
-	return result
+func (c commands) taskSetAside(ctx context.Context, title string, tracked task.Task, to task.State) (Result, error) {
+	result, _, err := c.setTaskAside(ctx, title, tracked, to, false)
+	return result, err
 }
 
 // taskSettle records what the user decided about a failed task: they dealt
 // with it, or it does not matter, or they want it back in front of them. The
 // task keeps its state — the record has to keep saying the work failed — so
 // this writes the decision beside it rather than moving it somewhere tidier.
-func (c commands) taskSettle(title string, tracked task.Task, as task.Settlement) Result {
-	settled, err := c.tasks.Settle(tracked.ID, as)
+func (c commands) taskSettle(ctx context.Context, req Request, title string, tracked task.Task, as task.Settlement) (Result, error) {
+	settled, err := c.controls.Settle(ctx, req, tracked.ID, as)
 	if err != nil {
-		return Result{Title: title, Text: c.text.T(i18n.TaskSettleState, tracked.ID, statusMark(tracked.State))}
+		if errors.Is(err, task.ErrSettleState) {
+			return Result{Title: title, Text: c.text.T(i18n.TaskSettleState, tracked.ID, statusMark(tracked.State))}, nil
+		}
+		return Result{}, err
 	}
 	switch as {
 	case task.SettlementHandled:
-		return Result{Title: title, Text: c.text.T(i18n.TaskHandled, settled.ID, protocol.CommandTasks)}
+		return Result{Title: title, Text: c.text.T(i18n.TaskHandled, settled.ID, protocol.CommandTasks)}, nil
 	case task.SettlementIgnored:
-		return Result{Title: title, Text: c.text.T(i18n.TaskIgnored, settled.ID, protocol.CommandTasks)}
+		return Result{Title: title, Text: c.text.T(i18n.TaskIgnored, settled.ID, protocol.CommandTasks)}, nil
 	}
-	return Result{Title: title, Text: c.text.T(i18n.TaskReopened, settled.ID)}
+	return Result{Title: title, Text: c.text.T(i18n.TaskReopened, settled.ID)}, nil
 }
 
 // Reserve the turn slot until re-entry is accepted and the task is running.
@@ -227,7 +240,7 @@ func (c commands) taskPickUp(ctx context.Context, req Request, title string, tra
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	moved, err := c.tasks.Resume(tracked.ID, tracked.ExecutionEpoch, tracked.State, admission)
+	moved, err := c.controls.Resume(ctx, req, tracked, admission)
 	if err != nil {
 		return result, err
 	}
@@ -243,10 +256,13 @@ func (c commands) taskPickUp(ctx context.Context, req Request, title string, tra
 // tasksList is what this conversation has been working on. The listing is the
 // whole point of a task outliving its turn, so it is a command rather than
 // something only the debug API can see.
-func (c commands) tasksList(req Request, title string) Result {
-	all := c.tasks.List(req.Source.ConversationID)
+func (c commands) tasksList(ctx context.Context, req Request, title string) (Result, error) {
+	all, err := c.controls.ListTasks(ctx, req)
+	if err != nil {
+		return Result{}, err
+	}
 	if len(all) == 0 {
-		return Result{Title: title, Text: c.text.T(i18n.TasksEmpty)}
+		return Result{Title: title, Text: c.text.T(i18n.TasksEmpty)}, nil
 	}
 	var b strings.Builder
 	for i, tracked := range all {
@@ -265,7 +281,7 @@ func (c commands) tasksList(req Request, title string) Result {
 			fmt.Fprintf(&b, "\n%s", tracked.Goal)
 		}
 	}
-	return Result{Title: title, Text: b.String()}
+	return Result{Title: title, Text: b.String()}, nil
 }
 
 // tasksListed keeps the card inside its byte budget; the rest are a count.

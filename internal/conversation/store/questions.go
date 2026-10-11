@@ -11,11 +11,10 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
-	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -25,7 +24,7 @@ import (
 // read it, so the two are held under one lock.
 type questionIdentity struct {
 	mu   sync.Mutex
-	base consoleapi.PendingQuestion
+	base conversationapi.PendingQuestion
 }
 
 func (q *questionIdentity) set(taskID, attemptID string) {
@@ -34,14 +33,14 @@ func (q *questionIdentity) set(taskID, attemptID string) {
 	q.base.TaskID, q.base.AttemptID = taskID, attemptID
 }
 
-func (q *questionIdentity) binding() consoleapi.PendingQuestion {
+func (q *questionIdentity) binding() conversationapi.PendingQuestion {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return q.base
 }
 
-func copyQuestion(q consoleapi.PendingQuestion) consoleapi.PendingQuestion {
-	q.Options = append([]consoleapi.QuestionOption{}, q.Options...)
+func copyQuestion(q conversationapi.PendingQuestion) conversationapi.PendingQuestion {
+	q.Options = append([]conversationapi.QuestionOption{}, q.Options...)
 	if q.Answer != nil {
 		answer := *q.Answer
 		q.Answer = &answer
@@ -49,10 +48,10 @@ func copyQuestion(q consoleapi.PendingQuestion) consoleapi.PendingQuestion {
 	return q
 }
 
-func (s *Service) Questions(conversation string) []consoleapi.PendingQuestion {
+func (s *Service) Questions(conversation string) []conversationapi.PendingQuestion {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	questions := []consoleapi.PendingQuestion{}
+	questions := []conversationapi.PendingQuestion{}
 	for _, q := range s.questions {
 		if q.Principal == s.owner && (conversation == "" || q.Conversation == ConversationID(conversation)) {
 			questions = append(questions, copyQuestion(q))
@@ -64,50 +63,50 @@ func (s *Service) Questions(conversation string) []consoleapi.PendingQuestion {
 
 // AnswerQuestion uses the authenticated console owner's identity, never a
 // principal supplied in a request body. Decisions bypass the work queue.
-func (s *Service) AnswerQuestion(ctx context.Context, id string, answer consoleapi.QuestionAnswer) (consoleapi.PendingQuestion, error) {
+func (s *Service) AnswerQuestion(ctx context.Context, id string, answer conversationapi.QuestionAnswer) (conversationapi.PendingQuestion, error) {
 	return s.AnswerQuestionAs(ctx, s.owner, id, answer)
 }
 
-func (s *Service) AnswerQuestionAs(ctx context.Context, principal, id string, answer consoleapi.QuestionAnswer) (consoleapi.PendingQuestion, error) {
+func (s *Service) AnswerQuestionAs(ctx context.Context, principal, id string, answer conversationapi.QuestionAnswer) (conversationapi.PendingQuestion, error) {
 	if err := ctx.Err(); err != nil {
-		return consoleapi.PendingQuestion{}, err
+		return conversationapi.PendingQuestion{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	q, ok := s.questions[id]
 	if !ok {
-		return q, consoleapi.ErrQuestionNotFound
+		return q, conversationapi.ErrQuestionNotFound
 	}
 	if principal == "" || principal != s.owner || q.Principal != principal {
-		return consoleapi.PendingQuestion{}, consoleapi.ErrQuestionForbidden
+		return conversationapi.PendingQuestion{}, conversationapi.ErrQuestionForbidden
 	}
 	if answer.CommandID == "" || len(answer.CommandID) > 200 {
-		return q, consoleapi.ErrInvalidAnswer
+		return q, conversationapi.ErrInvalidAnswer
 	}
 	if q.Answer != nil && *q.Answer == answer {
 		return copyQuestion(q), nil
 	}
 	if q.State != "pending" {
-		return copyQuestion(q), consoleapi.ErrQuestionConflict
+		return copyQuestion(q), conversationapi.ErrQuestionConflict
 	}
 	if s.questionWaiters[id] == nil {
 		if err := s.resolveQuestionLocked(q, "interrupted", nil); err != nil {
 			return q, err
 		}
-		return copyQuestion(s.questions[id]), consoleapi.ErrQuestionConflict
+		return copyQuestion(s.questions[id]), conversationapi.ErrQuestionConflict
 	}
 	if !q.Deadline.IsZero() && !q.Deadline.After(time.Now()) {
 		if err := s.resolveQuestionLocked(q, "expired", nil); err != nil {
 			return q, err
 		}
-		return copyQuestion(s.questions[id]), consoleapi.ErrQuestionConflict
+		return copyQuestion(s.questions[id]), conversationapi.ErrQuestionConflict
 	}
 	state := "answered"
 	switch answer.Decision {
 	case "accept":
 		if answer.Text != "" {
 			if !q.AllowFreeText || q.Kind == "permission" || answer.Choice != "" || strings.TrimSpace(answer.Text) == "" || len(answer.Text) > 64<<10 {
-				return q, consoleapi.ErrInvalidAnswer
+				return q, conversationapi.ErrInvalidAnswer
 			}
 			break
 		}
@@ -122,15 +121,15 @@ func (s *Service) AnswerQuestionAs(ctx context.Context, principal, id string, an
 			}
 		}
 		if !found {
-			return q, consoleapi.ErrInvalidAnswer
+			return q, conversationapi.ErrInvalidAnswer
 		}
 	case "decline", "cancel":
 		if answer.Choice != "" || answer.Text != "" {
-			return q, consoleapi.ErrInvalidAnswer
+			return q, conversationapi.ErrInvalidAnswer
 		}
 		state = map[string]string{"decline": "declined", "cancel": "cancelled"}[answer.Decision]
 	default:
-		return q, consoleapi.ErrInvalidAnswer
+		return q, conversationapi.ErrInvalidAnswer
 	}
 	if err := s.resolveQuestionLocked(q, state, &answer); err != nil {
 		return q, err
@@ -138,7 +137,7 @@ func (s *Service) AnswerQuestionAs(ctx context.Context, principal, id string, an
 	return copyQuestion(s.questions[id]), nil
 }
 
-func (s *Service) resolveQuestionLocked(q consoleapi.PendingQuestion, state string, answer *consoleapi.QuestionAnswer) error {
+func (s *Service) resolveQuestionLocked(q conversationapi.PendingQuestion, state string, answer *conversationapi.QuestionAnswer) error {
 	previous := q
 	q.State, q.Answer, q.UpdatedAt = state, answer, time.Now().UTC()
 	s.questions[q.ID] = q
@@ -154,9 +153,9 @@ func (s *Service) resolveQuestionLocked(q consoleapi.PendingQuestion, state stri
 	return nil
 }
 
-func (s *Service) publishQuestion(q consoleapi.PendingQuestion) {
+func (s *Service) publishQuestion(q conversationapi.PendingQuestion) {
 	if s.model != nil {
-		s.model.Publish(readmodel.Event{At: q.UpdatedAt, Kind: "console.question", Conversation: q.Conversation, ExchangeID: q.ExchangeID, Text: q.ID})
+		s.model.Publish(conversationapi.Event{At: q.UpdatedAt, Kind: "console.question", Conversation: q.Conversation, ExchangeID: q.ExchangeID, Text: q.ID})
 	}
 }
 
@@ -164,7 +163,7 @@ func (s *Service) publishQuestion(q consoleapi.PendingQuestion) {
 // is the authority on which agent ran and where, and a question without
 // one — a recovery prompt raised before any attempt exists — simply goes
 // unattributed rather than guessing.
-func (s *Service) nameAsker(ctx context.Context, q *consoleapi.PendingQuestion) {
+func (s *Service) nameAsker(ctx context.Context, q *conversationapi.PendingQuestion) {
 	if s.inspector == nil || q.AttemptID == "" || q.Agent != "" || q.Node != "" {
 		return
 	}
@@ -181,7 +180,7 @@ func (s *Service) nameAsker(ctx context.Context, q *consoleapi.PendingQuestion) 
 // asker outlives any turn (untilAnswered) waits until answered or until
 // the asker itself stops. Either way the wait holds the asker's silence
 // clock: a person thinking is not the agent hanging.
-func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestion, untilAnswered bool) (consoleapi.PendingQuestion, error) {
+func (s *Service) awaitQuestion(ctx context.Context, q conversationapi.PendingQuestion, untilAnswered bool) (conversationapi.PendingQuestion, error) {
 	if err := ctx.Err(); err != nil {
 		return q, err
 	}
@@ -189,12 +188,12 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 		q.AllowFreeText = false
 	}
 	if (len(q.Options) == 0 && !q.AllowFreeText) || len(q.Options) > 64 || len(q.Message) > 64<<10 || len(q.Title) > 4096 {
-		return q, consoleapi.ErrInvalidAnswer
+		return q, conversationapi.ErrInvalidAnswer
 	}
 	seen := map[string]bool{}
 	for _, option := range q.Options {
 		if option.ID == "" || len(option.ID) > 4096 || len(option.Label) > 4096 || len(option.Description) > 16<<10 || seen[option.ID] {
-			return q, consoleapi.ErrInvalidAnswer
+			return q, conversationapi.ErrInvalidAnswer
 		}
 		seen[option.ID] = true
 	}
@@ -216,7 +215,7 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 	}
 	waiter := make(chan struct{})
 	s.mu.Lock()
-	var previous *consoleapi.PendingQuestion
+	var previous *conversationapi.PendingQuestion
 	if q.Kind != "recovery" && nodewire.IsManagedSession(q.SessionID) && q.AttemptID != "" && q.RequestID != "" {
 		for _, saved := range s.questions {
 			if saved.SessionID != q.SessionID || saved.AttemptID != q.AttemptID || saved.RequestID != q.RequestID {
@@ -224,7 +223,7 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 			}
 			if previous != nil || !sameNodeQuestion(saved, q) {
 				s.mu.Unlock()
-				return q, consoleapi.ErrQuestionConflict
+				return q, conversationapi.ErrQuestionConflict
 			}
 			copy := saved
 			previous = &copy
@@ -236,7 +235,7 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 			}
 			if s.questionWaiters[previous.ID] != nil {
 				s.mu.Unlock()
-				return q, consoleapi.ErrQuestionConflict
+				return q, conversationapi.ErrQuestionConflict
 			}
 			q.ID, q.CreatedAt = previous.ID, previous.CreatedAt
 		}
@@ -280,20 +279,20 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 	return copyQuestion(q), nil
 }
 
-func sameNodeQuestion(a, b consoleapi.PendingQuestion) bool {
+func sameNodeQuestion(a, b conversationapi.PendingQuestion) bool {
 	return a.Principal == b.Principal && a.Conversation == b.Conversation && a.ExchangeID == b.ExchangeID &&
 		a.Project == b.Project && a.TaskID == b.TaskID && a.Kind == b.Kind && a.Title == b.Title &&
 		a.Message == b.Message && a.Required == b.Required && a.AllowFreeText == b.AllowFreeText &&
 		a.ToolCallID == b.ToolCallID && slices.Equal(a.Options, b.Options)
 }
 
-func (s *Service) askPermission(ctx context.Context, base consoleapi.PendingQuestion, ask permission.Ask, untilAnswered bool) (acp.RequestPermissionOutcome, error) {
+func (s *Service) askPermission(ctx context.Context, base conversationapi.PendingQuestion, ask permission.Ask, untilAnswered bool) (acp.RequestPermissionOutcome, error) {
 	base.Kind, base.Title, base.Message, base.Required = "permission", ask.ToolName, ask.Reason, true
 	base.AllowFreeText = false
 	base.SessionID, base.Generation, base.ToolCallID = ask.SessionID, ask.Generation, ask.ToolCallID
 	base.RequestID = ask.RequestID
 	for _, option := range ask.Options {
-		base.Options = append(base.Options, consoleapi.QuestionOption{ID: string(option.OptionID), Label: option.Name, Kind: string(option.Kind)})
+		base.Options = append(base.Options, conversationapi.QuestionOption{ID: string(option.OptionID), Label: option.Name, Kind: string(option.Kind)})
 	}
 	q, err := s.awaitQuestion(ctx, base, untilAnswered)
 	if err != nil {
@@ -305,7 +304,7 @@ func (s *Service) askPermission(ctx context.Context, base consoleapi.PendingQues
 	return permission.Choose(false, ask.Options), nil
 }
 
-func (s *Service) askUser(ctx context.Context, base consoleapi.PendingQuestion, question view.Question, untilAnswered bool) (view.Answer, error) {
+func (s *Service) askUser(ctx context.Context, base conversationapi.PendingQuestion, question view.Question, untilAnswered bool) (view.Answer, error) {
 	base.Kind, base.Title, base.Message, base.Required = "question", question.Title, question.Message, question.Required
 	base.SessionID, base.Generation = question.SessionID, question.Generation
 	base.RequestID = question.RequestID
@@ -314,7 +313,7 @@ func (s *Service) askUser(ctx context.Context, base consoleapi.PendingQuestion, 
 	}
 	base.AllowFreeText = question.AllowFreeText && base.Kind != "permission"
 	for _, option := range question.Choices {
-		base.Options = append(base.Options, consoleapi.QuestionOption{ID: option.Value, Label: option.Label, Description: option.Detail})
+		base.Options = append(base.Options, conversationapi.QuestionOption{ID: option.Value, Label: option.Label, Description: option.Detail})
 	}
 	q, err := s.awaitQuestion(ctx, base, untilAnswered)
 	if err != nil {
@@ -332,15 +331,15 @@ func (s *Service) askUser(ctx context.Context, base consoleapi.PendingQuestion, 
 	return view.Answer{}, nil
 }
 
-func (s *Service) VerbsFor(ctx context.Context) []consoleapi.Verb {
-	var out []consoleapi.Verb
+func (s *Service) VerbsFor(ctx context.Context) []conversationapi.Verb {
+	var out []conversationapi.Verb
 	for _, v := range s.coordinator.VerbsFor(ctx) {
-		out = append(out, consoleapi.Verb{Command: v.Command, Args: v.Args, Summary: v.Summary})
+		out = append(out, conversationapi.Verb{Command: v.Command, Args: v.Args, Summary: v.Summary})
 	}
 	return out
 }
 
 // turnQuestion asks on behalf of a turn: the question expires with it.
-func (s *Service) turnQuestion(ctx context.Context, base consoleapi.PendingQuestion, question view.Question) (view.Answer, error) {
+func (s *Service) turnQuestion(ctx context.Context, base conversationapi.PendingQuestion, question view.Question) (view.Answer, error) {
 	return s.askUser(ctx, base, question, false)
 }

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -20,22 +20,22 @@ type abandonDriver interface {
 	CompleteAbandonDelivery(context.Context, attempt.Record, func(ledger.Reader, attempt.Record) (attempt.AbandonDelivery, error)) error
 }
 
-var _ consoleapi.Abandons = (*Service)(nil)
+var _ conversationapi.Abandons = (*Service)(nil)
 
 func (s *Service) SetAbandons(control abandonDriver) { s.abandons = control }
 
-func (s *Service) Abandon(ctx context.Context, id string, revision uint64) (consoleapi.Abandonment, error) {
+func (s *Service) Abandon(ctx context.Context, id string, revision uint64) (conversationapi.Abandonment, error) {
 	if s.abandons == nil || s.owner == "" {
-		return consoleapi.Abandonment{}, errors.New("abandonment requires the console owner")
+		return conversationapi.Abandonment{}, errors.New("abandonment requires the console owner")
 	}
 	if _, err := s.abandons.AbandonAttempt(ctx, id, s.owner, revision); err != nil {
-		return consoleapi.Abandonment{}, err
+		return conversationapi.Abandonment{}, err
 	}
 	if err := s.projectAbandoned(ctx, id); err != nil {
 		slog.Warn("console: abandonment recorded; projection remains pending", "attempt", id, "error", err)
-		return consoleapi.Abandonment{Accepted: true, Pending: true}, nil
+		return conversationapi.Abandonment{Accepted: true, Pending: true}, nil
 	}
-	return consoleapi.Abandonment{Accepted: true}, nil
+	return conversationapi.Abandonment{Accepted: true}, nil
 }
 
 func (s *Service) projectAbandoned(ctx context.Context, id string) error {

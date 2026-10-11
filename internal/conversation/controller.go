@@ -3,10 +3,12 @@
 package conversation
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/state"
 	"strings"
@@ -23,12 +25,35 @@ type Controller struct {
 	activity map[string]time.Time
 }
 
-func (c *Controller) Select(catalog *agent.Catalog, id, input string) (agent.Agent, string, bool, error) {
+// Resolve chooses an agent for a query without changing the conversation's
+// active agent. A read permission cannot implicitly persist a selection.
+func (c *Controller) Resolve(catalog *agent.Catalog, id, input string) (agent.Agent, string, bool, error) {
 	if catalog.Default().ID == "" {
 		return agent.Agent{}, "", false, ErrNoAgent
 	}
 	if selection, ok := catalog.Select(input); ok {
-		if err := c.Store.SetActiveAgent(id, selection.Agent.ID); err != nil {
+		return selection.Agent, selection.Prompt, selection.SwitchOnly, nil
+	}
+	fields := strings.Fields(strings.TrimSpace(input))
+	if len(fields) > 0 && (strings.HasPrefix(fields[0], "@") || fields[0] == string(protocol.CommandUse)) {
+		return agent.Agent{}, "", false, fmt.Errorf("unknown agent selection %q", fields[0])
+	}
+	if selected, ok := catalog.Resolve(c.Store.Conversation(id).ActiveAgent); ok {
+		return selected, strings.TrimSpace(input), false, nil
+	}
+	return catalog.Default(), strings.TrimSpace(input), false, nil
+}
+
+func (c *Controller) Select(catalog *agent.Catalog, id, input string) (agent.Agent, string, bool, error) {
+	return c.SelectChecked(context.Background(), catalog, id, input, nil)
+}
+
+func (c *Controller) SelectChecked(ctx context.Context, catalog *agent.Catalog, id, input string, guard func(*ledger.Tx) error) (agent.Agent, string, bool, error) {
+	if catalog.Default().ID == "" {
+		return agent.Agent{}, "", false, ErrNoAgent
+	}
+	if selection, ok := catalog.Select(input); ok {
+		if err := c.Store.SetActiveAgentChecked(ctx, id, selection.Agent.ID, guard); err != nil {
 			return agent.Agent{}, "", false, err
 		}
 		return selection.Agent, selection.Prompt, selection.SwitchOnly, nil
@@ -43,7 +68,7 @@ func (c *Controller) Select(catalog *agent.Catalog, id, input string) (agent.Age
 		}
 	}
 	selected := catalog.Default()
-	if err := c.Store.SetActiveAgent(id, selected.ID); err != nil {
+	if err := c.Store.SetActiveAgentChecked(ctx, id, selected.ID, guard); err != nil {
 		return agent.Agent{}, "", false, err
 	}
 	return selected, strings.TrimSpace(input), false, nil

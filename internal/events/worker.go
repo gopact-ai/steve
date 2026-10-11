@@ -15,6 +15,15 @@ import (
 // claim tokens and the Work service's stable IDs decide who advances a record.
 func (s *Service) Pump(ctx context.Context, intelligence *work.Service) error {
 	var failures []error
+	ids, err := s.scan.NextStates(ctx, s.Book, DeliveryKind, []string{StatePending}, 32)
+	if err != nil {
+		failures = append(failures, err)
+	}
+	for _, id := range ids {
+		if err := s.RetirePending(ctx, id); err != nil {
+			failures = append(failures, err)
+		}
+	}
 	for _, phase := range []struct {
 		kind string
 		run  func(string) error

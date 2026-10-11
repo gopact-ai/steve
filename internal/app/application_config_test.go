@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/control"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/platformconfig"
@@ -52,6 +53,39 @@ func TestSharedProjectRegistrationResolvesCoordinatorToPhysicalNode(t *testing.T
 				t.Fatalf("project projection disagrees with shared declaration: found=%v home=%+v err=%v", found, p.Home, err)
 			}
 		})
+	}
+}
+
+func TestSharedConfigurationRechecksControlPolicyAtCommit(t *testing.T) {
+	a, shared, book, _ := sharedSettingsFixture(t)
+	settings := adminsvc.NewSettings(a, configOf(a))
+	before, err := settings.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := false
+	ctx := control.WithMutationGuard(t.Context(), func(tx *ledger.Tx) error {
+		checked = true
+		if err := tx.PutBinding("control-regression", "would-write", true); err != nil {
+			return err
+		}
+		return control.ErrDenied
+	})
+	_, err = settings.UpdateSettings(ctx, consoleapi.SettingsUpdate{BaseRevision: before.Revision, Settings: json.RawMessage(`{"gateway":{"task_max_turns":99}}`)})
+	if err == nil || !checked {
+		t.Fatalf("configuration ignored commit policy: checked=%v error=%v", checked, err)
+	}
+	after, err := settings.Settings(t.Context())
+	if err != nil || after.Revision != before.Revision || configOf(a).Gateway.TaskMaxTurns != 3 {
+		t.Fatal("refused save published configuration")
+	}
+	d, found, err := platformconfig.New(book).Load()
+	if err != nil || !found || d.Settings.Gateway.TaskMaxTurns != 3 || shared.Revision() != before.Revision {
+		t.Fatal("refused save advanced shared ledger configuration")
+	}
+	var changed bool
+	if found, err := book.GetBinding(t.Context(), "control-regression", "would-write", &changed); err != nil || found {
+		t.Fatal("guard did not share the rolled back configuration transaction")
 	}
 }
 

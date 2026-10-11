@@ -12,6 +12,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/conversation"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -152,8 +153,16 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 	if ch == nil {
 		return FireReceipt{}, fmt.Errorf("channel cannot post schedule notice for #%s", f.ScheduleID)
 	}
-	if f.Channel != g.name || strings.HasPrefix(f.ConversationID, "console:") || f.ChatID == "console" {
+	if f.Channel != g.name {
 		return FireReceipt{}, fmt.Errorf("schedule %s does not target channel %s", f.ScheduleID, g.name)
+	}
+	if g.recoveryLedger != nil {
+		route, err := conversation.Channel(ctx, g.recoveryLedger, f.ConversationID)
+		if err != nil || route != g.name {
+			return FireReceipt{}, fmt.Errorf("schedule %s has no original %s route", f.ScheduleID, g.name)
+		}
+	} else if strings.HasPrefix(f.ConversationID, "console:") || f.ChatID == "console" {
+		return FireReceipt{}, fmt.Errorf("schedule %s has no admitted native route", f.ScheduleID)
 	}
 	if f.ConversationID == "" || f.MessageID == "" || f.Prompt == "" || f.Member == "" || f.Requester == "" || f.ProjectID == "" {
 		return FireReceipt{}, fmt.Errorf("schedule %s has incomplete execution context", f.ScheduleID)

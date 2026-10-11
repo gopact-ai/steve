@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/clientcap"
+	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/events"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ingress"
@@ -20,6 +21,8 @@ import (
 func (s *Server) SetAssistant(ports *serviceapi.Services) { s.assistant = ports }
 
 func (s *Server) assistantRoutes(mux *http.ServeMux) {
+	s.connectionLifecycleRoutes(mux)
+	s.stateLifecycleRoutes(mux)
 	for _, path := range []string{"connections", "subscriptions", "inbox", "event-deliveries", "client-capabilities", "client-invocations", "accounts", "grant-migrations", "work-interactions"} {
 		mux.HandleFunc("GET /console/"+path, s.guard(s.assistantList))
 	}
@@ -56,6 +59,10 @@ func assistantResponse(w http.ResponseWriter, value any, err error) {
 		}
 		if errors.Is(err, ledger.ErrConflict) || errors.Is(err, ledger.ErrStale) || errors.Is(err, ingress.ErrConflict) {
 			status = http.StatusConflict
+		}
+		if errors.Is(err, durable.ErrCapacity) {
+			status = http.StatusTooManyRequests
+			w.Header().Set("Retry-After", "5")
 		}
 		w.WriteHeader(status)
 		writeJSON(w, map[string]string{"error": err.Error()})

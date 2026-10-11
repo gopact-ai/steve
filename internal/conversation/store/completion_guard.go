@@ -3,7 +3,7 @@ package store
 import (
 	"fmt"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -124,10 +124,10 @@ func checkTaskCompletion(tx ledger.Reader, state DurableState, ids map[string]bo
 			if exchange.Conversation != conversation || exchange.State.Terminal() || settling[exchange.ID] {
 				continue
 			}
-			if exchange.State == consoleapi.ExchangeAwaitingUser || exchange.State == consoleapi.ExchangeRecovering {
+			if exchange.State == conversationapi.ExchangeAwaitingUser || exchange.State == conversationapi.ExchangeRecovering {
 				return fmt.Errorf("%w: exchange %s (%s): %w", task.ErrCompleteAttention, exchange.ID, exchange.State, task.ErrCompleteConversation)
 			}
-			if spareQueued && exchange.State == consoleapi.ExchangeQueued && exchange.ExpectedTask == "" {
+			if spareQueued && exchange.State == conversationapi.ExchangeQueued && exchange.ExpectedTask == "" {
 				continue
 			}
 			if currentExchange == "" || exchange.ID != currentExchange {

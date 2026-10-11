@@ -99,7 +99,7 @@ func (c *Coordinator) openPreparedPlanTask(ctx context.Context, req Request, goa
 }
 
 func (c *Coordinator) openPlanTaskWithPrepared(req Request, goal, projectID string, prepared *task.PreparedPlan) (task.Task, error) {
-	created, err := c.tasks.Create(task.Task{
+	created, err := c.controls.CreateTask(context.Background(), req, task.Task{
 		Transport: req.Source.Channel, ChatID: req.Reply.ChatID, AnchorMessage: req.Source.MessageID, ChatType: string(req.Source.ChatType), OpenCard: req.Reply.CardID,
 		Goal: goal, Requester: req.Actor.ID, Channel: req.Source.ConversationID,
 		Node: c.node, Origin: "plan", ProjectID: projectID,

@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/control"
 	"github.com/gopact-ai/steve/internal/conversation"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -93,6 +94,7 @@ type Coordinator struct {
 // coordinatorState owns shared execution state. Request-local views replace
 // the owner and text catalog; mutexes and runtime state are never copied.
 type coordinatorState struct {
+	controls    *control.Service
 	work        *work.Engine
 	requestMu   sync.RWMutex
 	maintaining bool
@@ -276,6 +278,7 @@ func New(deps Deps) (*Coordinator, error) {
 		ownerID: deps.Identity.ConsoleOwner,
 		coordinatorState: &coordinatorState{
 			work:          deps.Work,
+			controls:      &control.Service{Owners: owners, Projects: deps.Projects, Tasks: deps.Tasks, Schedules: deps.Schedules, Plans: deps.Plans, DefaultProject: deps.DefaultProject, HomeProject: deps.HomeProject},
 			conversations: &conversation.Controller{Store: deps.Store},
 			catalog:       deps.Catalog, store: deps.Store, assembler: deps.Assembler, runtime: deps.Runtime,
 			promptClock:       promptClock{timeout: deps.Timeout, source: deps.TimeoutSource, start: idle.WithTimeout},
@@ -409,9 +412,26 @@ func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 	// ran, so the person who asked is no longer watching.
 	c.noteActivity(req.Source.ConversationID)
 	c.rememberMode(req)
+	address, parsed := c.ParseInput(req.Input)
+	_, explicitSelection := c.catalog.Select(req.Input)
+	switchOnly := address != "" && strings.TrimSpace(parsed.Prompt) == ""
+	if err := c.controls.CheckCommand(ctx, req, parsed.Command, parsed.Rest, switchOnly); err != nil {
+		return Result{}, err
+	}
 	return work.Dispatch(ctx, req, work.Flow{
 		Select: func(req turnapi.Request) (agent.Agent, string, bool, error) {
-			selected, prompt, switchOnly, err := c.selectAgent(req.Source.ConversationID, req.Input)
+			var selected agent.Agent
+			var prompt string
+			var switchOnly bool
+			var err error
+			if !explicitSelection && parsed.Command != "" {
+				selected, prompt, switchOnly, err = c.conversations.Resolve(c.catalog, req.Source.ConversationID, req.Input)
+			} else {
+				selected, prompt, switchOnly, err = c.conversations.SelectChecked(ctx, c.catalog, req.Source.ConversationID, req.Input, c.controls.Guard(req, project.RoleWrite))
+			}
+			if err == conversation.ErrNoAgent {
+				err = UserError{Text: c.text.T(i18n.NoAgentConfigured)}
+			}
 			return c.recoveryAgent(req.Source.ConversationID, selected, req.Source.Origin), prompt, switchOnly, err
 		},
 		Parse: func(prompt string) (string, protocol.Command, string, bool) {
@@ -421,8 +441,11 @@ func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 		Switched: func(selected agent.Agent) Result {
 			return Result{AgentID: selected.ID, Text: c.text.T(i18n.Switched, selected.ID)}
 		},
-		Control: c.commands().dispatch,
-		Prompt:  c.prompt,
+		Control: func(ctx context.Context, req turnapi.Request, selected agent.Agent, cmd protocol.Command, rest string) (Result, bool, error) {
+			ctx = control.WithRequest(control.WithMutationGuard(ctx, c.controls.Guard(req, project.RoleWrite)), req)
+			return c.commands().dispatch(ctx, req, selected, cmd, rest)
+		},
+		Prompt: c.prompt,
 	})
 }
 

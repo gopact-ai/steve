@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/control"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/view"
 	"strings"
@@ -50,10 +52,13 @@ func (c commands) modelCmd(parent context.Context, req Request, selected agent.A
 	if err != nil {
 		return Result{}, c.modelMatchError(err, choices, want)
 	}
+	if err := c.controls.Check(ctx, req, project.RoleWrite); err != nil {
+		return Result{}, err
+	}
 	if err := configurable.SetModel(ctx, optionID, picked.Value); err != nil {
 		return Result{}, err
 	}
-	if err := c.store.SetPreferences(req.Source.ConversationID, selected.ID, map[string]string{"model": picked.Value}); err != nil {
+	if err := c.store.SetPreferencesChecked(ctx, req.Source.ConversationID, selected.ID, map[string]string{"model": picked.Value}, control.MutationGuard(ctx)); err != nil {
 		return Result{}, err
 	}
 	// Read back rather than echoing the request: the agent confirms with a

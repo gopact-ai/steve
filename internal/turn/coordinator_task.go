@@ -89,7 +89,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		if onboarding(req) {
 			title = onboard.TaskGoal(c.text.Locale())
 		}
-		created, err := c.tasks.Create(task.Task{
+		created, err := c.controls.CreateTask(context.Background(), req, task.Task{
 			Goal:      title,
 			Requester: req.Actor.ID,
 			Channel:   req.Source.ConversationID,
@@ -203,8 +203,9 @@ func (c *Coordinator) closeTask(ctx context.Context, conversationID string, agen
 		return refused, err
 	}
 	for _, tracked := range aside {
-		if err := c.setAside(tracked); err != nil {
+		if err := c.setAsideChecked(ctx, tracked); err != nil {
 			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", conversationID, "agent", tracked.Member)
+			return tracked.ID, err
 		}
 	}
 	return "", nil
@@ -220,7 +221,11 @@ func setsAside(tracked task.Task) bool {
 // original history, but revokes its old execution and releases the
 // conversation slot.
 func (c *Coordinator) setAside(tracked task.Task) error {
-	ids, err := c.tasks.SetAside(tracked.ID, task.StatePaused)
+	return c.setAsideChecked(context.Background(), tracked)
+}
+
+func (c *Coordinator) setAsideChecked(ctx context.Context, tracked task.Task) error {
+	ids, err := c.tasks.SetAsideChecked(ctx, tracked.ID, task.StatePaused, c.controls.TaskContextGuard(ctx, tracked.ID))
 	if err != nil {
 		return err
 	}
@@ -250,6 +255,11 @@ func (c *Coordinator) closeSettled(ctx context.Context, ids []string, currentExc
 	var held error
 	checked := 0
 	_, err := c.tasks.CloseChecked(ctx, ids, func(tx *ledger.Tx, tracked task.Task) error {
+		if guard := c.controls.TaskContextGuard(ctx, tracked.ID); guard != nil {
+			if err := guard(tx); err != nil {
+				return err
+			}
+		}
 		checked++
 		err := c.checkTaskCompletionTx(tx, map[string]bool{tracked.ID: true}, tracked.Channel, currentExchange, true)
 		switch {
@@ -419,7 +429,7 @@ const (
 // runs under them. It returns the tasks it moved, which a failed stop does
 // not take back.
 func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked task.Task, to task.State, confirmSettlement bool) (Result, []string, error) {
-	ids, err := c.tasks.SetAside(tracked.ID, to)
+	ids, err := c.tasks.SetAsideChecked(ctx, tracked.ID, to, c.controls.TaskContextGuard(ctx, tracked.ID))
 	if err != nil {
 		return Result{Title: title, Text: err.Error()}, nil, err
 	}

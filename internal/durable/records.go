@@ -40,7 +40,7 @@ func Get[T any](r ledger.Reader, kind, id string) (T, bool, error) {
 	if err != nil {
 		return value, false, err
 	}
-	err = json.Unmarshal(raw, &value)
+	value, err = Decode[T](r, raw, kind, id)
 	return value, err == nil, err
 }
 
@@ -76,7 +76,8 @@ func List[T any](ctx context.Context, book *ledger.Ledger, kind, after string, l
 				next = last
 				break
 			}
-			if e := json.Unmarshal(raw, &value); e != nil {
+			value, e = Decode[T](tx, raw, kind, id)
+			if e != nil {
 				return e
 			}
 			values = append(values, value)

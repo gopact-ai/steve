@@ -9,17 +9,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/protocol"
-	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/task"
 	turn "github.com/gopact-ai/steve/internal/turnapi"
 )
 
-type Exchange = consoleapi.Exchange
+type Exchange = conversationapi.Exchange
 
 // Only Exchange is serialized. Request lifetimes and waiters belong to this
 // process; accepted work belongs to the durable console document.
@@ -27,17 +26,17 @@ type queuedExchange struct {
 	Exchange
 	// Submission identity survives edits/steering. A keyed exchange's result
 	// outlives the bounded transcript projection so restart retries can reply.
-	PayloadHash           string              `json:"payload_hash,omitempty"`
-	QuoteAliases          map[string]string   `json:"quote_aliases,omitempty"`
-	Receipt               *consoleapi.Reply   `json:"receipt,omitempty"`
-	RecoveryStopTarget    *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
-	RecoveryAbandon       *consoleapi.Reply   `json:"recovery_abandon,omitempty"`
-	RecoveryStop          *consoleapi.Reply   `json:"recovery_stop,omitempty"`
-	RecoveryStopPending   string              `json:"recovery_stop_pending,omitempty"`
-	RecoveryCancelPending bool                `json:"recovery_cancel_pending,omitempty"`
-	RecoveryStopTask      string              `json:"recovery_stop_task,omitempty"`
-	ContinuationRejected  bool                `json:"continuation_rejected,omitempty"`
-	RecoveryPending       bool                `json:"recovery_pending,omitempty"`
+	PayloadHash           string                 `json:"payload_hash,omitempty"`
+	QuoteAliases          map[string]string      `json:"quote_aliases,omitempty"`
+	Receipt               *conversationapi.Reply `json:"receipt,omitempty"`
+	RecoveryStopTarget    *recoveryStopTarget    `json:"recovery_stop_target,omitempty"`
+	RecoveryAbandon       *conversationapi.Reply `json:"recovery_abandon,omitempty"`
+	RecoveryStop          *conversationapi.Reply `json:"recovery_stop,omitempty"`
+	RecoveryStopPending   string                 `json:"recovery_stop_pending,omitempty"`
+	RecoveryCancelPending bool                   `json:"recovery_cancel_pending,omitempty"`
+	RecoveryStopTask      string                 `json:"recovery_stop_task,omitempty"`
+	ContinuationRejected  bool                   `json:"continuation_rejected,omitempty"`
+	RecoveryPending       bool                   `json:"recovery_pending,omitempty"`
 	stopSetAside          bool
 	recoveryStopping      chan struct{}
 	ctx                   context.Context
@@ -148,7 +147,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	s.mu.Lock()
 	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
 		s.mu.Unlock()
-		return nil, Exchange{}, consoleapi.ErrConsoleClosing
+		return nil, Exchange{}, conversationapi.ErrConsoleClosing
 	}
 	var previous *queuedExchange
 	if key != "" {
@@ -222,7 +221,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
-		return nil, Exchange{}, consoleapi.ErrConsoleClosing
+		return nil, Exchange{}, conversationapi.ErrConsoleClosing
 	}
 	if other, err := s.submittedLocked(conversation, key, hash); other != nil || err != nil {
 		if err != nil {
@@ -236,7 +235,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject, ExpectedTask: options.ExpectedTask,
 			ResumeAdmission: options.ResumeAdmission,
 			Refs:            copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
-			Quotes: append([]QuoteRef(nil), quotes...), State: consoleapi.ExchangeQueued, EnqueuedAt: time.Now().UTC()},
+			Quotes: append([]QuoteRef(nil), quotes...), State: conversationapi.ExchangeQueued, EnqueuedAt: time.Now().UTC()},
 		PayloadHash: hash, ctx: s.exchangeContext(ctx), done: make(chan struct{}),
 		RecoveryPending: options.Deferred && options.ResumeAdmission == (task.ResumeAdmission{}),
 	}
@@ -314,14 +313,14 @@ func (s *Service) acceptExchangeLocked(e *queuedExchange, front bool) (*queuedEx
 func (s *Service) acceptExchange(e *queuedExchange, front, deferred bool) (*queuedExchange, Exchange, error) {
 	conversation := e.Conversation
 	if s.sealed[conversation] {
-		return nil, Exchange{}, fmt.Errorf("%w: %s is being deleted", consoleapi.ErrBusy, conversation)
+		return nil, Exchange{}, fmt.Errorf("%w: %s is being deleted", conversationapi.ErrBusy, conversation)
 	}
 	var err error
 	list := s.exchanges[conversation]
 	at := len(list)
 	if front {
 		for i, other := range list {
-			if other.State == consoleapi.ExchangeQueued {
+			if other.State == conversationapi.ExchangeQueued {
 				at = i
 				break
 			}
@@ -385,14 +384,14 @@ func (s *Service) queuedLocked(id string) (*queuedExchange, int, error) {
 	for _, list := range s.exchanges {
 		for i, e := range list {
 			if e.ID == id {
-				if e.State != consoleapi.ExchangeQueued {
-					return nil, 0, consoleapi.ErrExchangeNotQueued
+				if e.State != conversationapi.ExchangeQueued {
+					return nil, 0, conversationapi.ErrExchangeNotQueued
 				}
 				return e, i, nil
 			}
 		}
 	}
-	return nil, 0, consoleapi.ErrExchangeNotFound
+	return nil, 0, conversationapi.ErrExchangeNotFound
 }
 
 func (s *Service) DeleteQueued(id string) error {
@@ -405,8 +404,8 @@ func (s *Service) DeleteQueued(id string) error {
 	list := s.exchanges[e.Conversation]
 	if e.Key != "" {
 		previousState, previousReceipt := e.State, e.Receipt
-		e.State = consoleapi.ExchangeCancelled
-		r := consoleapi.Reply{Conversation: e.Conversation, ExchangeID: e.ID, Kind: "reply", Text: "queued exchange cancelled", Error: "queued exchange cancelled"}
+		e.State = conversationapi.ExchangeCancelled
+		r := conversationapi.Reply{Conversation: e.Conversation, ExchangeID: e.ID, Kind: "reply", Text: "queued exchange cancelled", Error: "queued exchange cancelled"}
 		e.Receipt = &r
 		if err := s.save(); err != nil {
 			e.State, e.Receipt = previousState, previousReceipt
@@ -471,10 +470,10 @@ func (s *Service) Steer(_ context.Context, id string) (Exchange, error) {
 // concurrent submissions cannot both observe an idle queue and start it.
 func (s *Service) startLocked(e *queuedExchange) error {
 	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
-		return consoleapi.ErrConsoleClosing
+		return conversationapi.ErrConsoleClosing
 	}
 	if e.RecoveryPending {
-		return fmt.Errorf("%w: original task accounting is pending", consoleapi.ErrBusy)
+		return fmt.Errorf("%w: original task accounting is pending", conversationapi.ErrBusy)
 	}
 	if e.ResumeAdmission != (task.ResumeAdmission{}) {
 		if err := s.checkResumeLocked(e); err != nil {
@@ -484,11 +483,11 @@ func (s *Service) startLocked(e *queuedExchange) error {
 	s.bindRecoveryStopTargetLocked(e)
 	conversation := e.Conversation
 	previous := s.replies[conversation]
-	e.State, e.StartedAt = consoleapi.ExchangeRunning, time.Now().UTC()
+	e.State, e.StartedAt = conversationapi.ExchangeRunning, time.Now().UTC()
 	s.running[conversation]++
-	sent := s.recordLocked(consoleapi.Reply{At: e.StartedAt, Conversation: conversation, ProjectID: e.ExpectedProject, ExchangeID: e.ID, Input: e.Input, Kind: "sent", Silent: s.stopControl(e.Input), Relayed: relayed(e.Exchange), Refs: copyRefs(e.Refs), Materials: copyMaterials(e.Materials)})
+	sent := s.recordLocked(conversationapi.Reply{At: e.StartedAt, Conversation: conversation, ProjectID: e.ExpectedProject, ExchangeID: e.ID, Input: e.Input, Kind: "sent", Silent: s.stopControl(e.Input), Relayed: relayed(e.Exchange), Refs: copyRefs(e.Refs), Materials: copyMaterials(e.Materials)})
 	if err := s.save(); err != nil {
-		e.State, e.StartedAt = consoleapi.ExchangeQueued, time.Time{}
+		e.State, e.StartedAt = conversationapi.ExchangeQueued, time.Time{}
 		s.running[conversation]--
 		s.replies[conversation] = previous
 		return err
@@ -497,7 +496,7 @@ func (s *Service) startLocked(e *queuedExchange) error {
 		// Also cancel a reserved turn that has not entered Handle yet. The
 		// prefix still makes the coordinator interrupt any active session.
 		for _, active := range s.exchanges[conversation] {
-			if active != e && active.State == consoleapi.ExchangeRunning && active.cancel != nil {
+			if active != e && active.State == conversationapi.ExchangeRunning && active.cancel != nil {
 				active.cancel()
 			}
 		}
@@ -555,7 +554,7 @@ func (s *Service) startNextLocked(conversation string) error {
 		return nil
 	}
 	for _, e := range s.exchanges[conversation] {
-		if (e.RecoveryPending || e.State == consoleapi.ExchangeRecovering || e.State == consoleapi.ExchangeAwaitingUser) && !s.stopSettlingLocked(e) {
+		if (e.RecoveryPending || e.State == conversationapi.ExchangeRecovering || e.State == conversationapi.ExchangeAwaitingUser) && !s.stopSettlingLocked(e) {
 			err := s.save()
 			if err == nil {
 				s.publishQueue(conversation)
@@ -564,7 +563,7 @@ func (s *Service) startNextLocked(conversation string) error {
 		}
 	}
 	for _, e := range s.exchanges[conversation] {
-		if e.State == consoleapi.ExchangeQueued {
+		if e.State == conversationapi.ExchangeQueued {
 			if e.ResumeAdmission != (task.ResumeAdmission{}) {
 				if err := s.checkResumeLocked(e); err != nil {
 					if errors.Is(err, task.ErrResumePending) {
@@ -585,7 +584,7 @@ func (s *Service) startNextLocked(conversation string) error {
 	return nil
 }
 
-func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
+func (s *Service) finish(e *queuedExchange, reply conversationapi.Reply, err error) {
 	s.mu.Lock()
 	for e.recoveryStopping != nil {
 		done := e.recoveryStopping
@@ -617,7 +616,7 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	if receipt := e.recoveryReply(); receipt != nil {
 		reply, err = *receipt, nil
 	}
-	var interrupted []consoleapi.PendingQuestion
+	var interrupted []conversationapi.PendingQuestion
 	for id, q := range s.questions {
 		if q.ExchangeID == e.ID && q.State == "pending" {
 			q.State = "interrupted"
@@ -642,12 +641,12 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 		}
 	}
 	reply = s.recordLocked(reply)
-	e.ReplyID, e.State = reply.ID, consoleapi.ExchangeDone
+	e.ReplyID, e.State = reply.ID, conversationapi.ExchangeDone
 	if e.recoveryReply() != nil {
-		e.State = consoleapi.ExchangeCancelled
+		e.State = conversationapi.ExchangeCancelled
 	}
 	if err != nil {
-		e.State = consoleapi.ExchangeFailed
+		e.State = conversationapi.ExchangeFailed
 	}
 	e.ContinuationRejected = e.ExpectedTask != "" && errors.Is(err, task.ErrContinuationUnavailable)
 	e.outcome = outcome{reply: reply, err: err}
@@ -711,7 +710,7 @@ func (s *Service) trimExchangesLocked(conversation string) {
 
 func (s *Service) publishQueue(conversation string) {
 	if s.model != nil {
-		s.model.Publish(readmodel.Event{Kind: "console.queue", Conversation: conversation})
+		s.model.Publish(conversationapi.Event{Kind: "console.queue", Conversation: conversation})
 	}
 }
 
@@ -723,15 +722,15 @@ func (s *Service) restoreQueueLocked() error {
 		for _, e := range list {
 			e.ctx, e.done = s.exchangeContext(context.Background()), make(chan struct{})
 			_, parsed := s.parseInput(e.Input)
-			if s.recoveryLifetime != nil && !parsed.Control() && (e.State == consoleapi.ExchangeRunning || e.State == consoleapi.ExchangeRecovering || e.State == consoleapi.ExchangeAwaitingUser) {
-				e.State = consoleapi.ExchangeRecovering
+			if s.recoveryLifetime != nil && !parsed.Control() && (e.State == conversationapi.ExchangeRunning || e.State == conversationapi.ExchangeRecovering || e.State == conversationapi.ExchangeAwaitingUser) {
+				e.State = conversationapi.ExchangeRecovering
 				s.running[conversation]++
 				continue
 			}
-			if e.State == consoleapi.ExchangeRunning {
+			if e.State == conversationapi.ExchangeRunning {
 				err := errors.New("console restarted before this exchange completed")
-				r := s.recordLocked(consoleapi.Reply{At: time.Now().UTC(), Conversation: conversation, ExchangeID: e.ID, Kind: "reply", Text: err.Error(), Error: err.Error()})
-				e.State, e.ReplyID = consoleapi.ExchangeFailed, r.ID
+				r := s.recordLocked(conversationapi.Reply{At: time.Now().UTC(), Conversation: conversation, ExchangeID: e.ID, Kind: "reply", Text: err.Error(), Error: err.Error()})
+				e.State, e.ReplyID = conversationapi.ExchangeFailed, r.ID
 				if e.Key != "" {
 					e.Receipt = &r
 				}

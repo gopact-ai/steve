@@ -10,7 +10,9 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/control"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
@@ -19,6 +21,14 @@ import (
 type FleetTools struct {
 	Admin *Service
 	View  *readmodel.Model
+	Guard func(context.Context, *ledger.Tx) error
+}
+
+func (f FleetTools) mutationContext(ctx context.Context) context.Context {
+	if f.Guard != nil {
+		return control.WithMutationGuard(ctx, func(tx *ledger.Tx) error { return f.Guard(ctx, tx) })
+	}
+	return ctx
 }
 
 func (f FleetTools) Nodes(ctx context.Context) (string, error) {
@@ -88,6 +98,7 @@ func (f FleetTools) Nodes(ctx context.Context) (string, error) {
 }
 
 func (f FleetTools) AddNode(ctx context.Context, name, addr, level, hubURL string) (string, error) {
+	ctx = f.mutationContext(ctx)
 	if hubURL == "" {
 		f.Admin.Mu.Lock()
 		hubURL = f.Admin.hubURL
@@ -108,7 +119,7 @@ func (f FleetTools) AddNode(ctx context.Context, name, addr, level, hubURL strin
 }
 
 func (f FleetTools) RemoveNode(ctx context.Context, name string) error {
-	return f.Admin.RemoveNode(ctx, name)
+	return f.Admin.RemoveNode(f.mutationContext(ctx), name)
 }
 
 func (f FleetTools) RefreshNode(ctx context.Context, name string) (string, error) {

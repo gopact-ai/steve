@@ -16,16 +16,25 @@ const EventKind = "business-event"
 const OutboxKind = "business-event-outbox"
 
 type Event struct {
-	ID        string          `json:"id"`
-	Source    string          `json:"source"`
-	Key       string          `json:"key"`
-	Type      string          `json:"type"`
-	Subject   string          `json:"subject,omitempty"`
-	Payload   json.RawMessage `json:"payload"`
-	Causation string          `json:"causation,omitempty"`
-	Depth     int             `json:"depth"`
-	At        time.Time       `json:"at"`
-	Attention bool            `json:"attention"`
+	ID               string          `json:"id"`
+	Source           string          `json:"source"`
+	Key              string          `json:"key"`
+	Type             string          `json:"type"`
+	Subject          string          `json:"subject,omitempty"`
+	Payload          json.RawMessage `json:"payload"`
+	Causation        string          `json:"causation,omitempty"`
+	Depth            int             `json:"depth"`
+	At               time.Time       `json:"at"`
+	Attention        bool            `json:"attention"`
+	RequestedVersion string          `json:"schema_version,omitempty"`
+	Contract         *Contract       `json:"contract,omitempty"`
+}
+
+type Contract struct {
+	Version     string          `json:"version"`
+	Description string          `json:"description,omitempty"`
+	Schema      json.RawMessage `json:"schema"`
+	Digest      string          `json:"digest"`
 }
 
 func AppendTx(tx *ledger.Tx, event Event) (Event, error) {
@@ -37,10 +46,11 @@ func AppendTx(tx *ledger.Tx, event Event) (Event, error) {
 	// authority. At is reception time, so is deliberately excluded from identity.
 	payload, err := json.Marshal(struct {
 		Type, Subject, Causation string
+		RequestedVersion         string `json:"RequestedVersion,omitempty"`
 		Attention                bool
 		Depth                    int
 		Payload                  json.RawMessage
-	}{event.Type, event.Subject, event.Causation, event.Attention, event.Depth, event.Payload})
+	}{event.Type, event.Subject, event.Causation, event.RequestedVersion, event.Attention, event.Depth, event.Payload})
 	if err != nil {
 		return Event{}, err
 	}
