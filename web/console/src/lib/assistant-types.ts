@@ -16,6 +16,11 @@ export interface EventFlowSnapshot {
     claims: { id: string; claim: string; until: string; at: string }[];
     queues: Record<"routing" | "pending" | "claimed" | "accepted" | "unknown", { pending: number; oldest?: string }>;
 }
+export interface EventActivitySnapshot {
+    recent: EventJournalEntry[];
+    attention: { id: string; event_id: string; type: string; subject?: string; source: string; rule: string; state: EventDelivery["state"]; mode: Subscription["mode"]; detail?: string; at: string }[];
+    more_attention: boolean;
+}
 export interface EventDelivery {
     id: string; revision: number; event_id: string; rule: Subscription;
     state: "pending" | "claimed" | "accepted" | "done" | "failed" | "unknown" | "cancelled";

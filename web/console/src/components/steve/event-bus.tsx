@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useSearchParams } from "react-router";
-import { Link01, ArrowUpRight } from "@untitledui/icons";
+import { Link01, ArrowUpRight, ArrowLeft } from "@untitledui/icons";
 import { Tabs } from "@/components/application/tabs/tabs";
 import { Table } from "@/components/application/table/table";
 import { Badge } from "@/components/base/badges/badges";
@@ -9,10 +9,12 @@ import { Panel } from "@/components/steve/page";
 import { Nothing } from "@/components/steve/ui";
 import { AssistantFeedback, AssistantPager } from "@/components/steve/assistant-projection";
 import { EventBusFlow } from "@/components/steve/event-bus-flow";
+import { EventBusActivity } from "@/components/steve/event-bus-activity";
 import { EventBusInspector } from "@/components/steve/event-bus-inspector";
 import { DeliveryState } from "@/components/steve/event-bus-state";
 import { useAssistantPage } from "@/hooks/use-assistant-page";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
+import { useBusActivity } from "@/hooks/use-bus-activity";
 import { useBusOverview } from "@/hooks/use-bus-overview";
 import { useI18n } from "@/providers/locale-provider";
 import { bytes, dateTime, number } from "@/lib/format";
@@ -21,15 +23,19 @@ import type { EventDelivery, EventJournalEntry, EventProvider } from "@/lib/assi
 export function EventBus() {
     const { t, locale } = useI18n(); const [params, setParams] = useSearchParams();
     const view = params.get("view") === "events" ? "events" : "deliveries";
-    const overview = useBusOverview();
+    const allRecords = params.get("records") === "all";
+    const overview = useBusOverview(!allRecords);
+    const activity = useBusActivity(!allRecords);
     const compact = !useBreakpoint("lg");
-    const deliveries = useAssistantPage<EventDelivery>("/console/event-deliveries", 10000, "deliveryCursor", view === "deliveries");
-    const events = useAssistantPage<EventJournalEntry>("/console/business-events", 10000, "eventCursor", view === "events");
+    const deliveries = useAssistantPage<EventDelivery>("/console/event-deliveries", 10000, "deliveryCursor", allRecords && view === "deliveries");
+    const events = useAssistantPage<EventJournalEntry>("/console/business-events", 10000, "eventCursor", allRecords && view === "events");
     const providers = useAssistantPage<EventProvider>("/console/event-providers", 10000, "providerCursor");
-    const names = useMemo(() => new Map(providers.page?.items.map((item) => [item.id, item.name])), [providers.page]);
+    const names = useMemo(() => new Map(providers.page?.items.flatMap((item) => [[item.id, item.name], [item.principal, item.name]] as [string, string][])), [providers.page]);
     const resource = view === "events" ? events : deliveries;
     const deliveryID = params.get("delivery") || ""; const eventID = params.get("event") || "";
     const detailLink = (key: "delivery" | "event", id: string) => { const next = new URLSearchParams(params); next.delete("delivery"); next.delete("event"); next.set(key, id); return `/connections?${next}`; };
+    const historyParams = new URLSearchParams(params); historyParams.set("records", "all"); historyParams.delete("activity");
+    const overviewParams = new URLSearchParams(params); overviewParams.delete("records"); overviewParams.delete("deliveryCursor"); overviewParams.delete("eventCursor");
     const close = () => setParams((before) => { const next = new URLSearchParams(before); next.delete("delivery"); next.delete("event"); return next; });
     const fullTime = (at: string) => dateTime(at, locale, { dateStyle: "short", timeStyle: "medium" });
     const recordTime = (at: string) => <time dateTime={at} title={fullTime(at)} className="whitespace-nowrap text-xs tabular-nums">{fullTime(at)}</time>;
@@ -57,8 +63,10 @@ export function EventBus() {
         </div>
     </Panel>;
     return <>
-        <EventBusFlow overview={overview} refreshOverview={() => { void overview.refresh(); resource.refresh(); providers.refresh(); }} providers={providerPanel} />
-        <Panel title={t("assistant.busRecords")} padding="flush"
+        {!allRecords ? <EventBusFlow overview={overview} refreshOverview={() => { void overview.refresh(); void activity.refresh(); providers.refresh(); }} providers={providerPanel} /> : null}
+        {!allRecords ? <EventBusActivity projection={activity} attention={params.get("activity") === "attention"} onTab={(attention) => setParams((before) => { const next = new URLSearchParams(before); if (attention) next.set("activity", "attention"); else next.delete("activity"); return next; })} names={names} detailLink={detailLink} historyLink={`/connections?${historyParams}`} /> : null}
+        {allRecords ? <Panel title={t("assistant.busRecords")} padding="flush"
+            aside={<Button size="sm" color="link-color" iconLeading={ArrowLeft} href={`/connections?${overviewParams}`}>{t("assistant.busBackOverview")}</Button>}
             badge={resource.page && !resource.error ? <Badge type="pill-color" size="sm">{t("assistant.busPageCount", { count: number(resource.page.items.length, locale) })}</Badge> : null}
             toolbar={<Tabs selectedKey={view} onSelectionChange={(key) => setParams((before) => { const next = new URLSearchParams(before); next.set("view", String(key)); next.delete("delivery"); next.delete("event"); return next; })}><Tabs.List aria-label={t("assistant.busRecords")} type="button-border" size="sm" items={[{ id: "deliveries", label: t("assistant.busDeliveries") }, { id: "events", label: t("assistant.busEvents") }]}>{(item) => <Tabs.Item {...item} />}</Tabs.List></Tabs>}
             footer={<AssistantPager next={resource.page?.next || ""} cursor={resource.cursor} onPage={resource.setCursor} disabled={!!resource.error} />}>
@@ -84,7 +92,7 @@ export function EventBus() {
                     <Table.Cell size="sm"><Button size="sm" color="tertiary" iconLeading={ArrowUpRight} href={detailLink("event", event.id)} aria-label={t("assistant.inspect")} /></Table.Cell>
                 </Table.Row>}</Table.Body>
             </Table></div> : null}
-        </Panel>
+        </Panel> : null}
         {deliveryID || eventID ? <EventBusInspector key={deliveryID || eventID} deliveryID={deliveryID} eventID={eventID} onClose={close} /> : null}
     </>;
 }

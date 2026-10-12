@@ -66,6 +66,7 @@ try {
     await page.getByRole("heading",{name:"Mail Fixture",exact:true}).waitFor();
     await page.getByText("Health Not Registered",{exact:true}).waitFor();
     await page.locator('[data-bus-queue="event_unknown"] dd').first().filter({hasText:"1"}).waitFor();
+    await page.getByRole("link",{name:"View All",exact:true}).click();
     const completed=page.getByRole("grid",{name:"Deliveries",exact:true}).getByRole("row").filter({hasText:connection.bus.done});
     await page.getByText("Sent to Inbox",{exact:true}).waitFor();
     await completed.getByText("Consumption Completed",{exact:true}).waitFor();
@@ -99,6 +100,7 @@ try {
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,"narrow bus or drawer overflowed viewport");
     await page.keyboard.press("Escape");
     await page.getByRole("dialog",{name:"Event Details",exact:true}).waitFor({state:"hidden"});
+    await page.getByRole("link",{name:"Back to Overview",exact:true}).click();
     let backlogFailure=true;await page.route("**/console/service-backlog",(route)=>backlogFailure?route.fulfill({status:503,json:{error:"Backlog unavailable for acceptance"}}):route.continue());
     await page.reload();await page.getByText("Backlog unavailable for acceptance",{exact:false}).waitFor();
     assert.equal(await page.locator("[data-bus-queue]").count(),0,"a failed backlog read displayed healthy zero counts");

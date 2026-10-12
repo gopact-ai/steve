@@ -2,6 +2,14 @@ package httpapi
 
 import "net/http"
 
+func (s *Server) assistantActivity(w http.ResponseWriter, r *http.Request) {
+	if !s.assistantEnabled(w) {
+		return
+	}
+	out, err := s.assistant.Events.Activity(r.Context())
+	assistantResponse(w, out, err)
+}
+
 func (s *Server) assistantFlow(w http.ResponseWriter, r *http.Request) {
 	if !s.assistantEnabled(w) {
 		return

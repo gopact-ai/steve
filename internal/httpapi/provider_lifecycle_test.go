@@ -85,6 +85,8 @@ func TestProviderCredentialHTTPRecoveryPreservesSourceAndAuthorityBoundaries(t *
 	call(http.MethodGet, "/services/provider", replacement.Token, "", 200)
 	call(http.MethodGet, "/console/event-providers", replacement.Token, "", 401)
 	call(http.MethodGet, "/console/event-providers", "fixture-owner", "", 200)
+	call(http.MethodGet, "/console/event-activity", replacement.Token, "", 401)
+	call(http.MethodGet, "/console/event-activity", "fixture-owner", "", 200)
 	call(http.MethodPost, "/services/provider/register", replacement.Token, `{"generation":1,"plugin_id":"mail.host","version":"1.0.1","events":[{"type":"mail.received","version":"1","schema":{"type":"object","required":["subject"]}}]}`, 409)
 	versionedBody := `{"key":"mailbox/versioned-123","type":"mail.received","schema_version":"1","payload":{"subject":"Hello"}}`
 	versioned := call(http.MethodPost, "/services/events", replacement.Token, versionedBody, 200)

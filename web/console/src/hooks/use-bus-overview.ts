@@ -3,7 +3,7 @@ import { useResourceRead } from "@/hooks/use-resource-read";
 import { message, request } from "@/lib/http";
 import type { ServiceBacklog } from "@/lib/assistant-types";
 
-export function useBusOverview() {
+export function useBusOverview(enabled = true) {
     const [value, setValue] = useState<ServiceBacklog | null>(null);
     const [error, setError] = useState("");
     const [updated, setUpdated] = useState("");
@@ -17,11 +17,12 @@ export function useBusOverview() {
     }, (stats) => { setValue(stats); setError(""); setUpdated(new Date().toISOString()); },
     (cause) => { setValue(null); setError(message(cause)); });
     useEffect(() => {
+        if (!enabled) return;
         void refresh();
         const visible = () => { if (!document.hidden) void refresh(); };
         const timer = window.setInterval(visible, 10000);
         document.addEventListener("visibilitychange", visible);
         return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
-    }, [refresh]);
+    }, [refresh, enabled]);
     return { value, error, updated, refresh };
 }

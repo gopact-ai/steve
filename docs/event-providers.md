@@ -193,9 +193,21 @@ reads refresh every two seconds; Inbox, limits and storage refresh every ten
 seconds while the page is visible. Hidden pages do not continue polling.
 
 The dashboard uses compact queue metrics, a live flow instrument, plugin health,
-and a paginated React Aria / Untitled UI record table. Capacity and storage live
-in a disclosure; original events, frozen subscriptions and receipts open in the
-inspector. The instrument has no demo playback controls or explanatory legend.
+and a four-row activity digest. Recent events come from the latest 32 immutable
+intake receipts, with consecutive equal source/type/subject/routing states
+grouped together. Each group inspects its latest original event; the repeat count
+describes that bounded sample, not total throughput. Needs Attention reads up to
+four unresolved failed/unknown deliveries from the complete open Inbox index,
+including older compressed failures outside the recent window. A fifth match
+sets the "more" indicator. Resolving an Inbox entry removes it from this digest.
+
+The owner-only `GET /console/event-activity` reads both projections in one
+snapshot and omits payloads, receipts and claim credentials. It refreshes every
+ten seconds while visible. View All opens the complete paginated React Aria /
+Untitled UI event/delivery tables; dashboard polling stops in this records view.
+Capacity and storage live in a disclosure; original events, frozen subscriptions
+and receipts open in the inspector. The instrument has no demo playback controls
+or explanatory legend.
 
 The **Event Flow** instrument uses a thin neon transfer channel with 32 slots.
 The light cores inside and outside the queue have the same size. Intakes move
