@@ -18,6 +18,7 @@ import { EventInboxPanels } from "@/components/steve/event-inbox";
 import { AssistantFeedback, AssistantPager } from "@/components/steve/assistant-projection";
 import { Drawer } from "@/components/steve/drawer";
 import { KeyValue } from "@/components/steve/page";
+import { EventDefinition } from "@/components/steve/event-definition";
 import { CodeBlock } from "@/components/steve/code-block";
 import { approveClient, fetchBusinessEvent, resolveEvent, retryDelivery, reprocessEvent } from "@/lib/api/assistant";
 import { message } from "@/lib/http";
@@ -107,7 +108,7 @@ export function InboxPage() {
             <p className="text-xs text-tertiary">{tr("inbox.otherChannels")}</p>
             </PageBody>
             {eventID ? <Drawer title={tr("assistant.eventDetail")} subtitle={eventID} onClose={closeEvent}>
-                {eventError ? <p role="alert" className="break-words text-sm text-error-primary">{eventError}</p> : !event ? <p role="status" className="text-sm text-tertiary">{tr("assistant.loading")}</p> : <><KeyValue rows={[{ k: tr("assistant.eventType"), v: event.type }, { k: tr("assistant.origin"), v: event.source }, { k: tr("assistant.at"), v: when(event.at, locale) }]} /><CodeBlock code={JSON.stringify(event.payload, null, 2)} lang="json" label={tr("assistant.payload")} maxHeight={600} /><Button size="sm" isDisabled={!!busy} isLoading={busy === eventID} onClick={() => void action(eventID, () => reprocessEvent(eventID))}>{tr("assistant.reprocess")}</Button><a className="text-sm text-brand-secondary underline outline-focus-ring focus-visible:outline-2" href="#/connections?section=subscriptions">{tr("assistant.createRule")}</a></>}
+                {eventError ? <p role="alert" className="break-words text-sm text-error-primary">{eventError}</p> : !event ? <p role="status" className="text-sm text-tertiary">{tr("assistant.loading")}</p> : <><EventDefinition type={event.type} definition={event.contract} showType={false} /><KeyValue rows={[{ k: tr("assistant.eventType"), v: event.type }, { k: tr("assistant.origin"), v: event.source }, { k: tr("assistant.at"), v: when(event.at, locale) }]} /><CodeBlock code={JSON.stringify(event.payload, null, 2)} lang="json" label={tr("assistant.payload")} maxHeight={600} /><Button size="sm" isDisabled={!!busy} isLoading={busy === eventID} onClick={() => void action(eventID, () => reprocessEvent(eventID))}>{tr("assistant.reprocess")}</Button><a className="text-sm text-brand-secondary underline outline-focus-ring focus-visible:outline-2" href="#/connections?section=subscriptions">{tr("assistant.createRule")}</a></>}
             </Drawer> : null}
         </div>
     );

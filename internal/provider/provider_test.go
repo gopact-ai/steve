@@ -3,13 +3,46 @@ package provider
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/durable"
+	"github.com/gopact-ai/steve/internal/eventlog"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
+
+func TestOptionalEventPresentationIsCanonicalBoundedAndVersioned(t *testing.T) {
+	s, _, caller := providerFixture(t)
+	input := Register{PluginID: "mail.host", Version: "1", Events: []Contract{{Type: "mail.received", Version: "1", Name: "Email received", I18N: map[string]eventlog.Text{"zh-CN": {Name: "收到邮件", Description: "新邮件到达。"}}, Schema: json.RawMessage(`{}`)}}}
+	first, err := s.Register(t.Context(), caller, input)
+	if err != nil || first.Events[0].Description != "" || first.Events[0].I18N["zh-CN"].Description != "新邮件到达。" {
+		t.Fatalf("optional defaults or translations were lost: %+v, %v", first, err)
+	}
+	input.Events[0].I18N = map[string]eventlog.Text{"ZH-cn": {Name: " 收到邮件 ", Description: "新邮件到达。"}, "en": {}}
+	retry, err := s.Register(t.Context(), caller, input)
+	if err != nil || retry.Generation != first.Generation || retry.Events[0].Digest != first.Events[0].Digest {
+		t.Fatalf("equivalent language tags or empty optional text changed the contract: %+v, %v", retry, err)
+	}
+	input.Generation = first.Generation
+	input.Events[0].I18N = map[string]eventlog.Text{"zh-CN": {Description: "Different meaning"}}
+	if _, err := s.Register(t.Context(), caller, input); !errors.Is(err, ledger.ErrConflict) {
+		t.Fatalf("same contract version silently changed its explanation: %v", err)
+	}
+	for label, event := range map[string]Contract{
+		"long name":           {Name: strings.Repeat("a", 257)},
+		"long description":    {Description: strings.Repeat("a", 2049)},
+		"invalid locale":      {I18N: map[string]eventlog.Text{"not a locale": {Name: "Mail"}}},
+		"duplicate locale":    {I18N: map[string]eventlog.Text{"en": {Name: "Mail"}, "EN": {Name: "Other mail"}}},
+		"long localized text": {I18N: map[string]eventlog.Text{"en": {Description: strings.Repeat("a", 2049)}}},
+	} {
+		event.Type, event.Version, event.Schema = "mail.received", "2", json.RawMessage(`{}`)
+		if _, err := s.Register(t.Context(), caller, Register{Generation: first.Generation, PluginID: "mail.host", Version: "2", Events: []Contract{event}}); err == nil {
+			t.Errorf("accepted unbounded or ambiguous metadata: %s", label)
+		}
+	}
+}
 
 func providerFixture(t *testing.T) (*Service, identity.Enrollment, identity.Principal) {
 	t.Helper()

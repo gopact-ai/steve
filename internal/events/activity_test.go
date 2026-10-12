@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/durable"
+	"github.com/gopact-ai/steve/internal/eventlog"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -22,7 +23,7 @@ func TestActivityUsesReceiptTimeAndRetainsOldColdAttentionWithoutSecretsOrWrites
 	var ids []string
 	for i := range 80 {
 		err := book.Update(t.Context(), func(tx *ledger.Tx) error {
-			event, err := AppendTx(tx, Event{Source: "provider:activity", Key: fmt.Sprint(i), Type: "mail.received", Subject: fmt.Sprintf("Original message %d", i), At: base.Add(time.Duration(i) * time.Second), Payload: json.RawMessage(`{"secret":"` + strings.Repeat("private payload ", 60) + `"}`)})
+			event, err := AppendTx(tx, Event{Source: "provider:activity", Key: fmt.Sprint(i), Type: "mail.received", Contract: &eventlog.Contract{Version: "1", Name: "Email received", I18N: map[string]eventlog.Text{"zh-CN": {Name: "收到邮件", Description: "原始事件说明"}}, Schema: json.RawMessage(`{"private":"schema secret"}`), Digest: "original-contract"}, Subject: fmt.Sprintf("Original message %d", i), At: base.Add(time.Duration(i) * time.Second), Payload: json.RawMessage(`{"secret":"` + strings.Repeat("private payload ", 60) + `"}`)})
 			if err == nil {
 				ids = append(ids, event.ID)
 			}
@@ -66,12 +67,12 @@ func TestActivityUsesReceiptTimeAndRetainsOldColdAttentionWithoutSecretsOrWrites
 		t.Fatalf("bounded activity: %+v, %v", activity, err)
 	}
 	for i, item := range activity.Recent {
-		if item.ID != ids[79-i] || item.Subject != fmt.Sprintf("Original message %d", 79-i) || item.Routed {
+		if item.ID != ids[79-i] || item.Subject != fmt.Sprintf("Original message %d", 79-i) || item.Routed || item.Contract == nil || item.Contract.I18N["zh-CN"].Description != "原始事件说明" {
 			t.Fatalf("recent order or original envelope changed at %d: %+v", i, item)
 		}
 	}
 	for _, item := range activity.Attention {
-		if item.Rule != "Frozen rule" || item.Detail != "Original consumer evidence" || item.EventID != ids[0] && item.EventID != ids[1] {
+		if item.Contract == nil || item.Contract.Name != "Email received" || item.Rule != "Frozen rule" || item.Detail != "Original consumer evidence" || item.EventID != ids[0] && item.EventID != ids[1] {
 			t.Fatalf("old attention disappeared outside recent window: %+v", item)
 		}
 	}

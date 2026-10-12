@@ -10,11 +10,14 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/durable"
+	"github.com/gopact-ai/steve/internal/eventlog"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"golang.org/x/text/language"
 )
 
 const RegistrationKind = "event-provider-registration"
@@ -23,11 +26,13 @@ const ContractKind = "event-provider-contract"
 var ErrContract = errors.New("provider event contract is absent or incompatible")
 
 type Contract struct {
-	Type        string          `json:"type"`
-	Version     string          `json:"version"`
-	Description string          `json:"description"`
-	Schema      json.RawMessage `json:"schema"`
-	Digest      string          `json:"digest"`
+	Type        string                   `json:"type"`
+	Version     string                   `json:"version"`
+	Name        string                   `json:"name,omitempty"`
+	Description string                   `json:"description,omitempty"`
+	I18N        map[string]eventlog.Text `json:"i18n,omitempty"`
+	Schema      json.RawMessage          `json:"schema"`
+	Digest      string                   `json:"digest"`
 }
 
 type Register struct {
@@ -74,10 +79,48 @@ func canonicalContracts(input []Contract) ([]Contract, error) {
 	}
 	out := append([]Contract(nil), input...)
 	seen := map[string]bool{}
-	total := 0
+	total, metadataTotal := 0, 0
 	for i := range out {
 		c := &out[i]
+		c.Name = strings.TrimSpace(c.Name)
+		if len(c.Name) > 256 || len(c.I18N) > 16 {
+			return nil, errors.New("provider event names and translations exceed metadata limits")
+		}
+		var translations map[string]eventlog.Text
+		for locale, text := range c.I18N {
+			tag, err := language.Parse(locale)
+			if err != nil || len(locale) > 64 {
+				return nil, errors.New("provider event translations require BCP 47 language tags")
+			}
+			text.Name, text.Description = strings.TrimSpace(text.Name), strings.TrimSpace(text.Description)
+			if len(text.Name) > 256 || len(text.Description) > 2048 {
+				return nil, errors.New("provider event translations exceed text limits")
+			}
+			if text.Name == "" && text.Description == "" {
+				continue
+			}
+			if translations == nil {
+				translations = map[string]eventlog.Text{}
+			}
+			key := tag.String()
+			if _, exists := translations[key]; exists {
+				return nil, errors.New("provider event translations contain duplicate language tags")
+			}
+			translations[key] = text
+		}
+		c.I18N = translations
+		metadata, err := json.Marshal(struct {
+			Name string                   `json:"name,omitempty"`
+			I18N map[string]eventlog.Text `json:"i18n,omitempty"`
+		}{c.Name, c.I18N})
+		if err != nil || len(metadata) > 16<<10 {
+			return nil, errors.New("provider event presentation exceeds metadata limits")
+		}
 		total += len(c.Schema)
+		metadataTotal += len(c.Description) + len(metadata)
+		if metadataTotal > 256<<10 {
+			return nil, errors.New("provider event presentation exceeds registration metadata limits")
+		}
 		if !identity.ValidName(c.Type) || !identity.ValidName(c.Version) || seen[c.Type] || len(c.Description) > 2048 || len(c.Schema) > 16<<10 || total > 256<<10 || !json.Valid(c.Schema) {
 			return nil, errors.New("provider requires unique event types and bounded versioned contracts")
 		}
@@ -96,6 +139,11 @@ func canonicalContracts(input []Contract) ([]Contract, error) {
 		}
 		c.Schema = canonical
 		c.Digest = durable.Key(c.Type, c.Version, c.Description, string(canonical))
+		// Preserve existing digests when optional presentation is absent. New
+		// metadata belongs to the same immutable version as the schema.
+		if c.Name != "" || len(c.I18N) != 0 {
+			c.Digest = durable.Key(c.Digest, "presentation-v1", string(metadata))
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
 	return out, nil

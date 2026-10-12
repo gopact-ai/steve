@@ -8,7 +8,10 @@ export interface Subscription {
     id: string; revision: number; name: string; enabled: boolean; source?: string; event_type: string; include_derived: boolean;
     mode: "inbox" | "work" | "provider"; handler?: string; conversation?: string; project?: string; instruction?: string; replay_safe: boolean;
 }
-export interface BusinessEvent { id: string; source: string; key: string; type: string; subject?: string; payload: unknown; causation?: string; depth: number; at: string; attention: boolean }
+export interface EventText { name?: string; description?: string }
+export interface EventDefinition extends EventText { version: string; digest?: string; i18n?: Record<string, EventText> }
+export interface EventContract extends EventDefinition { type: string; schema?: unknown }
+export interface BusinessEvent { id: string; source: string; key: string; type: string; subject?: string; contract?: EventDefinition; payload: unknown; causation?: string; depth: number; at: string; attention: boolean }
 export interface EventJournalEntry extends Omit<BusinessEvent, "payload" | "attention"> { routed: boolean }
 export interface EventFlowSnapshot {
     observed_at: string;
@@ -19,7 +22,7 @@ export interface EventFlowSnapshot {
 }
 export interface EventActivitySnapshot {
     recent: EventJournalEntry[];
-    attention: { id: string; event_id: string; type: string; subject?: string; source: string; rule: string; state: EventDelivery["state"]; mode: Subscription["mode"]; detail?: string; at: string }[];
+    attention: { id: string; event_id: string; type: string; subject?: string; contract?: EventDefinition; source: string; rule: string; state: EventDelivery["state"]; mode: Subscription["mode"]; detail?: string; at: string }[];
     more_attention: boolean;
 }
 export interface EventDelivery {
@@ -29,7 +32,7 @@ export interface EventDelivery {
 }
 export interface EventProvider {
     id: string; principal: string; name: string; plugin_id?: string; version?: string; generation: number;
-    events?: { type: string; version: string; description: string }[]; until?: string; state: "unregistered" | "online" | "offline" | "retired";
+    events?: EventContract[]; until?: string; state: "unregistered" | "online" | "offline" | "retired";
 }
 export interface ServiceBacklog {
     queues: Record<string, { pending: number; oldest?: string }>;

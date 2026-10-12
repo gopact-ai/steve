@@ -37,6 +37,8 @@ export const assistantZh = {
     "assistant.save": "保存",
     "assistant.close": "关闭",
     "assistant.edit": "编辑",
+    "assistant.eventDefinitions": "事件定义",
+    "assistant.eventDescription": "事件说明",
     "assistant.eventType": "事件类型",
     "assistant.source": "限定来源",
     "assistant.sourceHint": "留空匹配所有已授权来源；填写连接的 principal 可限定一个插件。",

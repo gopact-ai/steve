@@ -8,6 +8,7 @@ import { Button } from "@/components/base/buttons/button";
 import { Panel } from "@/components/steve/page";
 import { Nothing } from "@/components/steve/ui";
 import { AssistantFeedback, AssistantPager } from "@/components/steve/assistant-projection";
+import { EventDefinition } from "@/components/steve/event-definition";
 import { EventBusFlow } from "@/components/steve/event-bus-flow";
 import { EventBusActivity } from "@/components/steve/event-bus-activity";
 import { EventBusInspector } from "@/components/steve/event-bus-inspector";
@@ -57,7 +58,7 @@ export function EventBus() {
             {!providers.error && providers.page?.items.length === 0 ? <p className="py-3 text-sm text-tertiary">{t("assistant.busEmptyProviders")}</p> : null}
             {!providers.error ? <ul className="bus-provider-list divide-y divide-secondary">{providers.page?.items.map((provider) => <li key={provider.id} className="flex min-w-0 items-center gap-3 py-3">
                 <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-secondary bg-secondary text-tertiary"><Link01 aria-hidden="true" className="size-4" /></div>
-                <div className="min-w-0 flex-1"><h3 title={provider.name} className="truncate text-xs font-semibold text-primary">{provider.name}</h3><p title={provider.plugin_id ? `${provider.plugin_id} · ${provider.version}` : provider.principal} className="mt-1 truncate text-xs text-quaternary" translate="no">{provider.plugin_id || provider.principal}</p></div>
+                <div className="min-w-0 flex-1"><h3 title={provider.name} className="truncate text-xs font-semibold text-primary">{provider.name}</h3><p title={provider.plugin_id ? `${provider.plugin_id} · ${provider.version}` : provider.principal} className="mt-1 truncate text-xs text-quaternary" translate="no">{provider.plugin_id || provider.principal}</p>{provider.events?.length ? <details className="mt-2"><summary className="cursor-pointer text-xs text-tertiary outline-focus-ring focus-visible:outline-2">{t("assistant.eventDefinitions")}</summary><ul className="mt-2 space-y-3">{provider.events.map((event) => <li key={event.type}><EventDefinition type={event.type} definition={event} /></li>)}</ul></details> : null}</div>
                 <Badge type="pill-color" color={provider.state === "online" ? "success" : provider.state === "offline" ? "warning" : "gray"} size="sm">{t(provider.state === "online" ? "assistant.online" : provider.state === "offline" ? "assistant.offline" : provider.state === "retired" ? "assistant.busRetired" : "assistant.busUnregistered")}</Badge>
             </li>)}</ul> : null}
         </div>
@@ -85,7 +86,7 @@ export function EventBus() {
             {!resource.error && view === "events" && events.page?.items.length ? <div className="bus-record-scroll"><Table aria-label={t("assistant.busEvents")} selectionMode="none" className={`bus-record-table table-fixed ${compact ? "" : "min-w-200"}`}>
                 <Table.Header size="sm"><Table.Head id="event" isRowHeader label={t("assistant.busRecordEvent")} className="bus-table-event" />{!compact ? <Table.Head id="source" label={t("assistant.busRecordSource")} className="bus-table-target w-[22%]" /> : null}<Table.Head id="state" label={t("assistant.busRecordState")} className="bus-table-state w-48 whitespace-nowrap" />{!compact ? <Table.Head id="time" label={t("assistant.busRecordTime")} className="bus-table-time w-48 whitespace-nowrap" /> : null}<Table.Head id="inspect" aria-label={t("assistant.inspect")} className="w-16" /></Table.Header>
                 <Table.Body dependencies={[compact, names, params, locale]} items={events.page.items}>{(event) => <Table.Row className="after:hidden" id={event.id} href={detailLink("event", event.id)} size="sm">
-                    <Table.Cell size="sm" textValue={event.type}><p title={event.type} className="truncate font-mono text-sm font-medium text-primary" translate="no">{event.type}</p>{event.subject ? <p title={event.subject} className="mt-1 truncate text-xs text-tertiary">{event.subject}</p> : null}<span className="sr-only" translate="no">{event.id}</span></Table.Cell>
+                    <Table.Cell size="sm" textValue={event.type}><EventDefinition type={event.type} definition={event.contract} compact />{event.subject ? <p title={event.subject} className="mt-1 truncate text-xs text-tertiary">{event.subject}</p> : null}<span className="sr-only" translate="no">{event.id}</span></Table.Cell>
                     {!compact ? <Table.Cell size="sm" className="bus-table-target"><p className="truncate text-xs text-secondary" title={event.source}>{names.get(event.source) || event.source}</p></Table.Cell> : null}
                     <Table.Cell size="sm" className="bus-table-state"><Badge type="pill-color" color={event.routed ? "success" : "gray"} size="sm">{t(event.routed ? "assistant.busRouted" : "assistant.busRouting")}</Badge></Table.Cell>
                     {!compact ? <Table.Cell size="sm" className="bus-table-time">{recordTime(event.at)}</Table.Cell> : null}

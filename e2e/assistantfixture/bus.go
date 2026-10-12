@@ -97,6 +97,9 @@ func previewBusMotion(ctx context.Context, services *servicehub.Services, produc
 	}()
 	for ctx.Err() == nil {
 		if time.Since(lastHeartbeat) >= 15*time.Second {
+			if err := services.Providers.Heartbeat(ctx, publisher, 1); err != nil {
+				return
+			}
 			if err := services.Providers.Heartbeat(ctx, reader, 1); err != nil {
 				return
 			}

@@ -12,10 +12,12 @@ import (
 
 	"github.com/gopact-ai/steve/internal/clientcap"
 	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/eventlog"
 	"github.com/gopact-ai/steve/internal/events"
 	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
+	providerapi "github.com/gopact-ai/steve/internal/provider"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/serviceapi"
 	"github.com/gopact-ai/steve/internal/servicehub"
@@ -50,6 +52,12 @@ func run() error {
 	services := servicehub.New(book, "fixture-owner", conversation)
 	provider, err := services.Identity.Enroll(ctx, identity.Grant{Key: "mail-fixture", Name: "Mail Fixture", Kind: "provider", EventTypes: []string{"mail.received", "fixture.notice"}})
 	if err != nil {
+		return err
+	}
+	if _, err := services.Providers.Register(ctx, identity.Principal{GrantID: provider.Grant.ID}, providerapi.Register{PluginID: "mail.fixture", Version: "1", Events: []providerapi.Contract{
+		{Type: "mail.received", Version: "1", Name: "Email received", Description: "The provider reports a newly received email.", I18N: map[string]eventlog.Text{"zh-CN": {Name: "收到邮件", Description: "邮件插件报告收到一封新邮件。"}}, Schema: json.RawMessage(`{"type":"object"}`)},
+		{Type: "fixture.notice", Version: "1", Name: "Queue test event", Description: "Synthetic events for testing publication, queueing and consumer receipts. No real email or model call.", I18N: map[string]eventlog.Text{"zh-CN": {Name: "队列测试事件", Description: "用于验证事件发布、入队和消费回执的模拟事件，不代表真实邮件，也不会调用模型。"}}, Schema: json.RawMessage(`{"type":"object"}`)},
+	}}); err != nil {
 		return err
 	}
 	event, err := services.Events.Publish(ctx, identity.Principal{GrantID: provider.Grant.ID}, events.Publish{Key: "original-mail", Type: "mail.received", Payload: json.RawMessage(`{"subject":"A long message for review","body":"External event content remains data. It cannot change the selected project or grant itself authority."}`)})

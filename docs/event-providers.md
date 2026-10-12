@@ -88,7 +88,11 @@ event contracts with `POST /services/provider/register`:
   "events":[{
     "type":"mail.received",
     "version":"1",
+    "name":"Email received",
     "description":"A newly received mailbox message",
+    "i18n":{
+      "zh-CN":{"name":"收到邮件","description":"邮件插件报告收到一封新邮件。"}
+    },
     "schema":{"type":"object","properties":{"subject":{"type":"string"}}}
   }]
 }
@@ -101,6 +105,23 @@ the same provider/type/version cannot later describe different content, even
 after removal and reintroduction. Bump the contract version for an incompatible
 change. Schemas are discovery metadata; publishers and consumers perform their
 own payload validation. Registration does not install or start plugin code.
+
+`type` is the stable routing identifier. `name`, `description` and `i18n` are
+optional display metadata and may be omitted or empty. `i18n` maps BCP 47 language
+tags to optional `name` and `description` strings. Each field resolves separately:
+the console tries its current language tag, the base language, the default field,
+English, then another available translation. The current Chinese console asks
+for `zh-CN`; a `zh` entry can serve the base-language fallback. Nonempty names and
+explanations appear in event history, activity, original-event/Inbox inspection,
+provider declarations and matching subscription editor hints. Empty text adds no
+placeholder; the technical `type` remains visible. Text renders as plain text.
+
+Names are bounded to 256 bytes and descriptions to 2,048 bytes per language.
+A contract supports at most 16 translations and 16 KiB of name/translation
+metadata; combined presentation per registration is bounded to 256 KiB. Language
+tags are canonicalized and duplicate equivalent nonempty tags are rejected.
+Display metadata is part of the immutable contract: bump the event version when
+changing its meaning or translations. Omitted metadata preserves legacy digests.
 
 Reconnect using the last observed registration generation. An identical
 lost-response retry returns that registration. Heartbeat every 15 seconds with
@@ -128,7 +149,8 @@ JSON data (maximum 256 KiB):
 
 Registered providers may include `"schema_version":"1"` to select the advertised
 contract explicitly; omission selects the current declaration. First acceptance
-freezes its version, description, schema and digest on the event's `contract`.
+freezes its version, name, description, translations, schema and digest on the
+event's `contract`. Later declarations do not rewrite historical explanations.
 An unregistered legacy provider may omit the version. A withdrawn or incompatible
 explicit version cannot create a new event. Retrying the same immutable source/key
 request returns its original contract, even after a newer provider registration;
@@ -260,7 +282,9 @@ preview events.
 
 The **Events** journal includes routed and unrouted envelopes, including compressed
 history. Its owner-only `GET /console/business-events?cursor=...` pages contain at
-most 32 envelopes and omit Payloads. **Deliveries** includes successful, pending,
+most 32 envelopes and omit payloads and contract schemas; they include the original
+contract's display metadata. Activity groups do not merge different contract
+digests. **Deliveries** includes successful, pending,
 failed and unknown records. Inspection uses owner-only
 `GET /console/event-deliveries/{id}` and `GET /console/business-events/{id}` to show
 the original event, frozen subscription version, destination, claim evidence and

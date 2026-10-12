@@ -29,6 +29,8 @@ try {
     const dialog=page.getByRole("dialog",{name:"Add Subscription",exact:true});
     await dialog.getByRole("textbox",{name:/^Name(?:\s*\*)?$/}).fill("Review received mail");
     await dialog.getByRole("textbox",{name:/^Event Type(?:\s*\*)?$/}).fill("mail.received");
+    await dialog.getByText("Email received",{exact:true}).waitFor();
+    await dialog.getByText("The provider reports a newly received email.",{exact:true}).waitFor();
     await dialog.getByRole("button",{name:"Save",exact:true}).click();await dialog.waitFor({state:"hidden"});
     await page.getByRole("heading",{name:"Review received mail",exact:true}).waitFor();
     await page.reload();await page.getByRole("heading",{name:"Review received mail",exact:true}).waitFor();
@@ -36,6 +38,7 @@ try {
     await page.goto(url+"?token=assistant-fixture-owner#/inbox");
     await page.locator("li").filter({hasText:connection.event}).getByRole("button",{name:"Inspect",exact:true}).click();
     await page.getByRole("dialog",{name:"Event Details",exact:true}).waitFor();
+    await page.getByRole("dialog",{name:"Event Details",exact:true}).getByText("The provider reports a newly received email.",{exact:true}).waitFor();
     await page.getByText("A long message for review",{exact:false}).waitFor();
     await page.getByRole("button",{name:"Process with Current Subscriptions",exact:true}).click();
     await page.getByRole("button",{name:"Process with Current Subscriptions",exact:true}).waitFor({state:"visible"});
@@ -98,6 +101,8 @@ try {
     await page.keyboard.press("Enter");
 
     await page.getByRole("dialog",{name:"Event Details",exact:true}).getByText("A recorded event for delivery inspection",{exact:false}).waitFor();
+    await page.getByRole("dialog",{name:"Event Details",exact:true}).getByText("Queue test event",{exact:true}).waitFor();
+    await page.getByRole("dialog",{name:"Event Details",exact:true}).getByText("Synthetic events for testing publication, queueing and consumer receipts. No real email or model call.",{exact:true}).waitFor();
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,"narrow bus or drawer overflowed viewport");
     await page.keyboard.press("Escape");
     await page.getByRole("dialog",{name:"Event Details",exact:true}).waitFor({state:"hidden"});

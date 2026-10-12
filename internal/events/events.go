@@ -144,7 +144,7 @@ func (s *Service) Publish(ctx context.Context, p identity.Principal, input Publi
 				return err
 			}
 			if declared {
-				event.Contract = &eventlog.Contract{Version: contract.Version, Description: contract.Description, Schema: contract.Schema, Digest: contract.Digest}
+				event.Contract = &eventlog.Contract{Version: contract.Version, Name: contract.Name, Description: contract.Description, I18N: contract.I18N, Schema: contract.Schema, Digest: contract.Digest}
 			}
 			if err := s.checkCapacityTx(tx, grant.Principal, 1); err != nil {
 				return err

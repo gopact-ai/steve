@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/durable"
+	"github.com/gopact-ai/steve/internal/eventlog"
 	"github.com/gopact-ai/steve/internal/ingress"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
@@ -17,16 +18,17 @@ type ActivitySnapshot struct {
 	MoreAttention bool             `json:"more_attention"`
 }
 type AttentionEntry struct {
-	ID      string    `json:"id"`
-	EventID string    `json:"event_id"`
-	Type    string    `json:"type"`
-	Subject string    `json:"subject,omitempty"`
-	Source  string    `json:"source"`
-	Rule    string    `json:"rule"`
-	State   string    `json:"state"`
-	Mode    string    `json:"mode"`
-	Detail  string    `json:"detail,omitempty"`
-	At      time.Time `json:"at"`
+	ID       string               `json:"id"`
+	EventID  string               `json:"event_id"`
+	Type     string               `json:"type"`
+	Subject  string               `json:"subject,omitempty"`
+	Source   string               `json:"source"`
+	Rule     string               `json:"rule"`
+	State    string               `json:"state"`
+	Mode     string               `json:"mode"`
+	Detail   string               `json:"detail,omitempty"`
+	At       time.Time            `json:"at"`
+	Contract *eventlog.Definition `json:"contract,omitempty"`
 }
 
 // Activity is a small dashboard projection. Recent order comes from immutable
@@ -126,7 +128,7 @@ func (s *Service) Activity(ctx context.Context) (out ActivitySnapshot, err error
 			if !found {
 				return errors.New("delivery attention has no original event")
 			}
-			out.Attention = append(out.Attention, AttentionEntry{ID: delivery.ID, EventID: event.ID, Type: event.Type, Subject: event.Subject, Source: event.Source, Rule: delivery.Rule.Name, State: delivery.State, Mode: delivery.Rule.Mode, Detail: delivery.Detail, At: delivery.UpdatedAt})
+			out.Attention = append(out.Attention, AttentionEntry{ID: delivery.ID, EventID: event.ID, Type: event.Type, Subject: event.Subject, Source: event.Source, Contract: event.Contract, Rule: delivery.Rule.Name, State: delivery.State, Mode: delivery.Rule.Mode, Detail: delivery.Detail, At: delivery.UpdatedAt})
 		}
 		return nil
 	})

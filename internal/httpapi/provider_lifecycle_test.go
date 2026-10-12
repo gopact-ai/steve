@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/events"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -73,7 +74,7 @@ func TestProviderCredentialHTTPRecoveryPreservesSourceAndAuthorityBoundaries(t *
 		t.Fatal("idempotent rotation revealed or replaced the existing credential")
 	}
 	call(http.MethodPost, path, "fixture-owner", fmt.Sprintf(`{"revision":%d,"idempotency_key":"stale"}`, initial.Grant.CredentialRevision), 409)
-	registration := `{"generation":0,"plugin_id":"mail.host","version":"1.0.0","events":[{"type":"mail.received","version":"1","description":"New message","schema":{"type":"object"}}]}`
+	registration := `{"generation":0,"plugin_id":"mail.host","version":"1.0.0","events":[{"type":"mail.received","version":"1","name":"Email received","description":"New message","i18n":{"zh-CN":{"name":"收到邮件","description":"报告新邮件到达。"}},"schema":{"type":"object"}}]}`
 	call(http.MethodPost, "/services/provider/register", "fixture-owner", registration, 401)
 	registered := call(http.MethodPost, "/services/provider/register", replacement.Token, registration, 200)
 	var declaration provider.Registration
@@ -91,14 +92,28 @@ func TestProviderCredentialHTTPRecoveryPreservesSourceAndAuthorityBoundaries(t *
 	versionedBody := `{"key":"mailbox/versioned-123","type":"mail.received","schema_version":"1","payload":{"subject":"Hello"}}`
 	versioned := call(http.MethodPost, "/services/events", replacement.Token, versionedBody, 200)
 	var frozen events.Event
-	if err := json.Unmarshal(versioned.Body.Bytes(), &frozen); err != nil || frozen.Contract == nil || frozen.Contract.Version != "1" {
+	if err := json.Unmarshal(versioned.Body.Bytes(), &frozen); err != nil || frozen.Contract == nil || frozen.Contract.Version != "1" || frozen.Contract.Name != "Email received" || frozen.Contract.I18N["zh-CN"].Description != "报告新邮件到达。" {
 		t.Fatal("versioned event did not freeze its declared contract")
 	}
 	call(http.MethodPost, "/services/provider/register", replacement.Token, `{"generation":1,"plugin_id":"mail.host","version":"2.0.0","events":[{"type":"mail.received","version":"2","description":"Required subject","schema":{"type":"object","required":["subject"]}}]}`, 200)
 	versionedRetry := call(http.MethodPost, "/services/events", replacement.Token, versionedBody, 200)
 	var retained events.Event
-	if err := json.Unmarshal(versionedRetry.Body.Bytes(), &retained); err != nil || retained.ID != frozen.ID || retained.Contract == nil || retained.Contract.Digest != frozen.Contract.Digest {
+	if err := json.Unmarshal(versionedRetry.Body.Bytes(), &retained); err != nil || retained.ID != frozen.ID || retained.Contract == nil || retained.Contract.Digest != frozen.Contract.Digest || retained.Contract.Name != frozen.Contract.Name || retained.Contract.I18N["zh-CN"] != frozen.Contract.I18N["zh-CN"] {
 		t.Fatal("schema upgrade rewrote a repeated publisher's original receipt")
+	}
+	journalResponse := call(http.MethodGet, "/console/business-events", "fixture-owner", "", 200)
+	var journal durable.Page[events.JournalEntry]
+	if err := json.Unmarshal(journalResponse.Body.Bytes(), &journal); err != nil {
+		t.Fatal(err)
+	}
+	foundDefinition := false
+	for _, item := range journal.Items {
+		if item.ID == frozen.ID {
+			foundDefinition = item.Contract != nil && item.Contract.Name == "Email received" && item.Contract.I18N["zh-CN"].Name == "收到邮件"
+		}
+	}
+	if !foundDefinition || strings.Contains(journalResponse.Body.String(), `"schema":`) {
+		t.Fatal("journal omitted the frozen definition or eagerly returned its schema")
 	}
 	call(http.MethodPost, "/services/events", replacement.Token, `{"key":"mailbox/versioned-123","type":"mail.received","schema_version":"2","payload":{"subject":"Hello"}}`, 409)
 	call(http.MethodPost, "/services/events", replacement.Token, `{"key":"mailbox/new-old-version","type":"mail.received","schema_version":"1","payload":{"subject":"Hello"}}`, 400)

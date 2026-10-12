@@ -32,8 +32,25 @@ type Event struct {
 
 type Contract struct {
 	Version     string          `json:"version"`
+	Name        string          `json:"name,omitempty"`
 	Description string          `json:"description,omitempty"`
+	I18N        map[string]Text `json:"i18n,omitempty"`
 	Schema      json.RawMessage `json:"schema"`
+	Digest      string          `json:"digest"`
+}
+
+// Text is optional human-readable metadata, never a routing identifier or
+// execution instruction. Definition omits the schema from polling projections.
+type Text struct {
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+type Definition struct {
+	Version     string          `json:"version"`
+	Name        string          `json:"name,omitempty"`
+	Description string          `json:"description,omitempty"`
+	I18N        map[string]Text `json:"i18n,omitempty"`
 	Digest      string          `json:"digest"`
 }
 

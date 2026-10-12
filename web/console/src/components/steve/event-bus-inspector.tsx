@@ -7,6 +7,7 @@ import { DeliveryState } from "@/components/steve/event-bus-state";
 import { AssistantFeedback } from "@/components/steve/assistant-projection";
 import { fetchBusinessEvent, fetchEventDelivery } from "@/lib/api/assistant";
 import { dateTime } from "@/lib/format";
+import { eventDefinitionText } from "@/lib/event-definition";
 import { message } from "@/lib/http";
 import { useI18n } from "@/providers/locale-provider";
 import type { BusinessEvent, EventDelivery } from "@/lib/assistant-types";
@@ -29,6 +30,7 @@ export function EventBusInspector({ deliveryID, eventID, onClose }: { deliveryID
         return () => { active = false; controller.abort(); };
     }, [deliveryID, eventID, version]);
     const delivery = value?.delivery;
+    const definition = eventDefinitionText(value?.event.contract, locale);
     return <Drawer title={t(deliveryID ? "assistant.busDeliveryDetail" : "assistant.eventDetail")} subtitle={<span className="font-mono" translate="no">{deliveryID || eventID}</span>} onClose={onClose}>
         <AssistantFeedback error={error} loading={!value && !error} onRefresh={() => setVersion((before) => before + 1)} />
         {value ? <>
@@ -47,6 +49,8 @@ export function EventBusInspector({ deliveryID, eventID, onClose }: { deliveryID
                 <KeyValue rows={[
                     { k: t("assistant.busEventID"), v: <code translate="no">{value.event.id}</code> },
                     { k: t("assistant.eventType"), v: <code translate="no">{value.event.type}</code> },
+                    ...(definition.name ? [{ k: t("assistant.name"), v: definition.name }] : []),
+                    ...(definition.description ? [{ k: t("assistant.eventDescription"), v: <span className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{definition.description}</span> }] : []),
                     { k: t("assistant.origin"), v: <code translate="no">{value.event.source}</code> },
                     { k: t("assistant.at"), v: dateTime(value.event.at, locale, { dateStyle: "short", timeStyle: "medium" }) },
                     { k: t("assistant.busProducerKey"), v: <code translate="no">{value.event.key}</code> },

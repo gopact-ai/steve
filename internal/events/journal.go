@@ -5,21 +5,23 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/durable"
+	"github.com/gopact-ai/steve/internal/eventlog"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 // JournalEntry is a read-only envelope. Payloads are fetched on inspection,
 // rather than multiplying large external content across every polling page.
 type JournalEntry struct {
-	ID        string    `json:"id"`
-	Source    string    `json:"source"`
-	Key       string    `json:"key"`
-	Type      string    `json:"type"`
-	Subject   string    `json:"subject,omitempty"`
-	Causation string    `json:"causation,omitempty"`
-	Depth     int       `json:"depth"`
-	At        time.Time `json:"at"`
-	Routed    bool      `json:"routed"`
+	ID        string               `json:"id"`
+	Source    string               `json:"source"`
+	Key       string               `json:"key"`
+	Type      string               `json:"type"`
+	Subject   string               `json:"subject,omitempty"`
+	Causation string               `json:"causation,omitempty"`
+	Depth     int                  `json:"depth"`
+	At        time.Time            `json:"at"`
+	Routed    bool                 `json:"routed"`
+	Contract  *eventlog.Definition `json:"contract,omitempty"`
 }
 
 // Journal reads envelopes and outbox evidence in the same snapshot. Routed

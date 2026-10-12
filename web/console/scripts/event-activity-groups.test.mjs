@@ -10,7 +10,7 @@ test("the digest merges consecutive equal events without mixing sources, content
     assert.equal(digest.reduce((sum, group) => sum + group.count, 0), records.length);
     assert.equal(records[0], event, "grouping mutated the latest original record");
     assert.deepEqual(eventActivityGroups([]), []);
-    for (const different of [{ source: "other-mailbox" }, { type: "mail.sent" }, { subject: "Meeting" }, { routed: false }]) {
+    for (const different of [{ source: "other-mailbox" }, { type: "mail.sent" }, { subject: "Meeting" }, { routed: false }, { contract: { version: "2", digest: "new-definition" } }]) {
         assert.equal(eventActivityGroups([event, { ...event, ...different, id: "different" }]).length, 2, `merged a distinct event: ${JSON.stringify(different)}`);
     }
 });

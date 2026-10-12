@@ -38,6 +38,8 @@ export const assistantEn = {
     "assistant.save": "Save",
     "assistant.close": "Close",
     "assistant.edit": "Edit",
+    "assistant.eventDefinitions": "Event Definitions",
+    "assistant.eventDescription": "Event Description",
     "assistant.eventType": "Event Type",
     "assistant.source": "Restrict Source",
     "assistant.sourceHint": "Leave empty for all authorized sources, or use a connection principal to match one provider.",
