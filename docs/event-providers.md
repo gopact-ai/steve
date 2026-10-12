@@ -109,8 +109,9 @@ own payload validation. Registration does not install or start plugin code.
 `type` is the stable routing identifier. `name`, `description` and `i18n` are
 optional display metadata and may be omitted or empty. `i18n` maps BCP 47 language
 tags to optional `name` and `description` strings. Each field resolves separately:
-the console tries its current language tag, the base language, the default field,
-English, then another available translation. The current Chinese console asks
+the console tries its current language tag, the base language and its regional
+variants, the default field, English (including regional variants), then another
+available translation. The current Chinese console asks
 for `zh-CN`; a `zh` entry can serve the base-language fallback. Nonempty names and
 explanations appear in event history, activity, original-event/Inbox inspection,
 provider declarations and matching subscription editor hints. Empty text adds no

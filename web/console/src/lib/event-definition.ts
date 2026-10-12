@@ -6,7 +6,11 @@ export function eventDefinitionText(definition: EventDefinition | undefined, loc
     if (!definition) return {};
     const language = (locale === "zh" ? "zh-CN" : locale).toLowerCase();
     const translations = new Map(Object.entries(definition.i18n || {}).map(([tag, text]) => [tag.toLowerCase(), text]));
-    const choices = [translations.get(language), translations.get(language.split("-")[0]), definition, translations.get("en"), ...[...translations].sort(([a], [b]) => a.localeCompare(b)).map(([, text]) => text)];
+    const ordered = [...translations].sort(([a], [b]) => a.localeCompare(b));
+    const base = language.split("-")[0];
+    const variants = ordered.filter(([tag]) => tag.startsWith(`${base}-`)).map(([, text]) => text);
+    const english = ordered.filter(([tag]) => tag.startsWith("en-")).map(([, text]) => text);
+    const choices = [translations.get(language), translations.get(base), ...variants, definition, translations.get("en"), ...english, ...ordered.map(([, text]) => text)];
     const text: EventText = {};
     for (const field of ["name", "description"] as const) {
         const value = choices.find((candidate) => candidate?.[field]?.trim())?.[field]?.trim();
