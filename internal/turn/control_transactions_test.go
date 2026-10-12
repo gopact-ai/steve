@@ -11,12 +11,14 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/control"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
+	"github.com/gopact-ai/steve/internal/work"
 )
 
 type closeHookRuntime struct {
@@ -104,6 +106,12 @@ func TestResetPersistsItsFenceBeforeCloseAndRecoversFailedFinalization(t *testin
 			// reply confirms the original close without opening another context.
 			c.store = reopened
 			c.runtime = sessions
+			stale := reopened.Conversation(req.Source.ConversationID).Sessions["codex"]
+			stale.UpstreamID = "another-native-session"
+			closes := len(sessions.closes)
+			if _, err := c.commands().retryReset(t.Context(), req, agent.Agent{ID: "codex"}, stale); !errors.Is(err, state.ErrSessionChanged) || len(sessions.closes) != closes {
+				t.Fatalf("close retry accepted a different native identity: %v", err)
+			}
 			sessions.err = &node.SessionError{Code: "absent", Message: "already closed"}
 			if _, err := c.commands().reset(t.Context(), req, agent.Agent{ID: "codex"}); err != nil {
 				t.Fatalf("close retry could not finalize its original intent: %v", err)
@@ -113,6 +121,66 @@ func TestResetPersistsItsFenceBeforeCloseAndRecoversFailedFinalization(t *testin
 				t.Fatalf("retry lost/duplicated original history: %+v", got)
 			}
 		})
+	}
+}
+
+func TestResetRetryFinishesOnlyItsApprovedIntentAfterProjectRevocation(t *testing.T) {
+	c, sessions, req, _ := retirementCoordinator(t)
+	accounts := &identity.Accounts{Book: ledgerOf(t, c)}
+	config := c.owners.Configuration()
+	config.Accounts = accounts
+	if err := accounts.Bootstrap(t.Context(), config); err != nil {
+		t.Fatal(err)
+	}
+	owners, err := identity.NewOwners(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.owners, c.controls.Owners = owners, owners
+	c.work = &work.Engine{Book: accounts.Book, Runtime: "close-recovery-fixture"}
+	if err := c.projects.SetIdentityPolicy(t.Context(), accounts, req.Source.Channel); err != nil {
+		t.Fatal(err)
+	}
+	req.Actor.ID, req.Input, req.Source.MessageID = "close-caller", "/new", "close-first"
+	principal := identity.Account{Channel: req.Source.Channel, ID: req.Actor.ID}.Principal()
+	binding, _, err := c.projects.Binding(t.Context(), req.Source.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.projects.Grant(t.Context(), binding.ProjectID, principal, project.RoleWrite, accounts.Owner); err != nil {
+		t.Fatal(err)
+	}
+	lost := errors.New("test close response lost")
+	sessions.err = lost
+	if _, err := c.Handle(t.Context(), req); !errors.Is(err, lost) {
+		t.Fatalf("expected a dispatched close with a lost response: %v", err)
+	}
+	original := c.store.Conversation(req.Source.ConversationID).Sessions["codex"]
+	if original.ClosingAt == "" {
+		t.Fatal("missing approved close intent")
+	}
+	beforeTasks := c.tasks.List(req.Source.ConversationID)
+	if _, err := c.projects.Grant(t.Context(), binding.ProjectID, principal, project.RoleNone, accounts.Owner); err != nil {
+		t.Fatal(err)
+	}
+	req.Input, req.Source.MessageID = "@codex /new", "close-retry"
+	sessions.err = &node.SessionError{Code: "absent", Message: "already closed"}
+	if _, err := c.Handle(t.Context(), req); err != nil {
+		t.Fatalf("fresh project policy blocked the exact admitted close: %v", err)
+	}
+	got := c.store.Conversation(req.Source.ConversationID)
+	if len(got.Sessions) != 0 || len(got.Archived) != 1 || got.Archived[0].UpstreamID != original.UpstreamID || !reflect.DeepEqual(beforeTasks, c.tasks.List(req.Source.ConversationID)) {
+		t.Fatal("retry changed task scope or failed to archive the exact original session")
+	}
+	// Finishing the approved action must not grant permission for another one.
+	original.ClosingAt = ""
+	if err := c.store.SaveSession(original); err != nil {
+		t.Fatal(err)
+	}
+	req.Source.MessageID = "close-unapproved"
+	closes := len(sessions.closes)
+	if _, err := c.Handle(t.Context(), req); !errors.Is(err, control.ErrDenied) || len(sessions.closes) != closes {
+		t.Fatalf("retry authority escaped into a new close: %v", err)
 	}
 }
 
@@ -210,7 +278,7 @@ func TestCoveredHoldRefusalLeavesEveryPriorStampIntact(t *testing.T) {
 }
 
 func TestModelPreferenceRefusalDoesNotChangeTheNativeModel(t *testing.T) {
-	for _, failure := range []string{"authority", "write", "native update"} {
+	for _, failure := range []string{"authority", "write", "native update", "ignored update", "empty readback"} {
 		t.Run(failure, func(t *testing.T) {
 			book := testLedger(t)
 			store, err := state.OpenLedger(book)
@@ -219,9 +287,12 @@ func TestModelPreferenceRefusalDoesNotChangeTheNativeModel(t *testing.T) {
 			}
 			catalog, _ := agent.NewCatalog(map[string]agent.Config{"grok": {Harness: "grok", Default: true}})
 			runner := &recoveryConfigurable{fakeRunner: &fakeRunner{}, settings: view.Settings{Model: "m1"}}
+			if failure == "empty readback" {
+				runner.settings.Model = ""
+			}
 			rt := &selectorRuntime{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"grok": runner.fakeRunner}}, runner: runner}
 			c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), rt, time.Minute, onLedger(book))
-			if err := store.SetPreferences("chat", "grok", map[string]string{"model": "m1"}); err != nil {
+			if err := store.SetPreferences("chat", "grok", map[string]string{"model": runner.settings.Model}); err != nil {
 				t.Fatal(err)
 			}
 			ctx := t.Context()
@@ -231,13 +302,15 @@ func TestModelPreferenceRefusalDoesNotChangeTheNativeModel(t *testing.T) {
 				if _, err := book.DB().Exec(`CREATE TRIGGER refuse_model BEFORE INSERT ON bindings WHEN NEW.kind='document' AND NEW.id='state' BEGIN SELECT RAISE(FAIL,'test preference write refused'); END`); err != nil {
 					t.Fatal(err)
 				}
-			} else {
+			} else if failure == "native update" {
 				runner.refused = true
+			} else {
+				runner.ignore = true
 			}
 			if _, err := c.commands().modelCmd(ctx, Request{Source: Source{ConversationID: "chat"}}, catalog.Default(), "m2"); err == nil {
 				t.Fatal("refused model change reported success")
 			}
-			if failure == "native update" {
+			if failure == "native update" || failure == "ignored update" || failure == "empty readback" {
 				if store.Preferences("chat", "grok")["model"] != "m2" {
 					t.Fatal("uncertain native update lost the admitted model preference")
 				}
@@ -245,6 +318,7 @@ func TestModelPreferenceRefusalDoesNotChangeTheNativeModel(t *testing.T) {
 					t.Fatal("input reached the wrong model after native update failure")
 				}
 				runner.refused = false
+				runner.ignore = false
 				if _, err := handle(c, t.Context(), "try again"); err != nil || runner.Settings().Model != "m2" || len(runner.seen()) != 1 {
 					t.Fatalf("next input did not recover the admitted model: %v", err)
 				}

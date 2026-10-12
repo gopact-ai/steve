@@ -83,6 +83,32 @@ func acceptControl(t *testing.T, s *Service, req turnapi.Request) {
 	}
 }
 
+func TestRecoveryCallerRetainsInputIdentityWithoutProjectAuthority(t *testing.T) {
+	s, accounts, req := controlFixture(t)
+	if _, err := s.Projects.Grant(t.Context(), "p", identity.Account{Channel: "im", ID: "actor"}.Principal(), project.RoleNone, accounts.Owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CheckCaller(t.Context(), req); err != nil {
+		t.Fatalf("project revocation rejected an authenticated recovery input: %v", err)
+	}
+	for _, change := range []string{"actor", "transport", "input", "conversation"} {
+		forged := req
+		switch change {
+		case "actor":
+			forged.Actor.ID = "other"
+		case "transport":
+			forged.Source.Channel = "other"
+		case "input":
+			forged.Source.MessageID = "other"
+		case "conversation":
+			forged.Source.ConversationID = "other"
+		}
+		if err := s.CheckCaller(t.Context(), forged); !errors.Is(err, ErrDenied) {
+			t.Fatalf("recovery accepted a changed %s: %v", change, err)
+		}
+	}
+}
+
 // The permission change happens after admission and after the guard is built.
 // The actual task/session commit must refuse it without altering either cache.
 func TestControlsRecheckRevocationAtCommit(t *testing.T) {

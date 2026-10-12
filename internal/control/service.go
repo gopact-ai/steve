@@ -292,6 +292,19 @@ func (s *Service) Check(ctx context.Context, req turnapi.Request, want project.R
 	}
 	return nil
 }
+
+// CheckCaller authenticates an accepted input without admitting a new project
+// mutation. Recovery may finish an exact action whose authority was committed
+// earlier, even when the caller no longer has project write access.
+func (s *Service) CheckCaller(ctx context.Context, req turnapi.Request) error {
+	if book := s.book(); book != nil {
+		return book.Read(ctx, func(tx *ledger.ReadTx) error {
+			_, _, err := s.CallerTx(tx, req)
+			return err
+		})
+	}
+	return nil
+}
 func (s *Service) Owner(ctx context.Context, req turnapi.Request, private bool) error {
 	if book := s.book(); book != nil {
 		return book.Update(ctx, func(tx *ledger.Tx) error { return s.OwnerTx(tx, req, private) })

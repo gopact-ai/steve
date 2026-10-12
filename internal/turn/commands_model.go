@@ -67,8 +67,8 @@ func (c commands) modelCmd(parent context.Context, req Request, selected agent.A
 	// Read back rather than echoing the request: the agent confirms with a
 	// config option update, and it is the authority on what it now runs.
 	settled := configurable.Settings().Model
-	if settled == "" {
-		settled = picked.Label
+	if settled != picked.Value && settled != picked.Label || settled == "" {
+		return Result{}, fmt.Errorf("model preference %q was saved; native model %q is unconfirmed and will be retried before the next prompt", picked.Value, settled)
 	}
 	return Result{AgentID: selected.ID, Text: c.text.T(i18n.ModelSwitched, settled)}, nil
 }
