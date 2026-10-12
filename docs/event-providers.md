@@ -209,7 +209,7 @@ Capacity and storage live in a disclosure; original events, frozen subscriptions
 and receipts open in the inspector. The instrument has no demo playback controls
 or explanatory legend.
 
-The **Event Flow** instrument uses a thin neon transfer channel with 32 slots.
+The **Event Flow** instrument uses a thin neon transfer channel with up to 32 segments.
 The light cores inside and outside the queue have the same size. Intakes move
 continuously across the entry boundary, then light successive slots toward the
 right-hand backlog. A claim glides out from the current head; the remaining
@@ -218,13 +218,21 @@ continuous, with browser-frame updates rather than stepped timers. Idle queues
 stop requesting animation frames. Layout is measured only at initialization and
 resize, and resize reconciles to the latest snapshot.
 
-At rest, one filled slot represents one pending delivery, up to the 32-slot
-display limit, with an explicit undisplayed remainder. The positional gradient
+At rest, the lit length is the pending count divided by the server's global
+unfinished-delivery limit, returned as `capacity` in the same flow snapshot.
+The header displays current count / capacity, with a compact per-segment scale.
+At the default 4,096 limit each segment represents 128 deliveries: 40 entries
+occupy about 1% of the strip, not all 32 segments. The leading segment uses its
+exact fractional width; limits below 32 use one segment per delivery. Intake and
+claim replay use the same unit scale, including fractional right shifts. The positional gradient
 runs from red on the left to blue on the right: growing backlog extends into
 warmer colors. Counters show the current snapshot immediately; lights replay
 observed activity with a short delay and reconcile to that snapshot. Fan-out,
 unmatched publications and omitted activity never determine the durable count.
-The strip is not a completion percentage or configured queue capacity.
+The strip shows waiting-delivery occupancy against that service-wide limit,
+not a completion percentage or remaining admission quota for any one provider.
+Claimed, accepted and unknown deliveries also consume the global limit;
+source limits and unfinished-event admission remain separate server checks.
 Unknown effects retain a separate amber count. Its owner-only `GET /console/event-flow` reads queue counts,
 the latest 64 immutable event intake receipts and 64 claim fingerprints in one
 ledger snapshot every two seconds. It never fetches payloads or claim credentials.

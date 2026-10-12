@@ -74,7 +74,7 @@ func TestJournalRetainsColdEnvelopesAndDoesNotConsumeOrReturnPayloads(t *testing
 		t.Fatalf("observation consumed the pending event: exists=%v err=%v", exists, err)
 	}
 	flow, err := service.Flow(t.Context())
-	if err != nil || len(flow.Events) != 34 || flow.Queues["routing"].Pending != 1 {
+	if err != nil || flow.Capacity != 4096 || len(flow.Events) != 34 || flow.Queues["routing"].Pending != 1 {
 		t.Fatalf("live observation lost original receipts: %+v, %v", flow, err)
 	}
 	coldRetained := false
@@ -96,8 +96,9 @@ func TestJournalRetainsColdEnvelopesAndDoesNotConsumeOrReturnPayloads(t *testing
 			t.Fatal(err)
 		}
 	}
+	service.Limits = durable.Limits{Total: 512, PerSource: 128}
 	flow, err = service.Flow(t.Context())
-	if err != nil || len(flow.Events) != 64 || flow.Queues["routing"].Pending != 71 {
+	if err != nil || flow.Capacity != 512 || len(flow.Events) != 64 || flow.Queues["routing"].Pending != 71 {
 		t.Fatalf("flow observation was unbounded or consumed input: %+v, %v", flow, err)
 	}
 	for _, event := range flow.Events {

@@ -12,6 +12,7 @@ export interface BusinessEvent { id: string; source: string; key: string; type: 
 export interface EventJournalEntry extends Omit<BusinessEvent, "payload" | "attention"> { routed: boolean }
 export interface EventFlowSnapshot {
     observed_at: string;
+    capacity: number;
     events: { id: string; at: string }[];
     claims: { id: string; claim: string; until: string; at: string }[];
     queues: Record<"routing" | "pending" | "claimed" | "accepted" | "unknown", { pending: number; oldest?: string }>;

@@ -108,6 +108,7 @@ export const assistantZh = {
     "assistant.busFlowPublish": "事件发布",
     "assistant.busFlowTake": "消费者领取",
     "assistant.busFlowQueue": "持久队列",
+    "assistant.busFlowScale": "每格 {count} 条",
     "assistant.busFlowRouting": "待路由 {count}",
     "assistant.busFlowActive": "处理中 {count}",
     "assistant.busOverview": "事件流转",

@@ -13,13 +13,14 @@ export function useEventFlow(motion: boolean) {
     useEffect(() => { enabled.current = motion; if (!motion) setParticles([]); }, [motion]);
     const refresh = useResourceRead("event-flow", async (signal) => {
         const value = await request<EventFlowSnapshot>("/console/event-flow", { signal, cache: "no-store" });
-        if (!Number.isFinite(Date.parse(value.observed_at)) || !Array.isArray(value.events) || !Array.isArray(value.claims) || value.events.length > 64 || value.claims.length > 64 ||
+        if (!Number.isFinite(Date.parse(value.observed_at)) || !Number.isSafeInteger(value.capacity) || value.capacity <= 0 || !Array.isArray(value.events) || !Array.isArray(value.claims) || value.events.length > 64 || value.claims.length > 64 ||
             ["routing", "pending", "claimed", "accepted", "unknown"].some((key) => !Number.isInteger(value.queues?.[key as keyof typeof value.queues]?.pending) || value.queues[key as keyof typeof value.queues].pending < 0)) throw new Error("Invalid event flow response");
         return value;
     }, (value) => {
         const before = baseline.current;
         baseline.current = value;
         setSnapshot(value); setError("");
+        if (before && before.capacity !== value.capacity) { setParticles([]); return; }
         if (before && enabled.current && !document.hidden) {
             const events = new Set(before.events.map((item) => item.id));
             const claims = new Set(before.claims.map((item) => item.claim));

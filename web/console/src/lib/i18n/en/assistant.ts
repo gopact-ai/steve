@@ -109,6 +109,7 @@ export const assistantEn = {
     "assistant.busFlowPublish": "Publication",
     "assistant.busFlowTake": "Consumer Claims",
     "assistant.busFlowQueue": "Durable Queue",
+    "assistant.busFlowScale": "{count} deliveries per segment",
     "assistant.busFlowRouting": "Awaiting routing {count}",
     "assistant.busFlowActive": "Processing {count}",
     "assistant.busOverview": "Event Flow",

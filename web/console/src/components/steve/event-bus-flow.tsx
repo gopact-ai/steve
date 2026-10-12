@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { RefreshCw01 } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
@@ -12,27 +12,29 @@ import { dateTime, number } from "@/lib/format";
 import "./event-bus-flow.css";
 import type { ServiceBacklog } from "@/lib/assistant-types";
 
-const QUEUE_CAPACITY = 32;
-const slots = Array.from({ length: QUEUE_CAPACITY }, (_, index) => <span key={index} className="bus-flow-cell" style={{ "--bus-slot-color": colorAt(index), "--bus-prev-color": colorAt(index - 1) } as CSSProperties} />);
+const MAX_SEGMENTS = 32;
 
-function FlowBoard({ pending, particles, finish, motion }: { pending: number; particles: FlowParticle[]; finish: (id: string) => void; motion: boolean }) {
+function FlowBoard({ pending, capacity, particles, finish, motion }: { pending: number; capacity: number; particles: FlowParticle[]; finish: (id: string) => void; motion: boolean }) {
     const { t, locale } = useI18n();
+    const segments = Math.min(MAX_SEGMENTS, capacity);
+    const slots = useMemo(() => Array.from({ length: segments }, (_, index) => <span key={index} className="bus-flow-cell" style={{ "--bus-slot-color": colorAt(index, segments), "--bus-prev-color": colorAt(index - 1, segments) } as CSSProperties} />), [segments]);
     const stage = useRef<HTMLDivElement>(null);
     const renderer = useRef<ReturnType<typeof createEventQueueMotion> | null>(null);
     useEffect(() => {
         if (!stage.current) return;
-        const current = createEventQueueMotion(stage.current, motion, finish);
+        const current = createEventQueueMotion(stage.current, motion, finish, capacity);
         renderer.current = current;
         return () => { current.destroy(); renderer.current = null; };
-    }, [motion, finish]);
+    }, [motion, finish, capacity]);
     useEffect(() => { renderer.current?.sync(pending, particles); }, [pending, particles, motion]);
     return <div className="bus-flow" data-bus-flow="ready" data-motion={motion ? "running" : "static"}>
-        <div className="bus-flow-labels"><span>{t("assistant.busFlowPublish")}</span><span className="bus-flow-values">{t("assistant.busFlowQueue")} <strong>{number(pending, locale)}</strong>{pending > QUEUE_CAPACITY ? <span className="bus-flow-overflow">+{number(pending - QUEUE_CAPACITY, locale)}</span> : null}</span><span>{t("assistant.busFlowTake")}</span></div>
-        <div className="bus-flow-track" ref={stage} aria-hidden="true">
+        <div className="bus-flow-labels"><span>{t("assistant.busFlowPublish")}</span><span className="bus-flow-values">{t("assistant.busFlowQueue")} <strong>{number(pending, locale)}</strong><span className="bus-flow-limit"> / {number(capacity, locale)}</span></span><span>{t("assistant.busFlowTake")}</span></div>
+        <div className="bus-flow-track" ref={stage} aria-hidden="true" style={{ "--bus-segment-count": segments } as CSSProperties}>
             <div className="bus-flow-rail bus-flow-rail-in" data-flow-entered={particles.filter((item) => item.direction === "in").length} />
             <div className="bus-flow-buffer"><div className="bus-flow-dots">{slots}</div></div>
             <div className="bus-flow-rail bus-flow-rail-out" data-flow-taken={particles.filter((item) => item.direction === "out").length} />
         </div>
+        {capacity > segments ? <div className="bus-flow-scale">{t("assistant.busFlowScale", { count: number(capacity / segments, locale) })}</div> : null}
     </div>;
 }
 
@@ -55,7 +57,7 @@ export function EventBusFlow({ overview, refreshOverview, providers }: { overvie
                 aside={<Button size="sm" color="tertiary" iconLeading={RefreshCw01} onClick={reload} aria-label={t("assistant.refresh")} />}>
                 <div className="bus-flow-content">
                     <AssistantFeedback error={error} loading={!snapshot && !error} onRefresh={() => { void refresh(); }} />
-                    {snapshot ? <FlowBoard pending={snapshot.queues.pending.pending} particles={particles} finish={finish} motion={!reduced} /> : null}
+                    {snapshot ? <FlowBoard key={snapshot.capacity} pending={snapshot.queues.pending.pending} capacity={snapshot.capacity} particles={particles} finish={finish} motion={!reduced} /> : null}
                 </div>
                 {snapshot ? <div className="bus-flow-meta"><span>{t("assistant.busFlowCadence")}</span><time dateTime={snapshot.observed_at}>{dateTime(snapshot.observed_at, locale, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time></div> : null}
             </Panel>

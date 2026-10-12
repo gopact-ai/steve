@@ -14,6 +14,7 @@ import (
 // the credential which authorizes an acknowledgment.
 type FlowSnapshot struct {
 	ObservedAt time.Time                     `json:"observed_at"`
+	Capacity   int                           `json:"capacity"`
 	Events     []FlowEvent                   `json:"events"`
 	Claims     []FlowClaim                   `json:"claims"`
 	Queues     map[string]durable.QueueStats `json:"queues"`
@@ -43,6 +44,9 @@ func (s *Service) Flow(ctx context.Context) (out FlowSnapshot, err error) {
 	out.Events = []FlowEvent{}
 	out.Claims = []FlowClaim{}
 	out.Queues = map[string]durable.QueueStats{}
+	// The same global unfinished-delivery limit is enforced during routing.
+	// A renderer's segment count is never a queue capacity.
+	out.Capacity = s.Limits.Effective().Total
 	err = s.Book.Read(ctx, func(tx *ledger.ReadTx) error {
 		out.ObservedAt = time.Now().UTC()
 		routing, err := durable.QueueStatsTx(tx, OutboxKind, EventKind, "$.at")

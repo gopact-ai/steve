@@ -13,14 +13,16 @@ interface Geometry { width: number; height: number; pitch: number; inlet: number
 interface Packet { el: HTMLSpanElement; animation: Animation; handoff: number | null }
 interface Transit { id: string; position: number; entered: number; lastFrame: number; initialSpeed: number; bridge: Packet | null }
 interface Scheduled extends FlowParticle { at: number }
-interface Shift { started: number; wait: number }
+interface Shift { started: number; wait: number; amount: number }
 
 // React owns the snapshot and the fixed slot nodes. This renderer owns only
 // transient light levels/packets: no per-frame React commits or layout reads.
-export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, finish: (id: string) => void) {
+export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, finish: (id: string) => void, capacity: number) {
     const cells = Array.from(stage.querySelectorAll<HTMLSpanElement>(".bus-flow-cell"));
+    const unitsPerCell = capacity / cells.length;
     const levels = new Float64Array(cells.length);
     const painted = new Float64Array(cells.length).fill(-1);
+    const fills = new Float64Array(cells.length).fill(-1);
     const transits: Transit[] = [];
     const scheduled: Scheduled[] = [];
     const packets = new Set<Packet>();
@@ -38,17 +40,17 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
             const shift = shifts[i];
             const remaining = 1 - smooth((now - shift.started - shift.wait) / SHIFT);
             if (remaining === 0) shifts.splice(i, 1);
-            else amount += remaining;
+            else amount += remaining * shift.amount;
         }
         return amount;
     };
     const measure = () => {
         const first = cells[0].getBoundingClientRect();
-        const second = cells[1].getBoundingClientRect();
+        const second = cells[1]?.getBoundingClientRect();
         const last = cells[cells.length - 1].getBoundingClientRect();
         const rect = stage.getBoundingClientRect();
         if (first.width <= 0 || rect.width <= 0) return;
-        geometry = { width: first.width, height: first.height, pitch: second.left - first.left, inlet: first.left - rect.left, last: last.left - rect.left, length: rect.width };
+        geometry = { width: first.width, height: first.height, pitch: second ? second.left - first.left : first.width, inlet: first.left - rect.left, last: last.left - rect.left, length: rect.width };
         stage.style.setProperty("--bus-cell-width", `${first.width}px`);
         stage.style.setProperty("--bus-cell-height", `${first.height}px`);
         // A resize changes the coordinate space. Reconcile rather than teleport
@@ -111,7 +113,7 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         const packet: Packet = { el, animation: el.animate(keyframes, { duration, easing: "linear", fill: "both" }), handoff: null };
         packets.add(packet);
         if (outgoing) {
-            shifts.push({ started: now, wait: clearance });
+            shifts.push({ started: now, wait: clearance, amount: 1 / unitsPerCell });
             count--;
             lastDeparture = now;
             packet.animation.finished.then(() => {
@@ -139,7 +141,7 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         for (const item of transits) if (!item.bridge || item.bridge.handoff !== null) total++;
         return total;
     };
-    const parkedCount = () => Math.min(cells.length, Math.max(0, count - admitted()));
+    const parkedCount = () => Math.min(cells.length, Math.max(0, count - admitted()) / unitsPerCell);
     const advance = (now: number) => {
         for (let i = 0; i < scheduled.length;) {
             const item = scheduled[i];
@@ -178,16 +180,15 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
     function paint(now: number) {
         const parked = parkedCount();
         levels.fill(0);
-        levels.fill(1, cells.length - parked);
         for (const transit of transits) {
             const cell = Math.floor(transit.position), fraction = transit.position - cell;
             const appearance = transit.bridge ? (transit.bridge.handoff === null ? 0 : smooth((now - transit.entered) / HANDOFF)) : 1;
-            levels[cell] = Math.min(1, levels[cell] + (1 - fraction) * appearance);
-            if (cell + 1 < cells.length) levels[cell + 1] = Math.min(1, levels[cell + 1] + fraction * appearance);
+            levels[cell] = Math.min(1, levels[cell] + (1 - fraction) * appearance / unitsPerCell);
+            if (cell + 1 < cells.length) levels[cell + 1] = Math.min(1, levels[cell + 1] + fraction * appearance / unitsPerCell);
             if (transit.bridge && transit.bridge.handoff !== null) {
                 transit.bridge.el.style.transform = `translateX(${geometry!.inlet + transit.position * geometry!.pitch}px)`;
                 transit.bridge.el.style.opacity = String(1 - appearance);
-                transit.bridge.el.style.setProperty("--bus-packet-color", colorAt(transit.position));
+                transit.bridge.el.style.setProperty("--bus-packet-color", colorAt(transit.position, cells.length));
                 if (appearance === 1) { removePacket(transit.bridge); transit.bridge = null; }
             }
         }
@@ -199,8 +200,11 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
             shiftBefore = offset;
         }
         for (let i = 0; i < cells.length; i++) {
-            const filled = i >= cells.length - parked;
-            if (parked !== parkedBefore) cells[i].dataset.filled = String(filled);
+            // Full segments aggregate units; the leading segment retains the
+            // exact fractional width instead of rounding a small backlog up.
+            const fill = Math.max(0, Math.min(1, parked - (cells.length - 1 - i)));
+            if (parked !== parkedBefore) cells[i].dataset.filled = String(fill > 0);
+            if (fill !== fills[i]) { cells[i].style.setProperty("--bus-fill", String(fill)); fills[i] = fill; }
             const level = Math.round(levels[i] * 1000) / 1000;
             if (level !== painted[i]) { cells[i].style.setProperty("--bus-level", String(level)); painted[i] = level; }
         }
@@ -258,6 +262,6 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
 }
 
 export function colorAt(position: number, capacity = 32) {
-    const hot = Math.max(0, Math.min(100, 100 - position / (capacity - 1) * 100));
+    const hot = Math.max(0, Math.min(100, 100 - position / Math.max(1, capacity - 1) * 100));
     return `color-mix(in oklab,var(--bus-load-hot) ${hot.toFixed(2)}%,var(--bus-load-cool))`;
 }
