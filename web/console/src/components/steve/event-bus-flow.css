@@ -6,20 +6,24 @@
 .bus-dashboard-live { display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 20px; align-items: start; }
 .bus-live-dot { width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; }
 .bus-flow-content { min-height: 144px; padding: 24px; }
-.bus-flow { --bus-dot: var(--color-purple-400); }
+/* Thin light cores carry load from cool (short backlog) into hot (full row). */
+.bus-flow { --bus-load-hot: light-dark(var(--color-red-500),var(--color-red-400)); --bus-load-cool: light-dark(var(--color-blue-500),var(--color-blue-400)); --bus-neon-core: var(--color-white); }
 .bus-flow-labels { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; align-items: center; font-size: var(--text-xs); color: var(--color-text-secondary); }
 .bus-flow-labels > :nth-child(2) { text-align: center; }
 .bus-flow-labels > :last-child { text-align: right; }
-.bus-flow-track { position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(16px,18%) minmax(0,1fr) minmax(16px,18%); align-items: center; height: 72px; }
-.bus-flow-beam { position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: visible; }
-.bus-flow-rail { height: 1px; background: color-mix(in srgb,var(--bus-dot) 28%,var(--color-border-secondary)); }
-.bus-flow-rail-in { background: linear-gradient(90deg,transparent,color-mix(in srgb,var(--bus-dot) 36%,var(--color-border-secondary))); }
-.bus-flow-rail-out { background: linear-gradient(90deg,color-mix(in srgb,var(--bus-dot) 36%,var(--color-border-secondary)),transparent); }
-.bus-flow-buffer { position: relative; height: 40px; padding: 0 8px; border: 1px solid color-mix(in srgb,var(--bus-dot) 22%,var(--color-border-secondary)); border-radius: 6px; background: var(--color-bg-secondary); box-shadow: inset 0 1px 4px color-mix(in srgb,var(--color-bg-primary) 80%,transparent),0 0 16px -8px color-mix(in srgb,var(--bus-dot) 20%,transparent); }
-.bus-flow-anchor { position: absolute; top: calc(50% - .5px); width: 1px; height: 1px; }.bus-flow-start { left: 4px; }.bus-flow-end { right: 4px; }.bus-flow-anchor-out { right: 12px; }
-.bus-flow-dots { position: relative; display: flex; flex-direction: row-reverse; align-items: center; gap: 4px; height: 100%; }
-.bus-flow-dots::before { content: ""; position: absolute; inset: 10px 0; background: repeating-linear-gradient(to left,color-mix(in srgb,var(--bus-dot) 7%,transparent) 0 8px,transparent 8px 12px); border-radius: 2px; }
-.bus-flow-cell { position: relative; flex: 0 0 8px; width: 8px; height: 18px; border-radius: 1.5px; background: linear-gradient(180deg,var(--color-purple-300),var(--bus-dot) 45%,var(--color-purple-500)); box-shadow: inset 0 1px 0 color-mix(in srgb,var(--color-purple-200) 45%,transparent),0 0 8px color-mix(in srgb,var(--bus-dot) 32%,transparent); }
+.bus-flow-track { --bus-buffer-start: 26%; --bus-buffer-width: 48%; position: relative; isolation: isolate; height: 68px; overflow: clip; }
+.bus-flow-track::before { content: ""; position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: linear-gradient(90deg,transparent,var(--color-border-secondary) 12% 88%,transparent); }
+.bus-flow-rail { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+.bus-flow-rail-in { left: 0; width: var(--bus-buffer-start); }
+.bus-flow-rail-out { left: calc(var(--bus-buffer-start) + var(--bus-buffer-width)); right: 0; }
+.bus-flow-buffer { position: absolute; top: 50%; left: var(--bus-buffer-start); width: var(--bus-buffer-width); transform: translateY(-50%); }
+.bus-flow-dots { position: relative; display: grid; grid-template-columns: repeat(32,minmax(0,1fr)); gap: 2px; padding: 10px 0; overflow: clip; }
+.bus-flow-cell { --bus-emission: var(--bus-slot-color); position: relative; min-width: 0; height: 3px; border-radius: 1px; background: color-mix(in srgb,var(--color-text-tertiary) 12%,transparent); }
+.bus-flow-cell[data-filled="true"] { --bus-emission: color-mix(in oklab,var(--bus-prev-color) var(--bus-shift-tint,0%),var(--bus-slot-color)); }
+.bus-flow-cell::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(180deg,var(--bus-emission),color-mix(in oklab,var(--bus-emission) 70%,var(--bus-neon-core)),var(--bus-emission)); opacity: var(--bus-level,0); box-shadow: 0 0 3px color-mix(in srgb,var(--bus-emission) 65%,transparent),0 0 9px color-mix(in srgb,var(--bus-emission) 28%,transparent); }
+.bus-flow-cell[data-filled="true"]::after { transform: translateX(var(--bus-shift-offset,0px)); }
+.bus-flow-particle { --bus-packet-color: var(--bus-load-hot); position: absolute; z-index: 1; top: 50%; left: 0; margin-top: calc(var(--bus-cell-height) / -2); width: var(--bus-cell-width); height: var(--bus-cell-height); border-radius: 1px; pointer-events: none; background: linear-gradient(180deg,var(--bus-packet-color),color-mix(in oklab,var(--bus-packet-color) 70%,var(--bus-neon-core)),var(--bus-packet-color)); box-shadow: 0 0 3px color-mix(in srgb,var(--bus-packet-color) 65%,transparent),0 0 9px color-mix(in srgb,var(--bus-packet-color) 28%,transparent); }
+.bus-flow-particle.is-out { --bus-packet-color: var(--bus-load-cool); }
 .bus-flow-values strong { margin-left: 4px; color: var(--color-text-primary); font-weight: 600; }
 .bus-flow-overflow { margin-left: 6px; color: var(--color-text-tertiary); font-size: 10px; }
 .bus-flow-meta { display: flex; justify-content: space-between; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--color-border-secondary); color: var(--color-text-quaternary); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
@@ -33,7 +37,7 @@
 .bus-record-scroll thead { position: sticky; top: 0; z-index: 1; }
 .bus-flow[data-motion="static"] .bus-flow-particle { display: none; }
 @media (max-width: 1100px) { .bus-dashboard-live { grid-template-columns: minmax(0,1fr); }.bus-provider-list { max-height: 150px; }.bus-dashboard-metrics { gap: 12px; }.bus-metric { padding: 16px; } }
-@media (max-width: 640px) { .bus-dashboard-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }.bus-flow-content { padding: 20px 16px; min-height: 132px; }.bus-flow-labels { gap: 6px; }.bus-record-scroll { max-height: 420px; } }
+@media (max-width: 640px) { .bus-dashboard-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }.bus-flow-content { padding: 20px 16px; min-height: 132px; }.bus-flow-labels { gap: 6px; }.bus-flow-track { --bus-buffer-start: 14%; --bus-buffer-width: 72%; }.bus-record-scroll { max-height: 420px; } }
 @media (prefers-reduced-motion: reduce) { .bus-flow-particle { display: none; } }
 
 @media (max-width: 640px) {

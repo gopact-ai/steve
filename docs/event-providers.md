@@ -197,15 +197,22 @@ and a paginated React Aria / Untitled UI record table. Capacity and storage live
 in a disclosure; original events, frozen subscriptions and receipts open in the
 inspector. The instrument has no demo playback controls or explanatory legend.
 
-The **Event Flow** dashboard instrument draws independently flowing publication and claim
-block packets over Magic UI Animated Beam paths along one horizontal transfer channel, with a segmented
-pending buffer in the middle. The MIT component is adapted to play once per observed record,
-with shared path measurement instead of continuously looping demonstration
-traffic. One filled buffer block represents one pending delivery. Blocks form a single row
-against the right edge, with a width-dependent display limit of at most 128 blocks and an explicit
-undisplayed remainder. Claims remove the right-hand head; new blocks join the left.
-The block count reconciles to each snapshot immediately, with short position transitions;
-the strip is not a completion percentage or a representation of configured capacity.
+The **Event Flow** instrument uses a thin neon transfer channel with 32 slots.
+The light cores inside and outside the queue have the same size. Intakes move
+continuously across the entry boundary, then light successive slots toward the
+right-hand backlog. A claim glides out from the current head; the remaining
+lights shift right after it clears. Appearance, handoff and departure fade are
+continuous, with browser-frame updates rather than stepped timers. Idle queues
+stop requesting animation frames. Layout is measured only at initialization and
+resize, and resize reconciles to the latest snapshot.
+
+At rest, one filled slot represents one pending delivery, up to the 32-slot
+display limit, with an explicit undisplayed remainder. The positional gradient
+runs from red on the left to blue on the right: growing backlog extends into
+warmer colors. Counters show the current snapshot immediately; lights replay
+observed activity with a short delay and reconcile to that snapshot. Fan-out,
+unmatched publications and omitted activity never determine the durable count.
+The strip is not a completion percentage or configured queue capacity.
 Unknown effects retain a separate amber count. Its owner-only `GET /console/event-flow` reads queue counts,
 the latest 64 immutable event intake receipts and 64 claim fingerprints in one
 ledger snapshot every two seconds. It never fetches payloads or claim credentials.
