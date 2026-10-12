@@ -17,8 +17,8 @@
 .bus-flow-rail-in { left: 0; width: var(--bus-buffer-start); }
 .bus-flow-rail-out { left: calc(var(--bus-buffer-start) + var(--bus-buffer-width)); right: 0; }
 .bus-flow-buffer { position: absolute; top: 50%; left: var(--bus-buffer-start); width: var(--bus-buffer-width); transform: translateY(-50%); }
-.bus-flow-dots { position: relative; display: grid; grid-template-columns: repeat(var(--bus-segment-count,32),minmax(0,1fr)); gap: 2px; padding: 10px 0; overflow: clip; }
-.bus-flow-cell { --bus-emission: var(--bus-slot-color); position: relative; min-width: 0; height: 3px; border-radius: 1px; background: color-mix(in srgb,var(--color-text-tertiary) 12%,transparent); }
+.bus-flow-dots { position: relative; height: 23px; overflow: clip; }
+.bus-flow-cell { --bus-emission: var(--bus-slot-color); position: absolute; top: 10px; height: 3px; border-radius: 1px; background: color-mix(in srgb,var(--color-text-tertiary) 12%,transparent); }
 .bus-flow-cell[data-filled="true"] { --bus-emission: color-mix(in oklab,var(--bus-prev-color) var(--bus-shift-tint,0%),var(--bus-slot-color)); }
 .bus-flow-cell::before, .bus-flow-cell::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(180deg,var(--bus-emission),color-mix(in oklab,var(--bus-emission) 70%,var(--bus-neon-core)),var(--bus-emission)); box-shadow: 0 0 3px color-mix(in srgb,var(--bus-emission) 65%,transparent),0 0 9px color-mix(in srgb,var(--bus-emission) 28%,transparent); }
 .bus-flow-cell::before { opacity: var(--bus-level,0); }
@@ -28,8 +28,7 @@
 .bus-flow-particle { --bus-packet-color: var(--bus-load-hot); position: absolute; z-index: 1; top: 50%; left: 0; margin-top: calc(var(--bus-cell-height) / -2); width: var(--bus-cell-width); height: var(--bus-cell-height); border-radius: 1px; pointer-events: none; background: linear-gradient(180deg,var(--bus-packet-color),color-mix(in oklab,var(--bus-packet-color) 70%,var(--bus-neon-core)),var(--bus-packet-color)); box-shadow: 0 0 3px color-mix(in srgb,var(--bus-packet-color) 65%,transparent),0 0 9px color-mix(in srgb,var(--bus-packet-color) 28%,transparent); }
 .bus-flow-particle.is-out { --bus-packet-color: var(--bus-load-cool); }
 .bus-flow-values strong { margin-left: 4px; color: var(--color-text-primary); font-weight: 600; }
-.bus-flow-limit { color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
-.bus-flow-scale { margin-top: -8px; text-align: center; color: var(--color-text-quaternary); font-size: 10px; font-variant-numeric: tabular-nums; }
+.bus-flow-scale { margin-left: 6px; color: var(--color-text-quaternary); font-size: 10px; font-variant-numeric: tabular-nums; }
 .bus-flow-meta { display: flex; justify-content: space-between; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--color-border-secondary); color: var(--color-text-quaternary); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .bus-provider-list { max-height: 176px; overflow-y: auto; }
 .bus-capacity { font-size: var(--text-xs); color: var(--color-text-tertiary); }

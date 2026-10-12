@@ -209,7 +209,7 @@ Capacity and storage live in a disclosure; original events, frozen subscriptions
 and receipts open in the inspector. The instrument has no demo playback controls
 or explanatory legend.
 
-The **Event Flow** instrument uses a thin neon transfer channel with up to 32 segments.
+The **Event Flow** instrument uses a thin neon transfer channel with adaptive columns.
 The light cores inside and outside the queue have the same size. Intakes move
 continuously across the entry boundary, then light successive slots toward the
 right-hand backlog. A claim glides out from the current head; the remaining
@@ -218,21 +218,27 @@ continuous, with browser-frame updates rather than stepped timers. Idle queues
 stop requesting animation frames. Layout is measured only at initialization and
 resize, and resize reconciles to the latest snapshot.
 
-At rest, the lit length is the pending count divided by the server's global
-unfinished-delivery limit, returned as `capacity` in the same flow snapshot.
-The header displays current count / capacity, with a compact per-segment scale.
-At the default 4,096 limit each segment represents 128 deliveries: 40 entries
-occupy about 1% of the strip, not all 32 segments. The leading segment uses its
-exact fractional width; limits below 32 use one segment per delivery. Intake and
-claim replay use the same unit scale, including fractional right shifts. The positional gradient
-runs from red on the left to blue on the right: growing backlog extends into
-warmer colors. Counters show the current snapshot immediately; lights replay
-observed activity with a short delay and reconcile to that snapshot. Fan-out,
-unmatched publications and omitted activity never determine the durable count.
-The strip shows waiting-delivery occupancy against that service-wide limit,
-not a completion percentage or remaining admission quota for any one provider.
-Claimed, accepted and unknown deliveries also consume the global limit;
-source limits and unfinished-event admission remain separate server checks.
+At rest, ordinary backlogs retain one light per waiting delivery. Columns grow
+with the observed backlog and light cores shrink smoothly, with extra room for
+incoming events. The queue occupies 86% of the track. Density changes preserve
+in-flight packets; an eight-second low-water delay prevents repeated zooming
+as producers and consumers overlap. Dense grids retain the same browser-frame
+updates and a bounded traversal time.
+
+Only when individual lights would become narrower than a readable pixel does
+the display group deliveries. A small `×N` beside the exact pending count reveals
+the scale; the leading light retains its fractional width and consumer shifts
+use the same scale. The grid is bounded by available pixels and 1,024 columns.
+The positional gradient runs from red on the left to blue on the right. Counters
+show the current snapshot immediately; lights replay observed activity with a
+short delay and reconcile to that snapshot. Fan-out, unmatched publications and
+omitted activity never determine the durable count.
+
+This is a view of the waiting backlog, not a capacity progress bar. Capacity and
+storage remain in the provider disclosure. The flow snapshot also returns the
+global unfinished-delivery limit as `capacity`; claimed, accepted and unknown
+deliveries share that limit. Source limits and unfinished-event admission remain
+separate server checks.
 Unknown effects retain a separate amber count. Its owner-only `GET /console/event-flow` reads queue counts,
 the latest 64 immutable event intake receipts and 64 claim fingerprints in one
 ledger snapshot every two seconds. It never fetches payloads or claim credentials.

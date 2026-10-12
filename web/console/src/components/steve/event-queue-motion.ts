@@ -4,58 +4,105 @@ const INGRESS = 500;
 const HANDOFF = 120;
 const CELL_STEP = 70;
 const SHIFT = 260;
+const RESCALE = 500;
+const MIN_PITCH = 1.5;
 const smooth = (value: number) => {
     const clamped = Math.max(0, Math.min(1, value));
     return clamped * clamped * (3 - 2 * clamped);
 };
 
-interface Geometry { width: number; height: number; pitch: number; inlet: number; last: number; length: number }
+interface Geometry { width: number; height: number; pitch: number; inlet: number; last: number; length: number; buffer: number }
 interface Packet { el: HTMLSpanElement; animation: Animation; handoff: number | null }
-interface Transit { id: string; position: number; entered: number; lastFrame: number; initialSpeed: number; bridge: Packet | null }
+interface Transit { id: string; position: number; entered: number; lastFrame: number; initialSpeed: number; cruise: number; bridge: Packet | null }
 interface Scheduled extends FlowParticle { at: number }
-interface Shift { started: number; wait: number; amount: number }
+interface Shift { started: number; wait: number }
+interface Density { slots: number; units: number }
+interface Rescale { started: number; pitch: number; units: number }
 
-// React owns the snapshot and the fixed slot nodes. This renderer owns only
-// transient light levels/packets: no per-frame React commits or layout reads.
-export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, finish: (id: string) => void, capacity: number) {
-    const cells = Array.from(stage.querySelectorAll<HTMLSpanElement>(".bus-flow-cell"));
-    const unitsPerCell = capacity / cells.length;
-    const levels = new Float64Array(cells.length);
-    const painted = new Float64Array(cells.length).fill(-1);
-    const fills = new Float64Array(cells.length).fill(-1);
+// React owns observed facts. This renderer owns the adaptive light grid and
+// transient packets; animation frames neither commit React nor read layout.
+export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, finish: (id: string) => void, scale: (units: number) => void) {
+    const grid = stage.querySelector<HTMLDivElement>(".bus-flow-dots")!;
+    // Head first: adding columns at the left preserves every existing light.
+    const cells: HTMLSpanElement[] = [];
+    let levels = new Float64Array(0), painted = new Float64Array(0), fills = new Float64Array(0);
     const transits: Transit[] = [];
     const scheduled: Scheduled[] = [];
     const packets = new Set<Packet>();
     const shifts: Shift[] = [];
     let seen = new Set<string>();
     let geometry: Geometry | null = null;
-    let count = 0, target = 0, parkedBefore = -1, shiftBefore = -1;
-    let frame = 0, destroyed = false, lastDeparture = -Infinity;
+    let density: Density = { slots: 32, units: 1 }, units = 1;
+    let rescale: Rescale | null = null;
+    let count = 0, target = 0, shiftBefore = -1, frame = 0;
+    let destroyed = false, initialized = false, lastDeparture = -Infinity, shrinkSince = 0;
 
+    const setCells = (length: number) => {
+        if (length === cells.length) return;
+        const fragment = document.createDocumentFragment();
+        while (cells.length < length) {
+            const cell = document.createElement("span");
+            cell.className = "bus-flow-cell";
+            cells.push(cell); fragment.append(cell);
+        }
+        grid.append(fragment);
+        while (cells.length > length) cells.pop()!.remove();
+        levels = new Float64Array(length);
+        painted = new Float64Array(length).fill(-1);
+        fills = new Float64Array(length).fill(-1);
+    };
+    const layout = (now: number) => {
+        const g = geometry!;
+        const progress = rescale ? smooth((now - rescale.started) / RESCALE) : 1;
+        const pitch = g.buffer / density.slots;
+        g.pitch = rescale ? rescale.pitch + (pitch - rescale.pitch) * progress : pitch;
+        units = rescale ? rescale.units + (density.units - rescale.units) * progress : density.units;
+        g.width = g.pitch - Math.min(2, g.pitch * .22);
+        g.last = g.inlet + g.buffer - g.width;
+        stage.style.setProperty("--bus-cell-width", `${g.width}px`);
+        stage.style.setProperty("--bus-cell-height", `${g.height}px`);
+        stage.dataset.unitScale = String(units);
+        if (progress === 1) { rescale = null; setCells(density.slots); }
+        for (let i = 0; i < cells.length; i++) {
+            const left = g.buffer - g.width - i * g.pitch;
+            cells[i].style.left = `${left}px`;
+            cells[i].style.width = `${g.width}px`;
+            cells[i].style.setProperty("--bus-slot-color", colorAt(left / g.buffer));
+            cells[i].style.setProperty("--bus-prev-color", colorAt((left - g.pitch) / g.buffer));
+        }
+        shiftBefore = -1;
+    };
+    const configure = (demand: number, now: number, immediate = false) => {
+        if (!geometry) return;
+        // Grow for the backlog, not the service quota. Leave room to receive
+        // new events; group only below the physical width of a readable light.
+        const maximum = Math.max(32, Math.min(1024, Math.floor(geometry.buffer / MIN_PITCH)));
+        const reserve = Math.max(8, Math.ceil(demand * .25));
+        const nextUnits = demand + 4 <= maximum ? 1 : Math.max(1, Math.ceil((demand + reserve) / maximum));
+        const nextSlots = Math.max(32, Math.min(maximum, Math.ceil((demand + reserve) / nextUnits / 16) * 16));
+        const crowded = demand + 4 > density.slots * density.units;
+        const smaller = demand < density.slots * density.units * .35;
+        if (!smaller) shrinkSince = 0;
+        else if (!shrinkSince) shrinkSince = now;
+        // Hysteresis prevents zooming in and out on every producer/consumer read.
+        if (!immediate && !crowded && !(smaller && now - shrinkSince >= 8000)) return;
+        if (nextSlots === density.slots && nextUnits === density.units && !immediate) return;
+        rescale = motion && !immediate ? { started: now, pitch: geometry.pitch, units } : null;
+        density = { slots: nextSlots, units: nextUnits };
+        scale(nextUnits);
+        setCells(Math.max(cells.length, nextSlots));
+        layout(now);
+    };
     const shiftAmount = (now: number) => {
         let amount = 0;
-        // Each removal keeps its own clearance/settling deadline. Resetting a
-        // combined deadline on every claim can push the entire pile off-screen.
+        // Independent deadlines keep repeated claims from sliding the pile out.
         for (let i = shifts.length - 1; i >= 0; i--) {
             const shift = shifts[i];
             const remaining = 1 - smooth((now - shift.started - shift.wait) / SHIFT);
             if (remaining === 0) shifts.splice(i, 1);
-            else amount += remaining * shift.amount;
+            else amount += remaining;
         }
-        return amount;
-    };
-    const measure = () => {
-        const first = cells[0].getBoundingClientRect();
-        const second = cells[1]?.getBoundingClientRect();
-        const last = cells[cells.length - 1].getBoundingClientRect();
-        const rect = stage.getBoundingClientRect();
-        if (first.width <= 0 || rect.width <= 0) return;
-        geometry = { width: first.width, height: first.height, pitch: second ? second.left - first.left : first.width, inlet: first.left - rect.left, last: last.left - rect.left, length: rect.width };
-        stage.style.setProperty("--bus-cell-width", `${first.width}px`);
-        stage.style.setProperty("--bus-cell-height", `${first.height}px`);
-        // A resize changes the coordinate space. Reconcile rather than teleport
-        // existing packets between two differently sized tracks.
-        reset();
+        return amount / units;
     };
     const removePacket = (packet: Packet | null) => {
         if (!packet) return;
@@ -68,15 +115,32 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         removePacket(transit.bridge);
         finish(transit.id);
     };
+    const admitted = () => {
+        let total = 0;
+        for (const item of transits) if (!item.bridge || item.bridge.handoff !== null) total++;
+        return total;
+    };
+    const parkedCount = () => Math.max(0, count - admitted()) / units;
     const reset = () => {
         const active = new Set([...scheduled.map((item) => item.id), ...transits.map((item) => item.id), ...Array.from(packets, (packet) => packet.el.dataset.activity!)]);
         for (const packet of packets) removePacket(packet);
         active.forEach(finish);
-        transits.length = 0;
-        scheduled.length = 0;
-        shifts.length = 0;
+        transits.length = 0; scheduled.length = 0; shifts.length = 0;
         count = target;
+        configure(target, performance.now(), true);
         paint(performance.now());
+    };
+    const measure = () => {
+        const rect = stage.getBoundingClientRect();
+        const buffer = grid.getBoundingClientRect();
+        if (rect.width <= 0 || buffer.width <= 0) return;
+        const inlet = buffer.left - rect.left;
+        // ResizeObserver also sends an initial notification. An unchanged
+        // coordinate space must not cancel events received just after mount.
+        if (geometry?.length === rect.width && geometry.buffer === buffer.width && geometry.inlet === inlet) return;
+        geometry = { width: 0, height: 3, pitch: 0, inlet, last: 0, length: rect.width, buffer: buffer.width };
+        // Window resizing changes the coordinate space; establish a new baseline.
+        reset();
     };
     const spawn = (item: Scheduled, now: number) => {
         const g = geometry!;
@@ -90,11 +154,11 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         let duration = INGRESS, clearance = 0;
         let keyframes: Keyframe[];
         if (outgoing) {
-            // Short outer rails must not slow consumption relative to the grid.
             const speed = Math.max((g.inlet + g.width) / INGRESS, g.pitch / CELL_STEP);
             const distance = Math.min((to - from) * .4, speed * Math.max(140, 2 * g.pitch / speed) / 2);
             const launch = 2 * distance / speed;
-            clearance = g.pitch <= distance ? Math.sqrt(2 * g.pitch * launch / speed) : launch + (g.pitch - distance) / speed;
+            const step = g.pitch / units;
+            clearance = step <= distance ? Math.sqrt(2 * step * launch / speed) : launch + (step - distance) / speed;
             duration = launch + (to - from - distance) / speed;
             const fade = Math.min(100, (duration - launch) * .25);
             keyframes = [
@@ -113,59 +177,47 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         const packet: Packet = { el, animation: el.animate(keyframes, { duration, easing: "linear", fill: "both" }), handoff: null };
         packets.add(packet);
         if (outgoing) {
-            shifts.push({ started: now, wait: clearance, amount: 1 / unitsPerCell });
-            count--;
-            lastDeparture = now;
+            shifts.push({ started: now, wait: clearance });
+            count--; lastDeparture = now;
             packet.animation.finished.then(() => {
                 if (destroyed || !packets.has(packet)) return;
-                removePacket(packet);
-                finish(item.id);
+                removePacket(packet); finish(item.id);
             }).catch(() => {});
         } else {
             packet.animation.finished.then(() => {
                 if (destroyed || !packets.has(packet)) return;
-                packet.handoff = performance.now();
-                count++;
+                packet.handoff = performance.now(); count++;
             }).catch(() => {});
-            transits.push({ id: item.id, position: 0, entered: now, lastFrame: now, initialSpeed: (g.inlet + g.width) / INGRESS / g.pitch, bridge: packet });
+            transits.push({ id: item.id, position: 0, entered: now, lastFrame: now, initialSpeed: (g.inlet + g.width) / INGRESS, cruise: Math.max(g.pitch / CELL_STEP, g.buffer / 2200), bridge: packet });
         }
     };
     const distanceAt = (transit: Transit, now: number) => {
         const age = Math.max(0, now - transit.entered), u = Math.min(1, age / HANDOFF);
-        const initial = transit.initialSpeed, cruise = 1 / CELL_STEP;
+        const initial = transit.initialSpeed, cruise = transit.cruise;
         return age >= HANDOFF ? (initial + cruise) * HANDOFF / 2 + (age - HANDOFF) * cruise
             : initial * age + (cruise - initial) * HANDOFF * (u ** 3 - u ** 4 / 2);
     };
-    const admitted = () => {
-        let total = 0;
-        for (const item of transits) if (!item.bridge || item.bridge.handoff !== null) total++;
-        return total;
-    };
-    const parkedCount = () => Math.min(cells.length, Math.max(0, count - admitted()) / unitsPerCell);
     const advance = (now: number) => {
+        if (rescale) layout(now);
         for (let i = 0; i < scheduled.length;) {
             const item = scheduled[i];
-            // Claims can arrive in the same read as their publication. Wait for
-            // a visible head rather than emit a disconnected copy on the right.
+            // A claim can share a read with its publication: wait for a real head.
             if (item.at > now || (item.direction === "out" && (parkedCount() === 0 || now - lastDeparture < 120))) { i++; continue; }
-            scheduled.splice(i, 1);
-            spawn(item, now);
+            scheduled.splice(i, 1); spawn(item, now);
         }
         for (let i = 0; i < transits.length;) {
             const transit = transits[i];
             if (transit.bridge) {
                 if (transit.bridge.handoff === null) { i++; continue; }
                 if (transit.entered < transit.bridge.handoff) {
-                    transit.entered = transit.bridge.handoff;
-                    transit.lastFrame = transit.entered;
+                    transit.entered = transit.bridge.handoff; transit.lastFrame = transit.entered;
                     transit.bridge.el.style.transform = `translateX(${geometry!.inlet}px)`;
-                    transit.bridge.el.style.opacity = "1";
-                    transit.bridge.animation.cancel();
+                    transit.bridge.el.style.opacity = "1"; transit.bridge.animation.cancel();
                 }
             }
-            const shifting = shiftAmount(now);
-            const frontier = cells.length - parkedCount() - 1 - shifting;
-            const limit = i === 0 ? frontier : Math.min(frontier, transits[i - 1].position - 1);
+            const shifting = shiftAmount(now), g = geometry!;
+            const frontier = g.buffer - g.width - (parkedCount() + shifting) * g.pitch;
+            const limit = i === 0 ? frontier : Math.min(frontier, transits[i - 1].position - g.pitch);
             const distance = distanceAt(transit, now) - distanceAt(transit, transit.lastFrame);
             transit.position = Math.max(transit.position, Math.min(Math.max(0, limit), transit.position + distance));
             transit.lastFrame = now;
@@ -173,55 +225,50 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
             if (i === 0 && joined && (frontier < 0 || (transit.position >= frontier && shifting === 0))) { completeTransit(i); continue; }
             i++;
         }
-        // Activity history is bounded and publications need not create exactly
-        // one delivery. Never infer the durable backlog from replayed lights.
+        // Bounded activity is not an authoritative delivery count.
         if (!transits.length && !scheduled.length) count = target;
     };
     function paint(now: number) {
-        const parked = parkedCount();
+        if (!geometry) return;
+        const g = geometry, parked = parkedCount();
         levels.fill(0);
         for (const transit of transits) {
-            const cell = Math.floor(transit.position), fraction = transit.position - cell;
+            const position = Math.max(0, (g.buffer - g.width - transit.position) / g.pitch);
+            const cell = Math.floor(position), fraction = position - cell;
             const appearance = transit.bridge ? (transit.bridge.handoff === null ? 0 : smooth((now - transit.entered) / HANDOFF)) : 1;
-            levels[cell] = Math.min(1, levels[cell] + (1 - fraction) * appearance / unitsPerCell);
-            if (cell + 1 < cells.length) levels[cell + 1] = Math.min(1, levels[cell + 1] + fraction * appearance / unitsPerCell);
+            if (cell < cells.length) levels[cell] = Math.min(1, levels[cell] + (1 - fraction) * appearance);
+            if (cell + 1 < cells.length) levels[cell + 1] = Math.min(1, levels[cell + 1] + fraction * appearance);
             if (transit.bridge && transit.bridge.handoff !== null) {
-                transit.bridge.el.style.transform = `translateX(${geometry!.inlet + transit.position * geometry!.pitch}px)`;
+                transit.bridge.el.style.transform = `translateX(${g.inlet + transit.position}px)`;
                 transit.bridge.el.style.opacity = String(1 - appearance);
-                transit.bridge.el.style.setProperty("--bus-packet-color", colorAt(transit.position, cells.length));
+                transit.bridge.el.style.setProperty("--bus-packet-color", colorAt(transit.position / g.buffer));
                 if (appearance === 1) { removePacket(transit.bridge); transit.bridge = null; }
             }
         }
         const offset = Math.round(shiftAmount(now) * 10000) / 10000;
         if (offset !== shiftBefore) {
-            stage.style.setProperty("--bus-shift-offset", `${-offset * (geometry?.pitch ?? 0)}px`);
-            // Interpolate the color at the light's physical position as it shifts.
+            stage.style.setProperty("--bus-shift-offset", `${-offset * g.pitch}px`);
             stage.style.setProperty("--bus-shift-tint", `${Math.min(1, offset) * 100}%`);
             shiftBefore = offset;
         }
         for (let i = 0; i < cells.length; i++) {
-            // Full segments aggregate units; the leading segment retains the
-            // exact fractional width instead of rounding a small backlog up.
-            const fill = Math.max(0, Math.min(1, parked - (cells.length - 1 - i)));
-            if (parked !== parkedBefore) cells[i].dataset.filled = String(fill > 0);
-            if (fill !== fills[i]) { cells[i].style.setProperty("--bus-fill", String(fill)); fills[i] = fill; }
+            const fill = Math.max(0, Math.min(1, parked - i));
+            if (fill !== fills[i]) {
+                cells[i].dataset.filled = String(fill > 0);
+                cells[i].style.setProperty("--bus-fill", String(fill)); fills[i] = fill;
+            }
             const level = Math.round(levels[i] * 1000) / 1000;
             if (level !== painted[i]) { cells[i].style.setProperty("--bus-level", String(level)); painted[i] = level; }
         }
-        parkedBefore = parked;
     }
     const tick = (now: number) => {
         frame = 0;
         if (destroyed || document.hidden) return;
-        advance(now);
-        paint(now);
-        if (scheduled.length || transits.length || shifts.length) frame = requestAnimationFrame(tick);
+        advance(now); paint(now);
+        if (scheduled.length || transits.length || shifts.length || rescale) frame = requestAnimationFrame(tick);
     };
     const wake = () => { if (motion && geometry && !document.hidden && !frame) frame = requestAnimationFrame(tick); };
-    const visibility = () => {
-        cancelAnimationFrame(frame); frame = 0;
-        reset();
-    };
+    const visibility = () => { cancelAnimationFrame(frame); frame = 0; reset(); };
     const observer = new ResizeObserver(measure);
     observer.observe(stage);
     document.addEventListener("visibilitychange", visibility);
@@ -230,38 +277,32 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         sync(pending: number, particles: FlowParticle[]) {
             target = pending;
             if (!motion || document.hidden || !geometry) { reset(); particles.forEach((item) => finish(item.id)); return; }
-            const now = performance.now();
-            const retained = new Set(particles.map((item) => item.id));
-            // The hook bounds activity to 192 marks. Keep the renderer bounded
-            // too when an overloaded feed drops marks faster than we play them.
+            const now = performance.now(), retained = new Set(particles.map((item) => item.id));
+            // Bound renderer activity along with the hook's 192 marks.
             for (let i = scheduled.length - 1; i >= 0; i--) if (!retained.has(scheduled[i].id)) scheduled.splice(i, 1);
-            for (let i = transits.length - 1; i >= 0; i--) if (!retained.has(transits[i].id)) {
-                removePacket(transits[i].bridge); transits.splice(i, 1);
-            }
+            for (let i = transits.length - 1; i >= 0; i--) if (!retained.has(transits[i].id)) { removePacket(transits[i].bridge); transits.splice(i, 1); }
             for (const packet of packets) if (!retained.has(packet.el.dataset.activity!)) removePacket(packet);
             for (const item of particles) {
                 if (seen.has(item.id)) continue;
-                seen.add(item.id);
-                scheduled.push({ ...item, at: now + item.delay });
+                seen.add(item.id); scheduled.push({ ...item, at: now + item.delay });
             }
             seen = retained;
             const arrivals = scheduled.filter((item) => item.direction === "in").length + transits.filter((item) => item.bridge?.handoff === null).length;
             const departures = scheduled.filter((item) => item.direction === "out").length;
             count = Math.max(admitted(), pending - arrivals + departures);
-            paint(now);
-            wake();
+            configure(Math.max(pending, count), now, !initialized); initialized = true;
+            paint(now); wake();
         },
         destroy() {
-            destroyed = true;
-            cancelAnimationFrame(frame);
-            observer.disconnect();
+            destroyed = true; cancelAnimationFrame(frame); observer.disconnect();
             document.removeEventListener("visibilitychange", visibility);
             for (const packet of packets) removePacket(packet);
+            grid.replaceChildren();
         },
     };
 }
 
-export function colorAt(position: number, capacity = 32) {
-    const hot = Math.max(0, Math.min(100, 100 - position / Math.max(1, capacity - 1) * 100));
+function colorAt(position: number) {
+    const hot = Math.max(0, Math.min(100, 100 - position * 100));
     return `color-mix(in oklab,var(--bus-load-hot) ${hot.toFixed(2)}%,var(--bus-load-cool))`;
 }

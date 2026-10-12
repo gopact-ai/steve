@@ -136,7 +136,7 @@ try {
     assert.ok(claimed?.delivery,"real consumer failed to claim the published input");
     await page.waitForFunction(()=>Number(document.querySelector('[data-flow-entered]')?.getAttribute("data-flow-entered"))>0&&Number(document.querySelector('[data-flow-taken]')?.getAttribute("data-flow-taken"))>0);
     assert.equal(await page.evaluate(()=>document.querySelector('.bus-flow-values strong').textContent===document.querySelector('[data-bus-queue="event_pending"] dd').textContent),true,"graph and queue counter used different snapshots");
-    const settledFill = ({count, capacity}) => document.querySelectorAll('.bus-flow-particle').length === 0 && Math.abs(Array.from(document.querySelectorAll('.bus-flow-cell'), (cell) => Number(cell.style.getPropertyValue('--bus-fill'))).reduce((a,b)=>a+b,0) - count / capacity * Math.min(32,capacity)) < .002;
+    const settledFill = ({count}) => document.querySelectorAll('.bus-flow-particle').length === 0 && Math.abs(Array.from(document.querySelectorAll('.bus-flow-cell'), (cell) => Number(cell.style.getPropertyValue('--bus-fill'))).reduce((a,b)=>a+b,0) * Number(document.querySelector('.bus-flow-track').dataset.unitScale) - count) < .002;
     await page.waitForFunction(settledFill, {count:startFlow.queues.pending.pending+2,capacity:startFlow.capacity});
     const claimFlow=await observe();const mark=claimFlow.claims.find((item)=>item.id===claimed.delivery.id);
     assert.ok(mark?.at&&mark.claim,"flow omitted original claim timing");
@@ -168,7 +168,7 @@ try {
     assert.deepEqual(writes,[],"the animation invoked a consumer action");
     console.log("PASS overlapping real publication/claim, shared queue snapshots, secret-free stable claim timing, dashboard live updates/reduced motion and read recovery");
     await checkQueueBurst(page, await observe());
-    console.log("PASS real capacity scaling, fractional occupancy, local consumer exits and equal light dimensions during 32 rapid claims at wide and narrow widths");
+    console.log("PASS adaptive backlog density, honest grouping, local consumer exits and equal light dimensions during 32 rapid claims at wide and narrow widths");
     assert.deepEqual(errors,[]);console.log("PASS keyboard, narrow layout and read-failure recovery keep decisions grounded in committed facts");
 } finally {
     await browser?.close();await server?.close();
