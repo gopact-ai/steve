@@ -61,6 +61,11 @@ path = "/tmp/operator-skill"
 [plugins]
 enabled = true
 
+[features]
+apps = true
+plugins = true
+remote_plugin = true
+
 [mcp_servers.github]
 command = "npx"
 
@@ -82,6 +87,22 @@ theme = "dark"
 	for _, banned := range []string{"skills.config", "[plugins]", "mcp_servers", "[projects", "notify", "[tui]"} {
 		if strings.Contains(got, banned) {
 			t.Fatalf("kept %q: %s", banned, got)
+		}
+	}
+	assertCodexNativeDiscoveryDisabled(t, got)
+	for _, empty := range [][]byte{nil, []byte("[features]\napps = true\nplugins = true\nremote_plugin = true\n")} {
+		assertCodexNativeDiscoveryDisabled(t, string(FilterCodexConfig(empty)))
+	}
+}
+
+func assertCodexNativeDiscoveryDisabled(t *testing.T, config string) {
+	t.Helper()
+	if strings.Count(config, "[features]") != 1 {
+		t.Fatalf("isolated config needs one explicit feature policy: %s", config)
+	}
+	for _, feature := range []string{"apps", "plugins", "remote_plugin"} {
+		if !strings.Contains(config, feature+" = false") || strings.Contains(config, feature+" = true") {
+			t.Fatalf("ambient %s discovery remains enabled: %s", feature, config)
 		}
 	}
 }
@@ -113,6 +134,7 @@ func TestPrepareCodexLinksAuthAndIsolatesSkills(t *testing.T) {
 	if !strings.Contains(body, "gpt-5.4") || strings.Contains(body, "skills.config") {
 		t.Fatalf("isolated config = %s", body)
 	}
+	assertCodexNativeDiscoveryDisabled(t, body)
 	if info, err := os.Stat(filepath.Join(dest, "skills")); err != nil || !info.IsDir() {
 		t.Fatalf("skills dir: %v", err)
 	}
@@ -129,6 +151,11 @@ func TestCodexLoginAfterRuntimePreparation(t *testing.T) {
 			t.Fatal(err)
 		}
 		homes = append(homes, home)
+		config, err := os.ReadFile(filepath.Join(home, "config.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertCodexNativeDiscoveryDisabled(t, string(config))
 	}
 	for _, value := range []string{"first-login", "refreshed-login"} {
 		temp := filepath.Join(source, "new-auth")

@@ -10,7 +10,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/material"
 )
@@ -41,7 +41,7 @@ func (s *Service) SetMaterials(resolver MaterialResolver, authorize func(context
 // A submission that replaces a line already sent first takes the thread
 // back to it, which is the one part that must happen before anything is
 // queued: the agent's session is closed out here, outside the lock.
-func (s *Service) submissionOptions(ctx context.Context, req consoleapi.Submission) (enqueueOptions, error) {
+func (s *Service) submissionOptions(ctx context.Context, req conversationapi.Submission) (enqueueOptions, error) {
 	options := enqueueOptions{Key: clientKey(req.CommandID), Refs: req.Refs, Locale: req.Locale, ExpectedProject: req.ExpectedProject}
 	if req.RewindTo == "" {
 		return options, nil
@@ -54,7 +54,7 @@ func (s *Service) submissionOptions(ctx context.Context, req consoleapi.Submissi
 	return options, nil
 }
 
-func (s *Service) Submit(ctx context.Context, req consoleapi.Submission) (Exchange, error) {
+func (s *Service) Submit(ctx context.Context, req conversationapi.Submission) (Exchange, error) {
 	options, err := s.submissionOptions(ctx, req)
 	if err != nil {
 		return Exchange{}, err
@@ -63,14 +63,14 @@ func (s *Service) Submit(ctx context.Context, req consoleapi.Submission) (Exchan
 	return e, err
 }
 
-func (s *Service) SendSubmission(ctx context.Context, req consoleapi.Submission) (consoleapi.Reply, error) {
+func (s *Service) SendSubmission(ctx context.Context, req conversationapi.Submission) (conversationapi.Reply, error) {
 	options, err := s.submissionOptions(ctx, req)
 	if err != nil {
-		return consoleapi.Reply{}, err
+		return conversationapi.Reply{}, err
 	}
 	e, _, err := s.enqueue(ctx, req.Conversation, req.Input, req.Quotes, options)
 	if err != nil {
-		return consoleapi.Reply{}, err
+		return conversationapi.Reply{}, err
 	}
 	<-e.done
 	return e.outcome.reply, e.outcome.err

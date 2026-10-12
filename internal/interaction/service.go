@@ -201,11 +201,20 @@ func (s *Service) Pump(ctx context.Context) error {
 			if !found {
 				return durable.Delete(tx, ActiveKind, id)
 			}
+			if r.State != "pending" {
+				return durable.Delete(tx, ActiveKind, id)
+			}
 			if r.Runtime == s.Runtime && (r.Deadline.IsZero() || r.Deadline.After(time.Now())) {
-				return nil
+				if err := checkOrigin(tx, r.Origin); err == nil {
+					return nil
+				} else if !errors.Is(err, identity.ErrDenied) && !errors.Is(err, ledger.ErrStale) && !errors.Is(err, attempt.ErrNotFound) && !errors.Is(err, task.ErrExecutionStopped) {
+					return err
+				}
+				r.Detail = "original execution or question authority ended"
+			} else {
+				r.Detail = "original presentation expired or restarted"
 			}
 			r.State = "interrupted"
-			r.Detail = "original presentation expired or restarted"
 			if err := tx.PutBinding(RecordKind, id, r); err != nil {
 				return err
 			}

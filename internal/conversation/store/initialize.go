@@ -7,8 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
-	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 )
 
 // InitializeConversation binds the project and persists an empty conversation
@@ -25,11 +24,11 @@ func (s *Service) InitializeConversation(ctx context.Context, conversation, proj
 	s.mu.Lock()
 	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
 		s.mu.Unlock()
-		return consoleapi.ErrConsoleClosing
+		return conversationapi.ErrConsoleClosing
 	}
 	if s.sealed[conversation] {
 		s.mu.Unlock()
-		return fmt.Errorf("%w: %s is being deleted", consoleapi.ErrBusy, conversation)
+		return fmt.Errorf("%w: %s is being deleted", conversationapi.ErrBusy, conversation)
 	}
 	if err := ctx.Err(); err != nil {
 		s.mu.Unlock()
@@ -46,7 +45,7 @@ func (s *Service) InitializeConversation(ctx context.Context, conversation, proj
 	previous, hadMeta := s.meta[conversation]
 	m := previous
 	m.UpdatedAt = time.Now().UTC()
-	s.replies[conversation] = []consoleapi.Reply{}
+	s.replies[conversation] = []conversationapi.Reply{}
 	s.meta[conversation] = m
 	if err := s.save(); err != nil {
 		delete(s.replies, conversation)
@@ -60,7 +59,7 @@ func (s *Service) InitializeConversation(ctx context.Context, conversation, proj
 	}
 	s.mu.Unlock()
 	if s.model != nil {
-		s.model.Publish(readmodel.Event{At: m.UpdatedAt, Kind: "console.meta", Conversation: conversation, Text: m.Title})
+		s.model.Publish(conversationapi.Event{At: m.UpdatedAt, Kind: "console.meta", Conversation: conversation, Text: m.Title})
 	}
 	return nil
 }

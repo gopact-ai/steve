@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/eventlog"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/provider"
 )
 
 const (
@@ -33,6 +34,7 @@ type Publish struct {
 	Subject   string          `json:"subject,omitempty"`
 	Payload   json.RawMessage `json:"payload"`
 	Causation string          `json:"causation,omitempty"`
+	Version   string          `json:"schema_version,omitempty"`
 }
 
 type Subscription struct {
@@ -57,6 +59,7 @@ type Subscription struct {
 
 type Delivery struct {
 	ID          string       `json:"id"`
+	Revision    uint64       `json:"revision"`
 	EventID     string       `json:"event_id"`
 	Rule        Subscription `json:"rule"`
 	State       string       `json:"state"` // pending, claimed, accepted, done, failed, unknown, cancelled
@@ -64,8 +67,10 @@ type Delivery struct {
 	Incarnation uint64       `json:"incarnation,omitempty"`
 	Runtime     string       `json:"runtime,omitempty"`
 	ClaimUntil  time.Time    `json:"claim_until,omitzero"`
+	ClaimedAt   time.Time    `json:"claimed_at,omitzero"`
 	Receipt     string       `json:"receipt,omitempty"`
 	Detail      string       `json:"detail,omitempty"`
+	Resolution  *Resolution  `json:"resolution,omitempty"`
 	UpdatedAt   time.Time    `json:"updated_at"`
 }
 
@@ -84,6 +89,8 @@ type Service struct {
 	Identity     *identity.Service
 	ValidateWork func(context.Context, string, string, string) error
 	Runtime      string
+	Limits       durable.Limits
+	WaitAfter    time.Duration
 	scan         durable.Scanner
 }
 
@@ -101,8 +108,15 @@ func (s *Service) Publish(ctx context.Context, p identity.Principal, input Publi
 		if !grant.AllowsEvent(input.Type) {
 			return identity.ErrDenied
 		}
-		event := Event{Source: grant.Principal, Key: input.Key, Type: input.Type, Subject: input.Subject, Payload: input.Payload, Causation: input.Causation, At: time.Now().UTC(), Attention: true}
-		if input.Causation != "" {
+		event := Event{Source: grant.Principal, Key: input.Key, Type: input.Type, Subject: input.Subject, Payload: input.Payload, Causation: input.Causation, RequestedVersion: input.Version, At: time.Now().UTC(), Attention: true}
+		old, exists, err := durable.Get[Event](tx, EventKind, durable.Key(grant.Principal, input.Key))
+		if err != nil {
+			return err
+		}
+		if exists {
+			event.Depth = old.Depth
+		}
+		if input.Causation != "" && !exists {
 			// A provider can only derive an event from an event delivered to it.
 			delivery, found, err := durable.Get[Delivery](tx, DeliveryKind, input.Causation)
 			if err != nil {
@@ -119,6 +133,22 @@ func (s *Service) Publish(ctx context.Context, p identity.Principal, input Publi
 				return identity.ErrDenied
 			}
 			event.Depth = parent.Depth + 1
+		}
+		if exists {
+			// The original contract was frozen at first admission. Schema updates
+			// and token rotations do not rewrite an identical input's receipt.
+			event.Contract = old.Contract
+		} else {
+			contract, declared, err := provider.Freeze(tx, grant.ID, input.Type, input.Version)
+			if err != nil {
+				return err
+			}
+			if declared {
+				event.Contract = &eventlog.Contract{Version: contract.Version, Name: contract.Name, Description: contract.Description, I18N: contract.I18N, Schema: contract.Schema, Digest: contract.Digest}
+			}
+			if err := s.checkCapacityTx(tx, grant.Principal, 1); err != nil {
+				return err
+			}
 		}
 		out, err = AppendTx(tx, event)
 		return err
@@ -164,7 +194,7 @@ func (s *Service) SaveSubscription(ctx context.Context, rule Subscription) (Subs
 		if found && old.Revision != rule.Revision || !found && rule.Revision != 0 {
 			return ledger.ErrConflict
 		}
-		if rule.Mode == "provider" {
+		if rule.Mode == "provider" && rule.Enabled {
 			g, found, err := durable.Get[identity.Grant](tx, identity.GrantKind, rule.Handler)
 			if err != nil {
 				return err
@@ -234,6 +264,21 @@ func (s *Service) Route(ctx context.Context, id string) error {
 					return err
 				}
 			}
+			if rule.Mode == "provider" {
+				grant, exists, err := durable.Get[identity.Grant](tx, identity.GrantKind, rule.Handler)
+				if err != nil {
+					return err
+				}
+				if !exists || !grant.Enabled || grant.Kind != "provider" {
+					delivery.State = StateCancelled
+					delivery.Detail = "Assigned consumer has been retired; select another subscription before reprocessing"
+				}
+			}
+			if delivery.State == StatePending {
+				if err := durable.CheckStateCapacityTx(tx, DeliveryKind, "$.rule.handler", rule.Handler, []string{StatePending, StateClaimed, StateAccepted, StateUnknown}, s.Limits, 1); err != nil {
+					return err
+				}
+			}
 			if err := saveDelivery(tx, delivery); err != nil {
 				return err
 			}
@@ -251,14 +296,14 @@ func (s *Service) Route(ctx context.Context, id string) error {
 // event. Frozen deliveries under existing rule revisions keep their receipts.
 func (s *Service) Reprocess(ctx context.Context, id string) error {
 	return s.Book.Update(ctx, func(tx *ledger.Tx) error {
-		_, found, err := durable.Get[Event](tx, EventKind, id)
+		event, err := restoreEventTx(tx, id)
 		if err != nil {
 			return err
 		}
-		if !found {
-			return errors.New("event not found")
+		if err := tx.PutBinding(OutboxKind, id, id); err != nil {
+			return err
 		}
-		return tx.PutBinding(OutboxKind, id, id)
+		return s.checkCapacityTx(tx, event.Source, 0)
 	})
 }
 

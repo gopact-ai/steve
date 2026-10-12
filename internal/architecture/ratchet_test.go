@@ -278,6 +278,7 @@ func TestConsoleAPIPortMethodsAreAllUsedByHTTPAPI(t *testing.T) {
 func unusedMethods(t *testing.T, root, port string) (unused, problems []string) {
 	t.Helper()
 	interfaces := map[string]*ast.InterfaceType{}
+	neutralAlias := false
 	for _, src := range parseGoSources(t, root, packageSourceFiles(t, filepath.Join(root, "internal", "consoleapi"))) {
 		for _, decl := range src.syntax.Decls {
 			gen, ok := decl.(*ast.GenDecl)
@@ -286,11 +287,20 @@ func unusedMethods(t *testing.T, root, port string) (unused, problems []string) 
 			}
 			for _, spec := range gen.Specs {
 				typeSpec := spec.(*ast.TypeSpec)
+				if typeSpec.Name.Name == port && typeSpec.Assign.IsValid() {
+					if target, ok := typeSpec.Type.(*ast.SelectorExpr); ok && types.ExprString(target) == "conversationapi.Service" {
+						neutralAlias = true
+					}
+				}
 				if iface, ok := typeSpec.Type.(*ast.InterfaceType); ok {
 					interfaces[typeSpec.Name.Name] = iface
 				}
 			}
 		}
+	}
+	if neutralAlias {
+		interfaces = conversationPortInterfaces(t, root)
+		interfaces[port] = interfaces["Service"]
 	}
 	if interfaces[port] == nil {
 		t.Fatalf("internal/consoleapi declares no %s interface", port)
@@ -337,6 +347,28 @@ func unusedMethods(t *testing.T, root, port string) (unused, problems []string) 
 	}
 	sort.Strings(unused)
 	return unused, problems
+}
+
+// Console is a compatibility alias for the transport-neutral conversation
+// contract. Its inherited methods still have to be consumed by HTTP.
+func conversationPortInterfaces(t *testing.T, root string) map[string]*ast.InterfaceType {
+	t.Helper()
+	out := map[string]*ast.InterfaceType{}
+	for _, src := range parseGoSources(t, root, packageSourceFiles(t, filepath.Join(root, "internal", "conversationapi"))) {
+		for _, decl := range src.syntax.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				typeSpec := spec.(*ast.TypeSpec)
+				if iface, ok := typeSpec.Type.(*ast.InterfaceType); ok {
+					out[typeSpec.Name.Name] = iface
+				}
+			}
+		}
+	}
+	return out
 }
 
 // packageSourceFiles lists the non-test Go files of the package in dir.

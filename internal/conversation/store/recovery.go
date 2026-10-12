@@ -12,7 +12,7 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -96,12 +96,12 @@ func (s *Service) RecoverChats(ctx context.Context, driver RetainedChatDriver) e
 		return errors.New("retained recovery must be enabled before loading the console")
 	}
 	if s.recoveryStoppedLocked() {
-		return consoleapi.ErrConsoleClosing
+		return conversationapi.ErrConsoleClosing
 	}
 	s.recoveryDriver = driver
 	for _, list := range s.exchanges {
 		for _, e := range list {
-			if (e.State != consoleapi.ExchangeRecovering && e.State != consoleapi.ExchangeAwaitingUser) || e.cancel != nil {
+			if (e.State != conversationapi.ExchangeRecovering && e.State != conversationapi.ExchangeAwaitingUser) || e.cancel != nil {
 				continue
 			}
 			select {
@@ -124,14 +124,14 @@ func (s *Service) RecoverChats(ctx context.Context, driver RetainedChatDriver) e
 // RequestRecovery asks a platform reconciliation question in its original
 // conversation. The authenticated console owner supplies the principal; this
 // call cannot forge a native tool callback or grant execution permission.
-func (s *Service) RequestRecovery(ctx context.Context, binding consoleapi.PendingQuestion, question view.Question) (view.Answer, error) {
+func (s *Service) RequestRecovery(ctx context.Context, binding conversationapi.PendingQuestion, question view.Question) (view.Answer, error) {
 	if !IsConsole(binding.Conversation) || binding.TaskID == "" || binding.AttemptID == "" || s.owner == "" {
-		return view.Answer{}, consoleapi.ErrInvalidAnswer
+		return view.Answer{}, conversationapi.ErrInvalidAnswer
 	}
 	s.mu.Lock()
 	if s.recoveryStoppedLocked() {
 		s.mu.Unlock()
-		return view.Answer{}, consoleapi.ErrConsoleClosing
+		return view.Answer{}, conversationapi.ErrConsoleClosing
 	}
 	if binding.ExchangeID != "" {
 		found := false
@@ -143,14 +143,14 @@ func (s *Service) RequestRecovery(ctx context.Context, binding consoleapi.Pendin
 		}
 		if !found {
 			s.mu.Unlock()
-			return view.Answer{}, consoleapi.ErrExchangeNotFound
+			return view.Answer{}, conversationapi.ErrExchangeNotFound
 		}
 	}
 	s.mu.Unlock()
 	question.Kind = "recovery"
 	question.SessionID = binding.SessionID
 	question.Generation = binding.Generation
-	return s.askUser(ctx, consoleapi.PendingQuestion{Conversation: binding.Conversation, ExchangeID: binding.ExchangeID, Project: binding.Project, TaskID: binding.TaskID, ParentTaskID: binding.ParentTaskID, AttemptID: binding.AttemptID, SessionID: binding.SessionID, Generation: binding.Generation, Locale: binding.Locale}, question, false)
+	return s.askUser(ctx, conversationapi.PendingQuestion{Conversation: binding.Conversation, ExchangeID: binding.ExchangeID, Project: binding.Project, TaskID: binding.TaskID, ParentTaskID: binding.ParentTaskID, AttemptID: binding.AttemptID, SessionID: binding.SessionID, Generation: binding.Generation, Locale: binding.Locale}, question, false)
 }
 
 // continueDetached preserves a managed exchange when its observer fails while
@@ -179,7 +179,7 @@ func (s *Service) continueDetached(e *queuedExchange, err error) bool {
 	}
 	ctx, cancel := context.WithCancel(s.exchangeContext(e.ctx))
 	e.ctx, e.cancel = ctx, cancel
-	e.State = consoleapi.ExchangeRecovering
+	e.State = conversationapi.ExchangeRecovering
 	if err := s.save(); err != nil {
 		s.detachRecoveryLocked(e, err)
 		s.mu.Unlock()
@@ -295,8 +295,6 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 	}
 	stream := s.progress(exchange.Conversation, exchange.ID, work)
 	defer stream.Close()
-	stop := s.follow(ctx, exchange.Conversation, work)
-	defer stop()
 	if s.anchor != nil {
 		s.anchor(exchange.Conversation, ChatID, AnchorMark+exchange.ID)
 	}
@@ -343,7 +341,7 @@ func (s *Service) openRecovery(e *queuedExchange) (Exchange, *process, bool) {
 }
 
 // markExchange persists a recovery state change and tells the page.
-func (s *Service) markExchange(e *queuedExchange, state consoleapi.ExchangeState) error {
+func (s *Service) markExchange(e *queuedExchange, state conversationapi.ExchangeState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e.State = state
@@ -364,7 +362,7 @@ func (r *exchangeRecovery) observe() bool {
 	}
 	if requester == "" || requester != r.s.owner {
 		r.stream.Close()
-		r.s.finish(r.e, consoleapi.Reply{}, errors.New("recovery requires the original console owner"))
+		r.s.finish(r.e, conversationapi.Reply{}, errors.New("recovery requires the original console owner"))
 		return false
 	}
 	if found && lookupErr == nil && candidate.Abandoned && candidate.AbandonProjected {
@@ -424,7 +422,7 @@ func (r *exchangeRecovery) observe() bool {
 // identity binds the pass's questions to the execution found for the
 // exchange; a resumed turn refines it through OnTurnReady.
 func (r *exchangeRecovery) identity(candidate retainedExchange, found bool) *questionIdentity {
-	base := consoleapi.PendingQuestion{Conversation: r.exchange.Conversation, ExchangeID: r.exchange.ID, Project: r.exchange.ExpectedProject, TaskID: candidate.TaskID, AttemptID: candidate.AttemptID, Locale: r.exchange.Locale}
+	base := conversationapi.PendingQuestion{Conversation: r.exchange.Conversation, ExchangeID: r.exchange.ID, Project: r.exchange.ExpectedProject, TaskID: candidate.TaskID, AttemptID: candidate.AttemptID, Locale: r.exchange.Locale}
 	if found && candidate.ProjectID != "" {
 		base.Project = candidate.ProjectID
 	}
@@ -473,7 +471,7 @@ func (r *exchangeRecovery) resume(candidate retainedExchange, request turn.Reque
 	// Do not reattach behind a state the console could not write: an
 	// execution resumed under an unrecorded exchange would be lost again
 	// by the next restart, so the failure is what the owner is told.
-	if saveErr := r.s.markExchange(r.e, consoleapi.ExchangeRecovering); saveErr != nil {
+	if saveErr := r.s.markExchange(r.e, conversationapi.ExchangeRecovering); saveErr != nil {
 		if r.ctx.Err() != nil {
 			r.detach(r.ctx.Err())
 			return true, nil
@@ -546,7 +544,7 @@ func (r *exchangeRecovery) relocate(planner relocationDriver, candidate retained
 // approved choice; any other answer leaves the recovery quiet on this
 // plan and the choice empty.
 func (r *exchangeRecovery) approvePlan(plan turn.RelocationPlan, signature string, identity *questionIdentity) (done bool, choice string) {
-	if err := r.s.markExchange(r.e, consoleapi.ExchangeAwaitingUser); err != nil {
+	if err := r.s.markExchange(r.e, conversationapi.ExchangeAwaitingUser); err != nil {
 		r.detach(err)
 		return true, ""
 	}
@@ -570,7 +568,7 @@ func (r *exchangeRecovery) approvePlan(plan turn.RelocationPlan, signature strin
 // decides whether the next pass asks once more. It reports whether
 // another pass should follow.
 func (r *exchangeRecovery) consult(blocked *agentexec.RecoveryBlocked, identity *questionIdentity) bool {
-	if err := r.s.markExchange(r.e, consoleapi.ExchangeAwaitingUser); err != nil {
+	if err := r.s.markExchange(r.e, conversationapi.ExchangeAwaitingUser); err != nil {
 		if r.ctx.Err() != nil {
 			err = r.ctx.Err()
 		}
@@ -673,7 +671,7 @@ func (r *exchangeRecovery) withdrew() bool {
 // execution and its task. A node that comes back or a task that is
 // cancelled withdraws the question, because the recovery can then go on
 // without an answer; withdrawn says so.
-func (r *exchangeRecovery) ask(identity *questionIdentity, question view.Question, put func(context.Context, consoleapi.PendingQuestion, view.Question) (view.Answer, error)) (view.Answer, error) {
+func (r *exchangeRecovery) ask(identity *questionIdentity, question view.Question, put func(context.Context, conversationapi.PendingQuestion, view.Question) (view.Answer, error)) (view.Answer, error) {
 	binding := identity.binding()
 	ctx, cancel := context.WithCancel(r.ctx)
 	defer cancel()
@@ -706,7 +704,7 @@ func (r *exchangeRecovery) ask(identity *questionIdentity, question view.Questio
 // watch reports whether a question bound to binding stopped needing an
 // answer before ctx ended: the original execution can be reached again, or
 // a person cancelled its task and the task store now has it set aside.
-func (r *exchangeRecovery) watch(ctx context.Context, binding consoleapi.PendingQuestion) bool {
+func (r *exchangeRecovery) watch(ctx context.Context, binding conversationapi.PendingQuestion) bool {
 	var probe <-chan time.Time
 	prober, ok := r.driver.(retainedProber)
 	if ok && binding.AttemptID != "" {
@@ -850,8 +848,8 @@ func (s *Service) detachRecoveryLocked(e *queuedExchange, err error) {
 	}
 }
 
-func (s *Service) resultReply(ctx context.Context, exchange Exchange, work *process, result turn.Result, err error) consoleapi.Reply {
-	reply := consoleapi.Reply{At: time.Now().UTC(), Conversation: exchange.Conversation, ProjectID: exchange.ExpectedProject, AttemptID: result.Attempt, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary(), Refs: exchange.Refs, Materials: exchange.Materials}
+func (s *Service) resultReply(ctx context.Context, exchange Exchange, work *process, result turn.Result, err error) conversationapi.Reply {
+	reply := conversationapi.Reply{At: time.Now().UTC(), Conversation: exchange.Conversation, ProjectID: exchange.ExpectedProject, AttemptID: result.Attempt, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary(), Refs: exchange.Refs, Materials: exchange.Materials}
 	if result.Attempt != "" && s.inspector != nil {
 		if changes, cerr := s.inspector.Changes(ctx, result.Attempt); cerr != nil {
 			slog.Error(fmt.Sprintf("console: changes of attempt %s: %v", result.Attempt, cerr), "attempt", result.Attempt, "conversation", exchange.Conversation, "exchange", exchange.ID)
@@ -860,7 +858,7 @@ func (s *Service) resultReply(ctx context.Context, exchange Exchange, work *proc
 		}
 	}
 	if in := result.Injected; in != nil {
-		reply.Injected = &consoleapi.Injected{Project: in.Project, Workspace: in.Workspace, Agent: in.Agent, Node: in.Node, Harness: in.Harness, Model: in.Model, Options: in.Options, Session: in.Session, NewSession: in.NewSession, InstructionsSent: in.InstructionsSent, Instructions: in.Instructions, InstructionsBytes: in.InstructionsBytes, MCPServers: in.MCPServers, Fingerprint: in.Fingerprint, Prompt: in.Prompt, Sections: sectionsOf(in.Sections)}
+		reply.Injected = &conversationapi.Injected{Project: in.Project, Workspace: in.Workspace, Agent: in.Agent, Node: in.Node, Harness: in.Harness, Model: in.Model, Options: in.Options, Session: in.Session, NewSession: in.NewSession, InstructionsSent: in.InstructionsSent, Instructions: in.Instructions, InstructionsBytes: in.InstructionsBytes, MCPServers: in.MCPServers, Fingerprint: in.Fingerprint, Prompt: in.Prompt, Sections: sectionsOf(in.Sections)}
 	}
 	if err != nil {
 		reply.Error = err.Error()
@@ -872,10 +870,10 @@ func (s *Service) resultReply(ctx context.Context, exchange Exchange, work *proc
 }
 
 // sectionsOf carries the instruction breakdown to the page.
-func sectionsOf(in []capability.Section) []consoleapi.Section {
-	out := make([]consoleapi.Section, 0, len(in))
+func sectionsOf(in []capability.Section) []conversationapi.Section {
+	out := make([]conversationapi.Section, 0, len(in))
 	for _, s := range in {
-		out = append(out, consoleapi.Section{Kind: s.Kind, Name: s.Name, Path: s.Path, Bytes: s.Bytes})
+		out = append(out, conversationapi.Section{Kind: s.Kind, Name: s.Name, Path: s.Path, Bytes: s.Bytes})
 	}
 	if len(out) == 0 {
 		return nil

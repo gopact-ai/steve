@@ -38,7 +38,7 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 		gate.SetIntents(intent.ForAgents{S: intents, Attempts: attempts})
 		// Platform questions are answered by the coordinator, live.
 		gate.SetInformer(adminsvc.CoordinatorInformer{C: coordinator})
-		gate.SetFleeter(adminsvc.FleetTools{Admin: admin, View: view})
+		configurePlatformAuthority(gate, book, work.Accounts(), admin, view)
 		gate.SetMemorizer(coordinator)
 	}
 	var channel *feishu.Channel

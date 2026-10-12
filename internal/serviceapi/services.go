@@ -14,12 +14,14 @@ import (
 )
 
 type Identity interface {
+	ConnectionLifecycle
 	Authenticate(context.Context, string) (identity.Principal, error)
 	Enroll(context.Context, identity.Grant) (identity.Enrollment, error)
 	Revoke(context.Context, string) error
 	Connections(context.Context, string) (durable.Page[identity.Grant], error)
 }
 type Events interface {
+	EventLifecycle
 	Publish(context.Context, identity.Principal, events.Publish) (events.Event, error)
 	Poll(context.Context, identity.Principal) (events.Claimed, bool, error)
 	Ack(context.Context, identity.Principal, string, events.Acknowledgement) error
@@ -27,6 +29,10 @@ type Events interface {
 	Subscriptions(context.Context, string) (durable.Page[events.Subscription], error)
 	InboxEntries(context.Context, string) (durable.Page[events.Inbox], error)
 	Deliveries(context.Context, string) (durable.Page[events.Delivery], error)
+	Delivery(context.Context, string) (events.Delivery, error)
+	Journal(context.Context, string) (durable.Page[events.JournalEntry], error)
+	Flow(context.Context) (events.FlowSnapshot, error)
+	Activity(context.Context) (events.ActivitySnapshot, error)
 	Event(context.Context, string) (events.Event, error)
 	ResolveInbox(context.Context, string) error
 	Reprocess(context.Context, string) error
@@ -37,6 +43,7 @@ type Work interface {
 	Status(context.Context, identity.Principal, string) (work.Record, work.Result, error)
 }
 type Clients interface {
+	ClientLifecycle
 	Attention(context.Context, string) (durable.Page[clientcap.Invocation], error)
 	Invoke(context.Context, identity.Principal, clientcap.Request) (clientcap.Invocation, error)
 	Register(context.Context, identity.Principal, clientcap.Register) (clientcap.Registration, error)
@@ -50,10 +57,12 @@ type Clients interface {
 	Invocations(context.Context, string) (durable.Page[clientcap.Invocation], error)
 }
 type Services struct {
+	Maintenance  Maintenance
 	Accounts     Accounts
 	Interactions Interactions
 	Policy       Policy
 	Identity     Identity
+	Providers    Providers
 	Events       Events
 	Work         Work
 	Clients      Clients

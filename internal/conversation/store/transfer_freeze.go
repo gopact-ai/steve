@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -32,8 +32,8 @@ func freezeConsole(saved *transcript, project string) {
 			if e.ExpectedProject != project || e.State.Terminal() {
 				continue
 			}
-			reply := consoleapi.Reply{ID: "moved-" + e.ID, ExchangeID: e.ID, Conversation: conversation, ProjectID: project, At: now, Kind: "reply", Text: "project migrated from this hub", Error: "project migrated from this hub"}
-			e.State = consoleapi.ExchangeFailed
+			reply := conversationapi.Reply{ID: "moved-" + e.ID, ExchangeID: e.ID, Conversation: conversation, ProjectID: project, At: now, Kind: "reply", Text: "project migrated from this hub", Error: "project migrated from this hub"}
+			e.State = conversationapi.ExchangeFailed
 			e.ReplyID = reply.ID
 			if e.Key != "" {
 				e.Receipt = &reply

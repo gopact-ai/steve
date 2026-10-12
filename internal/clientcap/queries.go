@@ -7,6 +7,7 @@ import (
 	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"time"
 )
 
 func (b *Broker) Invoke(ctx context.Context, p identity.Principal, input Request) (Invocation, error) {
@@ -45,7 +46,17 @@ func (b *Broker) Available(ctx context.Context, p identity.Principal, conversati
 		if err != nil {
 			return err
 		}
-		rows, err := tx.Query(`SELECT data FROM bindings WHERE kind=? ORDER BY id LIMIT 200`, ClientKind)
+		// Filter authority and availability before the discovery limit. Retained
+		// offline registrations must not hide newer live authorized clients.
+		query := `SELECT c.data FROM bindings AS c JOIN bindings AS g ON g.kind=? AND g.id=c.id WHERE c.kind=? AND json_extract(g.data,'$.enabled')=1 AND json_extract(g.data,'$.kind')='client' AND julianday(json_extract(c.data,'$.until'))>julianday(?) AND EXISTS(SELECT 1 FROM json_each(g.data,'$.capabilities') AS scope JOIN json_each(c.data,'$.capabilities') AS advertised ON json_extract(advertised.value,'$.name')=json_extract(scope.value,'$.capability') WHERE json_extract(scope.value,'$.conversation')=? AND json_extract(scope.value,'$.client')=c.id`
+		args := []any{identity.GrantKind, ClientKind, time.Now().UTC().Format(time.RFC3339Nano), conversation}
+		if !p.Owner {
+			query += ` AND EXISTS(SELECT 1 FROM json_each(?,'$.capabilities') AS caller WHERE json_extract(caller.value,'$.conversation')=? AND json_extract(caller.value,'$.client')=c.id AND json_extract(caller.value,'$.capability')=json_extract(advertised.value,'$.name'))`
+			raw, _ := json.Marshal(grant)
+			args = append(args, string(raw), conversation)
+		}
+		query += `) ORDER BY c.id LIMIT 200`
+		rows, err := tx.Query(query, args...)
 		if err != nil {
 			return err
 		}

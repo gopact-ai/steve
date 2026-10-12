@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
@@ -155,6 +156,10 @@ func (s *Store) Check() error {
 }
 
 func (s *Store) SetActiveAgent(conversationID, agentID string) error {
+	return s.SetActiveAgentChecked(context.Background(), conversationID, agentID, nil)
+}
+
+func (s *Store) SetActiveAgentChecked(ctx context.Context, conversationID, agentID string, guard func(*ledger.Tx) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := cloneData(s.data)
@@ -164,7 +169,7 @@ func (s *Store) SetActiveAgent(conversationID, agentID string) error {
 		conversation.Sessions = map[string]Session{}
 	}
 	next.Conversations[conversationID] = conversation
-	return s.replaceLocked(next)
+	return s.replaceCheckedLocked(ctx, next, guard)
 }
 
 // Preferences are the owner's choices for an agent in a conversation.
@@ -183,6 +188,10 @@ func (s *Store) Preferences(conversationID, agentID string) map[string]string {
 // SetPreferences merges a patch into an agent's preferences for a
 // conversation; an empty value drops the key.
 func (s *Store) SetPreferences(conversationID, agentID string, patch map[string]string) error {
+	return s.SetPreferencesChecked(context.Background(), conversationID, agentID, patch, nil)
+}
+
+func (s *Store) SetPreferencesChecked(ctx context.Context, conversationID, agentID string, patch map[string]string, guard func(*ledger.Tx) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := cloneData(s.data)
@@ -210,7 +219,7 @@ func (s *Store) SetPreferences(conversationID, agentID string, patch map[string]
 		conversation.Preferences[agentID] = prefs
 	}
 	next.Conversations[conversationID] = conversation
-	return s.replaceLocked(next)
+	return s.replaceCheckedLocked(ctx, next, guard)
 }
 
 func (s *Store) SaveSession(session Session) error {
@@ -409,11 +418,15 @@ const maxArchived = 20
 // conversation's history. It is what /clear uses: the agent forgets its
 // context, but the record of how to reach it survives.
 func (s *Store) ArchiveSession(conversationID, agentID, at string) error {
+	return s.ArchiveSessionChecked(context.Background(), conversationID, agentID, at, nil)
+}
+
+func (s *Store) ArchiveSessionChecked(ctx context.Context, conversationID, agentID, at string, guard func(*ledger.Tx) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := cloneData(s.data)
 	archiveSession(&next, conversationID, agentID, at)
-	return s.replaceLocked(next)
+	return s.replaceCheckedLocked(ctx, next, guard)
 }
 
 // archiveSession is ArchiveSession applied to next.
@@ -436,6 +449,10 @@ func archiveSession(next *data, conversationID, agentID, at string) {
 // first at index 1. The record is moved rather than copied, so the same
 // session is never live and archived at once.
 func (s *Store) RestoreSession(conversationID, agentID string, index int) (Session, error) {
+	return s.RestoreSessionChecked(context.Background(), conversationID, agentID, index, nil)
+}
+
+func (s *Store) RestoreSessionChecked(ctx context.Context, conversationID, agentID string, index int, guard func(*ledger.Tx) error) (Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := cloneData(s.data)
@@ -475,7 +492,7 @@ func (s *Store) RestoreSession(conversationID, agentID string, index int) (Sessi
 	// The conversation holds it again, so a close still owed for it would
 	// end the context the user just chose to return to.
 	next.OwedCloses = slices.DeleteFunc(next.OwedCloses, func(owed OwedClose) bool { return owed.names(restored) })
-	if err := s.replaceLocked(next); err != nil {
+	if err := s.replaceCheckedLocked(ctx, next, guard); err != nil {
 		return Session{}, err
 	}
 	return restored, nil
@@ -600,4 +617,24 @@ func cloneConversation(conversation Conversation) Conversation {
 		clone.Sessions[id] = session
 	}
 	return clone
+}
+
+func (s *Store) replaceCheckedLocked(ctx context.Context, next data, guard func(*ledger.Tx) error) error {
+	if guard == nil {
+		return s.replaceLocked(next)
+	}
+	raw, err := json.MarshalIndent(next, "", "  ")
+	if err != nil {
+		return err
+	}
+	err = s.book.Update(ctx, func(tx *ledger.Tx) error {
+		if err := guard(tx); err != nil {
+			return err
+		}
+		return tx.StoreDocument("state", raw)
+	})
+	if err == nil {
+		s.data = next
+	}
+	return err
 }

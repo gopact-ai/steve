@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 )
 
 // QueueTaskResume records startup continuation input before its original
@@ -63,25 +63,25 @@ func (s *Service) ContinueTask(ctx context.Context, conversation, taskID, key, m
 	if e.ExpectedTask != taskID {
 		return fmt.Errorf("%w: continuation belongs to another task", channel.ErrOutcomeUnknown)
 	}
-	if e.State != consoleapi.ExchangeQueued && !continuationSettled(e) {
+	if e.State != conversationapi.ExchangeQueued && !continuationSettled(e) {
 		return channel.ErrDeliveryQueued
 	}
-	if e.State == consoleapi.ExchangeFailed && e.ContinuationRejected {
+	if e.State == conversationapi.ExchangeFailed && e.ContinuationRejected {
 		if err := s.requeueContinuationLocked(ctx, e); err != nil {
 			return err
 		}
 	}
 	switch e.State {
-	case consoleapi.ExchangeDone:
+	case conversationapi.ExchangeDone:
 		return nil
-	case consoleapi.ExchangeQueued:
+	case conversationapi.ExchangeQueued:
 		if s.busyLocked(e.Conversation) == 0 {
 			if err := s.startNextLocked(e.Conversation); err != nil {
 				return err
 			}
 		}
 		return channel.ErrDeliveryQueued
-	case consoleapi.ExchangeRunning, consoleapi.ExchangeRecovering:
+	case conversationapi.ExchangeRunning, conversationapi.ExchangeRecovering:
 		return channel.ErrDeliveryQueued
 	default:
 		return fmt.Errorf("%w: parent exchange %s is %s; inspect its retained reply", channel.ErrOutcomeUnknown, e.ID, e.State)
@@ -100,7 +100,7 @@ func (s *Service) ContinuationReceipt(conversation, taskID, key string) (bool, e
 	if e.ExpectedTask != taskID {
 		return true, fmt.Errorf("%w: continuation belongs to another task", channel.ErrOutcomeUnknown)
 	}
-	if e.State == consoleapi.ExchangeQueued {
+	if e.State == conversationapi.ExchangeQueued {
 		// A previous start may have failed before saving the reservation.
 		// Let normal admission retry that same queued entry when permitted.
 		return false, nil
@@ -108,10 +108,10 @@ func (s *Service) ContinuationReceipt(conversation, taskID, key string) (bool, e
 	if !continuationSettled(e) {
 		return true, channel.ErrDeliveryQueued
 	}
-	if e.State == consoleapi.ExchangeDone {
+	if e.State == conversationapi.ExchangeDone {
 		return true, nil
 	}
-	if e.State == consoleapi.ExchangeFailed && e.ContinuationRejected {
+	if e.State == conversationapi.ExchangeFailed && e.ContinuationRejected {
 		return false, nil
 	}
 	return true, fmt.Errorf("%w: parent exchange %s is %s; inspect its retained reply", channel.ErrOutcomeUnknown, e.ID, e.State)
@@ -141,10 +141,10 @@ func continuationSettled(e *queuedExchange) bool {
 // A failed or cancelled admitted execution is never automatically run twice.
 func (s *Service) requeueContinuationLocked(ctx context.Context, e *queuedExchange) error {
 	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
-		return consoleapi.ErrConsoleClosing
+		return conversationapi.ErrConsoleClosing
 	}
 	previous := *e
-	e.State, e.StartedAt, e.ReplyID = consoleapi.ExchangeQueued, time.Time{}, ""
+	e.State, e.StartedAt, e.ReplyID = conversationapi.ExchangeQueued, time.Time{}, ""
 	e.Receipt, e.ContinuationRejected = nil, false
 	e.ctx, e.cancel, e.done = s.exchangeContext(ctx), nil, make(chan struct{})
 	e.outcome = outcome{}

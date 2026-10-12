@@ -6,13 +6,13 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-func (e *queuedExchange) recoveryReply() *consoleapi.Reply {
+func (e *queuedExchange) recoveryReply() *conversationapi.Reply {
 	if e.RecoveryAbandon != nil {
 		return e.RecoveryAbandon
 	}
@@ -28,13 +28,13 @@ func (s *Service) recordAbandonment(target *queuedExchange, id string) error {
 		return nil
 	}
 	if s.recoveryStoppedLocked() {
-		return consoleapi.ErrConsoleClosing
+		return conversationapi.ErrConsoleClosing
 	}
 	if target.recoveryStopping != nil {
 		return errors.New("original recovery is still processing its previous stop")
 	}
 	text := i18n.New(i18n.FromLang(target.Locale))
-	return s.finishAbandonmentLocked(target, consoleapi.Reply{AttemptID: id, Text: text.T(i18n.ConsoleAbandoned)})
+	return s.finishAbandonmentLocked(target, conversationapi.Reply{AttemptID: id, Text: text.T(i18n.ConsoleAbandoned)})
 }
 
 func (s *Service) deliverAbandonment(ctx context.Context, r attempt.Record) error {

@@ -72,6 +72,9 @@ func TestPluginRuntimeRetainsOriginalHomeAcrossDefaultChanges(t *testing.T) {
 		if err != nil || !strings.Contains(string(raw), want) {
 			t.Fatalf("old home changed: %s %v", raw, err)
 		}
+		if name == "config.toml" {
+			assertCodexNativeDiscoveryDisabled(t, string(raw))
+		}
 	}
 	active, err := restarted.Config(replay)
 	if err != nil {

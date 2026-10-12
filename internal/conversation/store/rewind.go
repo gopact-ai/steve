@@ -8,9 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/i18n"
-	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
 // Rewinding is what "edit a message I already sent" has to mean once an
@@ -34,7 +33,7 @@ const maxRewindHistory = 192 << 10
 
 // ErrRewindTargetGone is a line that is no longer in the transcript: it
 // was already rewound past, or the thread was trimmed beyond it.
-var ErrRewindTargetGone = consoleapi.ErrRewindTargetGone
+var ErrRewindTargetGone = conversationapi.ErrRewindTargetGone
 
 // rewindPlan is what a rewind would do, worked out before anything is
 // destroyed so a refusal costs nothing.
@@ -89,14 +88,14 @@ func (s *Service) planRewind(conversation, replyID string, text i18n.Catalog) (r
 
 func (s *Service) planRewindLocked(conversation, replyID string, text i18n.Catalog) (rewindPlan, error) {
 	if s.closing || s.maintenance {
-		return rewindPlan{}, consoleapi.ErrConsoleClosing
+		return rewindPlan{}, conversationapi.ErrConsoleClosing
 	}
 	if s.sealed[conversation] {
-		return rewindPlan{}, fmt.Errorf("%w: %s is being deleted", consoleapi.ErrBusy, conversation)
+		return rewindPlan{}, fmt.Errorf("%w: %s is being deleted", conversationapi.ErrBusy, conversation)
 	}
 	for _, e := range s.exchanges[conversation] {
 		if !e.State.Terminal() {
-			return rewindPlan{}, fmt.Errorf("%w: %s has a line %s", consoleapi.ErrBusy, conversation, e.State)
+			return rewindPlan{}, fmt.Errorf("%w: %s has a line %s", conversationapi.ErrBusy, conversation, e.State)
 		}
 	}
 	list := s.replies[conversation]
@@ -125,7 +124,7 @@ func (s *Service) planRewindLocked(conversation, replyID string, text i18n.Catal
 // rewindHistory writes the thread back as a record the next session can
 // read: who said what, in order, the way the recovery path hands a moved
 // conversation to a new machine.
-func rewindHistory(list []consoleapi.Reply) string {
+func rewindHistory(list []conversationapi.Reply) string {
 	type line struct{ who, text string }
 	var lines []line
 	for _, r := range list {
@@ -187,7 +186,7 @@ func (s *Service) applyRewindLocked(plan rewindPlan) func() {
 			delete(s.processes, e.ID)
 		}
 	}
-	gone := map[string]consoleapi.PendingQuestion{}
+	gone := map[string]conversationapi.PendingQuestion{}
 	for id, q := range s.questions {
 		if q.Conversation != conversation {
 			continue
@@ -200,7 +199,7 @@ func (s *Service) applyRewindLocked(plan rewindPlan) func() {
 			}
 		}
 	}
-	s.replies[conversation] = append([]consoleapi.Reply(nil), replies[:plan.line]...)
+	s.replies[conversation] = append([]conversationapi.Reply(nil), replies[:plan.line]...)
 	s.exchanges[conversation] = append([]*queuedExchange(nil), exchanges[:keptExchanges]...)
 	return func() {
 		s.replies[conversation] = replies
@@ -245,7 +244,7 @@ func (s *Service) publishRewoundLocked(plan rewindPlan) {
 	}
 	at := time.Now().UTC()
 	for _, id := range plan.removed {
-		s.model.Publish(readmodel.Event{At: at, Kind: "console.recalled", Conversation: plan.conversation, ReplyID: id})
+		s.model.Publish(conversationapi.Event{At: at, Kind: "console.recalled", Conversation: plan.conversation, ReplyID: id})
 	}
 }
 

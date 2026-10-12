@@ -30,7 +30,7 @@ func (c *Coordinator) bindingFor(ctx context.Context, req Request) (project.Bind
 	if id == "" {
 		return project.Binding{}, UserError{Text: c.text.T(i18n.ProjectUnbound, protocol.CommandProject)}
 	}
-	binding, err = c.projects.Bind(ctx, req.Source.ConversationID, id, "default")
+	binding, err = c.controls.BindProject(ctx, req, id, true)
 	if err != nil {
 		return project.Binding{}, err
 	}

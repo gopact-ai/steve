@@ -14,16 +14,20 @@ import (
 	"github.com/gopact-ai/steve/internal/events"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/provider"
 	"github.com/gopact-ai/steve/internal/work"
 )
 
 type Services struct {
-	Book     *ledger.Ledger
-	Identity *identity.Service
-	Work     *work.Service
-	Events   *events.Service
-	Clients  *clientcap.Broker
-	scan     durable.Scanner
+	Book      *ledger.Ledger
+	Identity  *identity.Service
+	Providers *provider.Service
+	Work      *work.Service
+	Events    *events.Service
+	Clients   *clientcap.Broker
+	scan      durable.Scanner
+	Retention RetentionPolicy
+	retention retentionState
 }
 
 func New(book *ledger.Ledger, owner string, conversations work.Conversation) *Services {
@@ -57,11 +61,11 @@ func New(book *ledger.Ledger, owner string, conversations work.Conversation) *Se
 		}
 		return nil
 	}
-	return &Services{Book: book, Identity: identities, Work: intelligence, Events: bus, Clients: &clientcap.Broker{Book: book, Identity: identities, Runtime: runtime}}
+	return &Services{Book: book, Identity: identities, Providers: &provider.Service{Book: book, Identity: identities}, Work: intelligence, Events: bus, Clients: &clientcap.Broker{Book: book, Identity: identities, Runtime: runtime}}
 }
 
 func (s *Services) Pump(ctx context.Context) error {
-	failures := []error{s.Events.Pump(ctx, s.Work)}
+	failures := []error{s.Events.Pump(ctx, s.Work), s.Clients.SweepUnclaimed(ctx), s.Work.Sweep(ctx)}
 	for _, phase := range []struct {
 		kind string
 		run  func(string) error
@@ -80,6 +84,7 @@ func (s *Services) Pump(ctx context.Context) error {
 			}
 		}
 	}
+	failures = append(failures, s.maintain(ctx))
 	return errors.Join(failures...)
 }
 

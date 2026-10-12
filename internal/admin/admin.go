@@ -68,14 +68,17 @@ type Service struct {
 	Path               string
 	WriteConfig        func(string, *config.Config) error
 	WriteConfigContext func(context.Context, string, *config.Config) error
-	ConfigRevision     func() string
-	cloning            map[string]bool
-	cloneFiles         func(context.Context, string, nodewire.FileRequest) (string, error)
-	cloneLeaseTTL      time.Duration
-	cloneTimeout       time.Duration
-	Nodes              *node.Registry
-	Catalog            *agent.Catalog
-	Fleet              *roster.Roster
+	// ConfigCommit serializes a standalone file save with its source policy.
+	// Shared-ledger savers perform their own guard inside SaveWithGuard.
+	ConfigCommit   func(context.Context, func() error) error
+	ConfigRevision func() string
+	cloning        map[string]bool
+	cloneFiles     func(context.Context, string, nodewire.FileRequest) (string, error)
+	cloneLeaseTTL  time.Duration
+	cloneTimeout   time.Duration
+	Nodes          *node.Registry
+	Catalog        *agent.Catalog
+	Fleet          *roster.Roster
 	// projects is the ledger's project store; repos the hub's view of what
 	// each project's directory holds.
 	Projects *project.Store
@@ -185,6 +188,8 @@ func (a *Service) saveConfig(ctx context.Context, candidate *config.Config) erro
 	var err error
 	if a.WriteConfigContext != nil {
 		err = a.WriteConfigContext(ctx, a.Path, candidate)
+	} else if a.ConfigCommit != nil {
+		err = a.ConfigCommit(ctx, func() error { return write(a.Path, candidate) })
 	} else {
 		err = write(a.Path, candidate)
 	}

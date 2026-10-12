@@ -312,7 +312,7 @@ func (t *chatTurn) compose(e *lifecycle.Execution, preface string) error {
 		if _, shared := c.home.(home.IdentityEditor); shared {
 			user = onboard.ContinueShared(c.text.Locale()) + "\n\n" + user
 		} else {
-			user = onboard.Continue(c.text.Locale(), c.homePath) + "\n\n" + user
+			user = onboard.Continue(c.text.Locale(), c.homeDirectory()) + "\n\n" + user
 		}
 	}
 	model, options := sessionSelectors(e.Session, selected)
@@ -375,7 +375,7 @@ func (t *chatTurn) finish(ctx context.Context, e *lifecycle.Execution) (attempt.
 		if editor, shared := c.home.(home.IdentityEditor); shared {
 			reply, _, applyErr = onboard.ApplyWith(out, func(soul, user string) error { return editor.WriteIdentity(ctx, soul, user) })
 		} else {
-			reply, _, applyErr = onboard.Apply(c.homePath, out)
+			reply, _, applyErr = onboard.Apply(c.homeDirectory(), out)
 		}
 		if applyErr != nil {
 			return attempt.Completion{}, fmt.Errorf("save generated identity: %w", applyErr)

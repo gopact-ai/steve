@@ -31,9 +31,11 @@ type Grant struct {
 	EventTypes       []string `json:"event_types,omitempty"`
 	// Work binds a conversation to its creation-time project. Empty authority
 	// grants no intelligence; strings matching native actor IDs grant nothing.
-	Work         map[string]string `json:"work,omitempty"`
-	Capabilities []CapabilityGrant `json:"capabilities,omitempty"`
-	CreatedAt    time.Time         `json:"created_at"`
+	Work               map[string]string `json:"work,omitempty"`
+	Capabilities       []CapabilityGrant `json:"capabilities,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+	ScopeRevision      uint64            `json:"scope_revision"`
+	CredentialRevision uint64            `json:"credential_revision"`
 }
 
 type CapabilityGrant struct {
@@ -52,6 +54,10 @@ type Enrollment struct {
 type Principal struct {
 	GrantID string
 	Owner   bool
+	// Authentication records the credential generation separately from the
+	// stable connection identity. Internal accepted records carry only GrantID.
+	Authenticated      bool
+	CredentialRevision uint64
 }
 
 type Service struct {
@@ -106,10 +112,16 @@ func (s *Service) Enroll(ctx context.Context, requested Grant) (Enrollment, erro
 			return Enrollment{}, errors.New("work scope requires an explicit conversation and project")
 		}
 	}
+	seenCapabilities := map[string]bool{}
 	for _, c := range requested.Capabilities {
 		if !(ValidName(c.Client) || requested.Kind == "client" && c.Client == "") || !ValidName(c.Capability) || (c.Conversation == "" || len(c.Conversation) > 512) {
 			return Enrollment{}, errors.New("invalid client capability grant")
 		}
+		key := durable.Key(c.Client, c.Capability, c.Conversation)
+		if seenCapabilities[key] {
+			return Enrollment{}, errors.New("duplicate client capability grant")
+		}
+		seenCapabilities[key] = true
 	}
 	raw, err := json.Marshal(struct {
 		Name, Kind   string
@@ -133,6 +145,8 @@ func (s *Service) Enroll(ctx context.Context, requested Grant) (Enrollment, erro
 		}
 	}
 	requested.Enabled = true
+	requested.ScopeRevision = 1
+	requested.CredentialRevision = 1
 	requested.CreatedAt = time.Now().UTC()
 	token := "svc_" + RandomID()
 	replay := false
@@ -152,7 +166,10 @@ func (s *Service) Enroll(ctx context.Context, requested Grant) (Enrollment, erro
 		if err := tx.PutBinding(GrantKind, requested.ID, requested); err != nil {
 			return err
 		}
-		return tx.PutBinding(credentialKind, durable.Key(token), requested.ID)
+		if err := tx.PutBinding(credentialKind, durable.Key(token), credential{ID: requested.ID, Revision: requested.CredentialRevision}); err != nil {
+			return err
+		}
+		return auditConnection(tx, "enrolled", Grant{}, requested)
 	})
 	if replay {
 		token = ""
@@ -163,21 +180,23 @@ func (s *Service) Enroll(ctx context.Context, requested Grant) (Enrollment, erro
 func (s *Service) Authenticate(ctx context.Context, token string) (Principal, error) {
 	var p Principal
 	err := s.Book.Read(ctx, func(tx *ledger.ReadTx) error {
-		id, found, err := durable.Get[string](tx, credentialKind, durable.Key(token))
+		c, found, err := readCredential(tx, durable.Key(token))
 		if err != nil {
 			return err
 		}
 		if !found || token == "" {
 			return ErrDenied
 		}
-		g, found, err := durable.Get[Grant](tx, GrantKind, id)
+		g, found, err := durable.Get[Grant](tx, GrantKind, c.ID)
 		if err != nil {
 			return err
 		}
-		if !found || !g.Enabled {
+		if !found || !g.Enabled || c.Revision != g.CredentialRevision {
 			return ErrDenied
 		}
-		p.GrantID = id
+		p.GrantID = c.ID
+		p.Authenticated = true
+		p.CredentialRevision = c.Revision
 		return nil
 	})
 	return p, err
@@ -195,13 +214,16 @@ func (s *Service) Check(r ledger.Reader, p Principal) (Grant, error) {
 	if err != nil {
 		return Grant{}, err
 	}
-	if !found || !g.Enabled {
+	if !found || !g.Enabled || p.Authenticated && p.CredentialRevision != g.CredentialRevision {
 		return Grant{}, ErrDenied
 	}
 	return g, nil
 }
 
 func (s *Service) Revoke(ctx context.Context, id string) error {
+	if s.OwnerID == "" {
+		return ErrDenied
+	}
 	return s.Book.Update(ctx, func(tx *ledger.Tx) error {
 		g, found, err := durable.Get[Grant](tx, GrantKind, id)
 		if err != nil {
@@ -210,8 +232,16 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 		if !found {
 			return ErrDenied
 		}
+		if !g.Enabled {
+			return nil
+		}
+		before := g
 		g.Enabled = false
-		return tx.PutBinding(GrantKind, id, g)
+		g.ScopeRevision++
+		if err := tx.PutBinding(GrantKind, id, g); err != nil {
+			return err
+		}
+		return auditConnection(tx, "revoked", before, g)
 	})
 }
 

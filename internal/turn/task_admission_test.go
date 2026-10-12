@@ -234,8 +234,27 @@ func TestProjectSwitchSetsAsideUnfinishedTasksBeforeAdmittingNewWork(t *testing.
 						}
 					}
 					if entry == "command" {
-						if _, err := handle(c, t.Context(), "/project use next"); err != nil {
-							t.Fatal(err)
+						_, switchErr := handle(c, t.Context(), "/project use next")
+						if refuseWrite {
+							if switchErr == nil {
+								t.Fatal("project switch hid a failed task release")
+							}
+							binding, found, err := projects.Binding(t.Context(), "chat")
+							if err != nil || !found || binding.ProjectID != "first" {
+								t.Fatalf("refused switch moved project: %+v, %v", binding, err)
+							}
+							current, _ := tasks.Get(old.ID)
+							currentChild, _ := tasks.Get(child.ID)
+							if !reflect.DeepEqual(current, old) || !reflect.DeepEqual(currentChild, child) || childScope.Context().Err() != nil || len(runner.seen()) != 1 || len(manager.opened) != 1 {
+								t.Fatal("failed task release changed or restarted original work")
+							}
+							if _, live := sessions.Conversation("chat").Sessions["worker"]; !live {
+								t.Fatal("refused switch archived the session")
+							}
+							return
+						}
+						if switchErr != nil {
+							t.Fatal(switchErr)
 						}
 					} else {
 						if _, err := projects.Bind(t.Context(), "chat", "next", "owner"); err != nil {

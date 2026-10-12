@@ -1,9 +1,5 @@
 package consoleapi
 
-import "context"
+import "github.com/gopact-ai/steve/internal/conversationapi"
 
-// LocalizedVerbs lists what a console can be told, in the language the
-// context carries.
-type LocalizedVerbs interface {
-	VerbsFor(context.Context) []Verb
-}
+type LocalizedVerbs = conversationapi.LocalizedVerbs

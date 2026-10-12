@@ -1,8 +1,5 @@
 package consoleapi
 
-import "context"
+import "github.com/gopact-ai/steve/internal/conversationapi"
 
-// ForceStops records owner requests to stop an original native execution.
-type ForceStops interface {
-	ForceStop(context.Context, string, uint64) error
-}
+type ForceStops = conversationapi.ForceStops

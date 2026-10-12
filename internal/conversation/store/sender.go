@@ -8,8 +8,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/consoleapi"
-	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 )
 
 // MessageSender delivers agent milestones to their exact console conversation.
@@ -65,7 +64,7 @@ func (s MessageSender) Send(ctx context.Context, address channel.Address, messag
 		return "", errors.New("console anchor does not belong to this conversation")
 	}
 	before := c.replies[address.Conversation]
-	r := consoleapi.Reply{ID: newReplyID(), ExchangeID: exchangeID, At: time.Now().UTC(), Conversation: address.Conversation,
+	r := conversationapi.Reply{ID: newReplyID(), ExchangeID: exchangeID, At: time.Now().UTC(), Conversation: address.Conversation,
 		Text: message.Content, Format: message.Format, Title: message.Attribution, Kind: "milestone"}
 	r = c.recordLocked(r)
 	if err := c.save(); err != nil {
@@ -123,7 +122,7 @@ func (s MessageSender) Recall(ctx context.Context, address channel.Address) erro
 			return err
 		}
 		if c.model != nil {
-			c.model.Publish(readmodel.Event{At: time.Now().UTC(), Kind: "console.recalled", Conversation: address.Conversation, ReplyID: r.ID})
+			c.model.Publish(conversationapi.Event{At: time.Now().UTC(), Kind: "console.recalled", Conversation: address.Conversation, ReplyID: r.ID})
 		}
 		return nil
 	}

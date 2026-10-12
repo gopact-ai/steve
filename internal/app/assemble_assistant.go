@@ -45,7 +45,7 @@ func assembleAssistant(boot runtimeAssembly, page consoleAssembly, delegates del
 		}
 		return events.DepthAfter(r, w.Request.Causation)
 	}
-	page.Dashboard().SetAssistant(&serviceapi.Services{Identity: services.Identity, Events: services.Events, Work: services.Work, Clients: services.Clients, Accounts: execution.Accounts(), Interactions: execution.Interactions(), Policy: page.Admin().Projects})
+	page.Dashboard().SetAssistant(&serviceapi.Services{Maintenance: services, Identity: services.Identity, Providers: services.Providers, Events: services.Events, Work: services.Work, Clients: services.Clients, Accounts: execution.Accounts(), Interactions: execution.Interactions(), Policy: page.Admin().Projects})
 	if gate := delegates.Gate(); gate != nil {
 		gate.SetClientInvoker(&clientCapabilityTools{services: services})
 	}

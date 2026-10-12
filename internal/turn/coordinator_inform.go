@@ -9,9 +9,13 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
+	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/conversation"
 	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 // Whereabouts is where a session stands, for the platform's own MCP
@@ -42,12 +46,8 @@ func (c *Coordinator) rememberMode(req Request) {
 	c.conversations.RememberMode(req.Source.ConversationID, mode)
 }
 
-// consolePrefix starts every console conversation's key and must stay
-// equal to console.Prefix, which this package cannot import. The console
-// sends each of its lines as the owner, in private. Only the console makes
-// keys with this prefix: a channel conversation's key is its own chat or
-// thread id, and a scheduled channel firing refuses one that has it. So
-// the key alone says a conversation is the console's.
+// consolePrefix is retained for trusted legacy embedding without durable
+// routing. Installed channels use admitted route facts, never this prefix.
 const consolePrefix = "console:"
 
 // arrivalMode is how a conversation reaches Steve, as far as a read with
@@ -56,10 +56,21 @@ const consolePrefix = "console:"
 // conversation not heard from since this process started — a group, a
 // guest and the owner in private look alike by their key.
 func (c *Coordinator) arrivalMode(conversationID string) (mode home.Mode, known bool) {
-	if strings.HasPrefix(conversationID, consolePrefix) {
+	if c.isConsoleConversation(conversationID) {
 		return injectionMode(protocol.ChatP2P, c.owners.ConsoleOwner(), c.owners.ConsoleOwner()), true
 	}
 	return c.conversations.Mode(conversationID)
+}
+
+// isConsoleConversation reads admitted routing facts; opaque native names may
+// contain the console prefix without acquiring Console owner authority.
+func (c *Coordinator) isConsoleConversation(id string) bool {
+	if accounts := c.owners.Configuration().Accounts; accounts != nil {
+		route, err := conversation.Channel(context.Background(), accounts.Book, id)
+		return err == nil && route == "console"
+	}
+	// Legacy trusted in-process callers have no installed provider authority.
+	return strings.HasPrefix(id, consolePrefix)
 }
 
 // modeOf is how a conversation reaches Steve, and guest when that is not
@@ -78,10 +89,21 @@ func (c *Coordinator) Where(ctx context.Context, conversationID, agentID string)
 		return Whereabouts{}, fmt.Errorf("no agent %q", agentID)
 	}
 	w := Whereabouts{Agent: selected.ID, Node: placeLabel(selected.Node), Harness: selected.Harness, Model: selected.Model, Mode: string(c.modeOf(conversationID)), MCPServers: append([]string{agentmcp.ServerName}, selected.MCPServers...), Skills: []string{}}
+	projectID, _, _, _ := c.projectFor(ctx, conversationID)
+	tracked, running := c.tasks.Running(conversationID, agentID)
+	if c.owners.Configuration().Accounts != nil {
+		var mode home.Mode
+		var err error
+		tracked, mode, err = c.platformSubject(ctx, conversationID, agentID)
+		if err != nil {
+			return Whereabouts{}, err
+		}
+		projectID, running, w.Mode = tracked.ProjectID, true, string(mode)
+	}
 	if c.skills.Map != nil {
 		w.Skills = c.skills.Map.EnabledNames()
 	}
-	if id, _, _, err := c.projectFor(ctx, conversationID); err == nil && id != "" {
+	if id := projectID; id != "" {
 		if p, found, err := c.projects.Get(ctx, id); err == nil && found {
 			w.Project, w.ProjectNode, w.Level, w.Repo = p.ID, placeLabel(p.Home.Node), string(p.Level.OrDefault()), string(p.Repo)
 			if ws, err := p.Place(selected.Node); err == nil {
@@ -96,7 +118,7 @@ func (c *Coordinator) Where(ctx context.Context, conversationID, agentID string)
 			}
 		}
 	}
-	if t, running := c.tasks.Running(conversationID, agentID); running {
+	if t := tracked; running {
 		w.Task = t.ID
 		w.Turns, w.MaxTurns = t.Budget.Turns, t.Budget.MaxTurns
 		w.Elapsed = t.Budget.Elapsed.Round(time.Second).String()
@@ -108,6 +130,45 @@ func (c *Coordinator) Where(ctx context.Context, conversationID, agentID string)
 	return w, nil
 }
 
+func (c *Coordinator) platformSubject(ctx context.Context, conversationID, agentID string) (tracked task.Task, mode home.Mode, err error) {
+	scope, ok := agentmcp.ScopeFromContext(ctx)
+	if !ok {
+		return tracked, mode, agentmcp.ErrGrantDenied
+	}
+	accounts := c.owners.Configuration().Accounts
+	err = accounts.Book.Read(ctx, func(tx *ledger.ReadTx) error {
+		proof, root, err := c.controls.ExecutionCallerTx(tx, scope.AttemptID)
+		if err != nil {
+			return err
+		}
+		r, err := attempt.GetTx(tx, scope.AttemptID)
+		if err != nil {
+			return err
+		}
+		var found bool
+		tracked, found, err = task.GetTx(tx, r.TaskID)
+		if err != nil {
+			return err
+		}
+		if !found || tracked.Channel != conversationID || tracked.Member != agentID || tracked.ID != scope.TaskID {
+			return agentmcp.ErrGrantDenied
+		}
+		role, err := project.AccessPolicyTx(tx, tracked.ProjectID, proof.Principal, accounts.Owner)
+		if err != nil {
+			return err
+		}
+		if !role.AtLeast(project.RoleRead) {
+			return agentmcp.ErrGrantDenied
+		}
+		mode = home.ModeGuest
+		if proof.Principal == accounts.Owner && root.ChatType == string(protocol.ChatP2P) && !tracked.Delegated() {
+			mode = home.ModeOwner
+		}
+		return nil
+	})
+	return
+}
+
 // WhereProjects answers steve_projects: every project, where it is, and
 // whether this agent can work in it from its machine.
 func (c *Coordinator) WhereProjects(ctx context.Context, conversationID, agentID string) (string, error) {
@@ -116,9 +177,43 @@ func (c *Coordinator) WhereProjects(ctx context.Context, conversationID, agentID
 		return "", fmt.Errorf("no agent %q", agentID)
 	}
 	current, _, _, _ := c.projectFor(ctx, conversationID)
+	if c.owners.Configuration().Accounts != nil {
+		t, _, err := c.platformSubject(ctx, conversationID, agentID)
+		if err != nil {
+			return "", err
+		}
+		current = t.ProjectID
+	}
 	all, err := c.projects.List(ctx)
 	if err != nil {
 		return "", err
+	}
+	if accounts := c.owners.Configuration().Accounts; accounts != nil {
+		scope, ok := agentmcp.ScopeFromContext(ctx)
+		if !ok {
+			return "", agentmcp.ErrGrantDenied
+		}
+		err = accounts.Book.Read(ctx, func(tx *ledger.ReadTx) error {
+			proof, _, err := c.controls.ExecutionCallerTx(tx, scope.AttemptID)
+			if err != nil {
+				return err
+			}
+			visible := all[:0]
+			for _, p := range all {
+				role, err := project.AccessPolicyTx(tx, p.ID, proof.Principal, accounts.Owner)
+				if err != nil {
+					return err
+				}
+				if role.AtLeast(project.RoleRead) {
+					visible = append(visible, p)
+				}
+			}
+			all = visible
+			return nil
+		})
+		if err != nil {
+			return "", err
+		}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "你是 %s，在 %s。当前项目：%s\n\n", selected.ID, placeLabel(selected.Node), orNone(current))

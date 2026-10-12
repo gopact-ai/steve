@@ -233,7 +233,8 @@ func (c *Coordinator) buildingProfile(req Request) (bool, error) {
 	if editor, shared := c.home.(home.IdentityEditor); shared {
 		return editor.NeedsInit()
 	}
-	return c.homePath != "" && home.NeedsInit(c.homePath), nil
+	path := c.homeDirectory()
+	return path != "" && home.NeedsInit(path), nil
 }
 
 func (c *Coordinator) open(ctx context.Context, saved state.Session, selected agent.Agent, workspace string, servers []acp.MCPServer) (harness.Runner, error) {

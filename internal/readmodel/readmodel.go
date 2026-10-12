@@ -15,6 +15,7 @@ package readmodel
 import (
 	"context"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -588,46 +589,7 @@ type Model struct {
 }
 
 // Event is one change worth waking a renderer for.
-type Event struct {
-	At   time.Time `json:"at"`
-	Kind string    `json:"kind"`
-	// Seq is gopact's per-run sequence. Delivery is at-least-once, so a
-	// consumer that cares about exactly-once dedupes on (RunID, Seq).
-	Seq    int64  `json:"seq,omitempty"`
-	RunID  string `json:"run_id,omitempty"`
-	TaskID string `json:"task_id,omitempty"`
-	PlanID string `json:"plan_id,omitempty"`
-	StepID string `json:"step_id,omitempty"`
-	State  string `json:"state,omitempty"`
-	// Conversation and Text carry the console's traffic: what was sent
-	// from the page, what came back, and milestones agents posted. A run
-	// event is stamped with the conversation its task came from, so a
-	// page can follow one conversation's work.
-	Conversation string `json:"conversation,omitempty"`
-	Text         string `json:"text,omitempty"`
-	Format       string `json:"format,omitempty"`
-	// Progress is what an agent is doing right now: console.progress for
-	// a chat turn, step.progress for a plan step.
-	Progress *consoleapi.Progress `json:"progress,omitempty"`
-	// Step is the child's snapshot; console.step also names its owning reply.
-	Step *consoleapi.StepProcess `json:"step,omitempty"`
-	// ReplyID names the console line a console.* event is about.
-	ReplyID    string `json:"reply_id,omitempty"`
-	ExchangeID string `json:"exchange_id,omitempty"`
-	// Silent marks a console line the transcript does not draw, so a live
-	// page hides it the moment it arrives rather than after its next read.
-	Silent bool   `json:"silent,omitempty"`
-	Title  string `json:"title,omitempty"`
-	Rev    int    `json:"rev,omitempty"`
-	Detail string `json:"detail,omitempty"`
-	// Data carries an observation's facts apart from its sentence, so a
-	// live page can say them the same way the history page does.
-	Data map[string]string `json:"data,omitempty"`
-	// Cursor is the event's place in the model's stream, in publication
-	// order. The stream carries it as the event's id rather than in the
-	// event itself.
-	Cursor uint64 `json:"-"`
-}
+type Event = conversationapi.Event
 
 const recentKept = 200
 
@@ -912,129 +874,14 @@ type Workspace struct {
 
 // Answers and tool output are previews. Reasoning is already bounded by
 // the collector and must retain its head, tail and explicit omission marker.
-const (
-	answerKept   = 8000
-	toolTextKept = 3000
-	toolsKept    = 60
-)
+const toolsKept = 60
 
-// FromProgress cuts a turn's progress down to what is worth sending.
-func FromProgress(p view.Progress) consoleapi.Progress {
-	out := consoleapi.Progress{
-		Agent: p.Agent, Node: p.Settings.Node, Model: p.Settings.Model,
-		Reasoning: p.Reasoning, Answer: tailText(p.Answer, answerKept),
-	}
-	limit := toolsKept
-	if len(p.Timeline) > 0 {
-		// Every timeline reference needs a corresponding tool detail.
-		limit = 0
-	}
-	out.Tools = toolCalls(p.Tools, 0, limit)
-	for _, s := range p.Timeline {
-		out.Timeline = append(out.Timeline, consoleapi.Span{Kind: s.Kind, Text: s.Text, Tool: s.Tool, At: s.At})
-	}
-	for _, s := range p.Plan {
-		out.Plan = append(out.Plan, consoleapi.PlanLine{Text: s.Text, Status: string(s.Status)})
-	}
-	return out
-}
-
-// The platform's own tools are recognised whatever a harness calls them
-// — claude-code says mcp__steve__steve_fleet, codex mcp.steve.steve_fleet
-// — and shown by their label, as kind "platform". The catalogue comes
-// from the messaging server itself, so a new tool needs no page change;
-// each label is said in the language text gives when the call is shown.
-var platform struct {
-	mu     sync.RWMutex
-	server string
-	titles map[string]i18n.Key
-	text   i18n.Catalog
-}
-
-// SetPlatformTools installs the messaging server's name and tool labels,
-// and the catalog that says the labels.
-func SetPlatformTools(server string, titles map[string]i18n.Key, text i18n.Catalog) {
-	platform.mu.Lock()
-	defer platform.mu.Unlock()
-	platform.server = strings.ToLower(server)
-	platform.text = text
-	platform.titles = map[string]i18n.Key{}
-	for name, title := range titles {
-		platform.titles[strings.ToLower(name)] = title
-	}
-}
-
-// platformTool says whether a harness's tool name is one of the
-// platform's, and what to call it.
-func platformTool(raw string) (name, title string, ok bool) {
-	platform.mu.RLock()
-	defer platform.mu.RUnlock()
-	if platform.server == "" || len(platform.titles) == 0 {
-		return "", "", false
-	}
-	lower := strings.ToLower(strings.TrimSpace(raw))
-	if title, found := platform.titles[lower]; found {
-		return lower, platform.text.T(title), true
-	}
-	// Split on every separator a harness uses between server and tool,
-	// but never on a single underscore: that is inside the tool's name.
-	parts := strings.FieldsFunc(strings.ReplaceAll(lower, "__", "\x00"), func(r rune) bool {
-		return r == '\x00' || r == '.' || r == '/' || r == ':'
-	})
-	for i, p := range parts {
-		if p != platform.server || i+1 >= len(parts) {
-			continue
-		}
-		tail := strings.Join(parts[i+1:], "_")
-		if title, found := platform.titles[tail]; found {
-			return tail, platform.text.T(title), true
-		}
-	}
-	return "", "", false
-}
-
-func toolCalls(tools []view.Tool, depth, limit int) []consoleapi.ToolCall {
-	var out []consoleapi.ToolCall
-	for _, t := range tools {
-		if limit > 0 && len(out) >= limit {
-			break
-		}
-		call := consoleapi.ToolCall{
-			ID: t.ID, Kind: t.Kind, Name: t.Name, Detail: t.Detail, Status: t.Status,
-			Input: headText(t.Input, toolTextKept), Output: headText(t.Output, toolTextKept),
-		}
-		if name, title, ok := platformTool(t.Name); ok {
-			call.Kind, call.Name, call.Detail = "platform", name, title
-		}
-		out = append(out, call)
-		if depth < 2 {
-			out = append(out, toolCalls(t.Children, depth+1, limit)...)
-		}
-	}
-	return out
-}
-
-func tailText(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return "…" + s[len(s)-n:]
-}
-
-func headText(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
-}
-
-// FromStepProgress uses the same projection for live events and durable steps.
+func FromProgress(p view.Progress) consoleapi.Progress { return conversationapi.FromProgress(p) }
 func FromStepProgress(id string, p consoleapi.Progress, info consoleapi.StepInfo) consoleapi.StepProcess {
-	if info.Answer == "" {
-		info.Answer = p.Answer
-	}
-	return consoleapi.StepProcess{ID: id, Agent: p.Agent, Node: p.Node, Model: p.Model,
-		Reasoning: p.Reasoning, Tools: p.Tools, Plan: p.Plan, Timeline: p.Timeline, StepInfo: info}
+	return conversationapi.FromStepProgress(id, p, info)
+}
+func SetPlatformTools(server string, titles map[string]i18n.Key, text i18n.Catalog) {
+	conversationapi.SetPlatformTools(server, titles, text)
 }
 
 // DelegateProgress publishes what a delegated child is doing, as a step

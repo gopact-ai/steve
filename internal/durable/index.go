@@ -2,7 +2,6 @@ package durable
 
 import (
 	"context"
-	"encoding/json"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -27,8 +26,8 @@ func PageByIndex[T any](ctx context.Context, book *ledger.Ledger, index, kind, a
 				page.Next = last
 				break
 			}
-			var value T
-			if e := json.Unmarshal(raw, &value); e != nil {
+			value, e := Decode[T](tx, raw, kind, id)
+			if e != nil {
 				return e
 			}
 			page.Items = append(page.Items, value)

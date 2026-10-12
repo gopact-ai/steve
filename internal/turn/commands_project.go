@@ -56,14 +56,15 @@ func (c commands) projectCmd(ctx context.Context, req Request, rest string) (Res
 		refusal := c.closeRefusal(req.Source.ConversationID, refused, err)
 		return Result{Title: title, Text: refusal.Text}, refusal
 	}
-	binding, err := c.projects.Bind(ctx, req.Source.ConversationID, p.ID, req.Actor.ID)
+	binding, err := c.controls.BindProject(ctx, req, p.ID, false)
 	if err != nil {
 		return Result{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	for agentID := range conversation.Sessions {
-		if err := c.store.ArchiveSession(req.Source.ConversationID, agentID, now); err != nil {
+		if err := c.store.ArchiveSessionChecked(ctx, req.Source.ConversationID, agentID, now, c.controls.BoundGuard(req, binding, project.RoleRead)); err != nil {
 			slog.Error(fmt.Sprintf("turn: archive %s session on project switch: %v", agentID, err), "conversation", req.Source.ConversationID, "agent", agentID, "project", p.ID)
+			return Result{}, err
 		}
 	}
 	slog.Info(fmt.Sprintf("turn: conversation %s bound to project %s (v%d) by %s", req.Source.ConversationID, p.ID, binding.Version, req.Actor.ID), "conversation", req.Source.ConversationID, "project", p.ID)
@@ -83,7 +84,7 @@ func (c commands) projectStatus(ctx context.Context, req Request, title string) 
 	} else {
 		lines = append(lines, c.text.T(i18n.ProjectUnbound, protocol.CommandProject))
 	}
-	all, err := c.projects.List(ctx)
+	all, err := c.controls.ProjectsFor(ctx, req)
 	if err != nil {
 		return Result{}, err
 	}

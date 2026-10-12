@@ -8,9 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/i18n"
-	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
 // RecoveryConversation is a display association with an existing external
@@ -28,11 +27,11 @@ func (s *Service) EnsureRecoveryConversation(ctx context.Context, source Recover
 	}
 	for _, value := range []string{source.ParentTaskID, source.SourceChannel, source.SourceConversation, source.Project} {
 		if strings.TrimSpace(value) == "" || len(value) > 512 || strings.ContainsAny(value, "\x00\r\n") {
-			return "", consoleapi.ErrInvalidAnswer
+			return "", conversationapi.ErrInvalidAnswer
 		}
 	}
 	if s.owner == "" {
-		return "", consoleapi.ErrQuestionForbidden
+		return "", conversationapi.ErrQuestionForbidden
 	}
 	conversation := Prefix + "recovery:" + url.PathEscape(source.ParentTaskID)
 	// The notice is named after the whole source, so the page is found
@@ -43,7 +42,7 @@ func (s *Service) EnsureRecoveryConversation(ctx context.Context, source Recover
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing || s.recoveryStoppedLocked() {
-		return "", consoleapi.ErrConsoleClosing
+		return "", conversationapi.ErrConsoleClosing
 	}
 	// The page is introduced in the console's language when it is made.
 	text := i18n.New(i18n.FromLang(s.submissionLocaleLocked(ctx, nil)))
@@ -57,19 +56,19 @@ func (s *Service) EnsureRecoveryConversation(ctx context.Context, source Recover
 		for _, reply := range previous {
 			if reply.ID == noticeID {
 				if reply.Kind != "notice" || reply.ProjectID != source.Project || reply.Format != "text" {
-					return "", consoleapi.ErrQuestionConflict
+					return "", conversationapi.ErrQuestionConflict
 				}
 				return conversation, nil
 			}
 		}
-		return "", consoleapi.ErrQuestionConflict
+		return "", conversationapi.ErrQuestionConflict
 	}
 	if _, exists := s.meta[conversation]; exists {
-		return "", consoleapi.ErrQuestionConflict
+		return "", conversationapi.ErrQuestionConflict
 	}
 	now := time.Now().UTC()
 	s.meta[conversation] = Meta{Title: title, TitleBy: "system", UpdatedAt: now}
-	notice := s.recordLocked(consoleapi.Reply{ID: noticeID, At: now, Conversation: conversation, ProjectID: source.Project, Title: title, Text: body, Format: "text", Kind: "notice"})
+	notice := s.recordLocked(conversationapi.Reply{ID: noticeID, At: now, Conversation: conversation, ProjectID: source.Project, Title: title, Text: body, Format: "text", Kind: "notice"})
 	if err := s.save(); err != nil {
 		delete(s.meta, conversation)
 		delete(s.replies, conversation)
@@ -77,7 +76,7 @@ func (s *Service) EnsureRecoveryConversation(ctx context.Context, source Recover
 	}
 	s.publishReply(notice)
 	if s.model != nil {
-		s.model.Publish(readmodel.Event{At: now, Kind: "console.meta", Conversation: conversation, Text: title})
+		s.model.Publish(conversationapi.Event{At: now, Kind: "console.meta", Conversation: conversation, Text: title})
 	}
 	return conversation, nil
 }

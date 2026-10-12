@@ -1,9 +1,12 @@
 package state
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"slices"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 // OwedClose is a native session a node still owes a close: the
@@ -33,6 +36,10 @@ func (owed OwedClose) names(session Session) bool {
 // name the live session and the execution that ran in it; a close owed
 // before for the same session is replaced.
 func (s *Store) ArchiveSessionOwingClose(conversationID, agentID, at string, owed OwedClose) error {
+	return s.ArchiveSessionOwingCloseChecked(context.Background(), conversationID, agentID, at, owed, nil)
+}
+
+func (s *Store) ArchiveSessionOwingCloseChecked(ctx context.Context, conversationID, agentID, at string, owed OwedClose, guard func(*ledger.Tx) error) error {
 	if owed.UpstreamID == "" || owed.HarnessID == "" || owed.TaskID == "" || owed.AttemptID == "" {
 		return errors.New("a close owed must name the native session and the execution that ran in it")
 	}
@@ -49,7 +56,7 @@ func (s *Store) ArchiveSessionOwingClose(conversationID, agentID, at string, owe
 	next.OwedCloses = slices.DeleteFunc(next.OwedCloses, func(earlier OwedClose) bool { return earlier.names(session) })
 	next.OwedCloses = append(next.OwedCloses, owed)
 	archiveSession(&next, conversationID, agentID, at)
-	return s.replaceLocked(next)
+	return s.replaceCheckedLocked(ctx, next, guard)
 }
 
 // OwedCloses lists the sessions still owed a close, oldest first.

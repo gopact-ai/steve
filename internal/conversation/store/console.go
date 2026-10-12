@@ -19,11 +19,10 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
-	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/text"
 	turn "github.com/gopact-ai/steve/internal/turnapi"
@@ -39,7 +38,7 @@ const (
 )
 
 type outcome struct {
-	reply consoleapi.Reply
+	reply conversationapi.Reply
 	err   error
 }
 
@@ -47,11 +46,11 @@ type outcome struct {
 // the agent's summary of the first exchange, or the owner's own — and
 // whether it has been put away.
 type Meta struct {
-	NativeImport *consoleapi.ImportedSession `json:"native_import,omitempty"`
-	Title        string                      `json:"title,omitempty"`
-	TitleBy      string                      `json:"title_by,omitempty"`
-	Archived     bool                        `json:"archived,omitempty"`
-	UpdatedAt    time.Time                   `json:"updated_at,omitzero"`
+	NativeImport *conversationapi.ImportedSession `json:"native_import,omitempty"`
+	Title        string                           `json:"title,omitempty"`
+	TitleBy      string                           `json:"title_by,omitempty"`
+	Archived     bool                             `json:"archived,omitempty"`
+	UpdatedAt    time.Time                        `json:"updated_at,omitzero"`
 }
 
 // Titler names a conversation from its first exchange: a short summary of
@@ -63,19 +62,16 @@ type Titler interface {
 // transcript is the durable shape: every conversation's lines, and what
 // is known about each beyond them.
 type transcript struct {
-	Replies   map[string][]consoleapi.Reply         `json:"replies"`
-	Meta      map[string]Meta                       `json:"meta,omitempty"`
-	Exchanges map[string][]*queuedExchange          `json:"exchanges,omitempty"`
-	Questions map[string]consoleapi.PendingQuestion `json:"questions,omitempty"`
+	Replies   map[string][]conversationapi.Reply         `json:"replies"`
+	Meta      map[string]Meta                            `json:"meta,omitempty"`
+	Exchanges map[string][]*queuedExchange               `json:"exchanges,omitempty"`
+	Questions map[string]conversationapi.PendingQuestion `json:"questions,omitempty"`
 }
 
 // Events is the conversation's view of the shared change stream. The console
 // does not own or require a concrete read-model runtime.
 type Events interface {
-	Publish(readmodel.Event)
-	Subscribe(context.Context) (<-chan readmodel.Event, func())
-	SubscribeAfter(context.Context, ...string) (readmodel.Resume, <-chan readmodel.Event, func())
-	EventID(readmodel.Event) string
+	Publish(conversationapi.Event)
 }
 
 type Service struct {
@@ -88,7 +84,7 @@ type Service struct {
 
 	stopTasksMu sync.Mutex
 	mu          sync.Mutex
-	replies     map[string][]consoleapi.Reply
+	replies     map[string][]conversationapi.Reply
 	meta        map[string]Meta
 	// sealed names the conversations being deleted right now; they take
 	// no new work until the delete finishes or gives up.
@@ -109,7 +105,7 @@ type Service struct {
 	book            *ledger.Ledger
 	records         consoleRecords
 	doc             ledger.Doc
-	questions       map[string]consoleapi.PendingQuestion
+	questions       map[string]conversationapi.PendingQuestion
 	questionWaiters map[string]chan struct{}
 	questionTimeout time.Duration
 	// recoveryQuiet is how long a recovery rejoins the original execution
@@ -135,7 +131,7 @@ type Service struct {
 	authorizeMaterials  func(context.Context, string, string, string) error
 }
 
-var _ consoleapi.Console = (*Service)(nil)
+var _ conversationapi.Service = (*Service)(nil)
 
 // New makes a console that acts as owner through coordinator. It panics
 // when coordinator is nil.
@@ -143,7 +139,7 @@ func New(coordinator Coordinator, owner string, model Events) *Service {
 	if coordinator == nil {
 		panic("console: New needs a coordinator")
 	}
-	return &Service{coordinator: coordinator, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe, recoveryStopEvery: recoveryStopEvery}
+	return &Service{coordinator: coordinator, owner: owner, model: model, replies: map[string][]conversationapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]conversationapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe, recoveryStopEvery: recoveryStopEvery}
 }
 
 // SetRecoveryQuiet is how long a recovery rejoins the original execution
@@ -162,7 +158,7 @@ func (s *Service) SetTitler(t Titler) { s.titler = t }
 // Inspector says what an attempt changed, for the reply to carry, and
 // which project a conversation works in, for a quote's boundary.
 type Inspector interface {
-	Changes(ctx context.Context, attempt string) (*consoleapi.ChangeSummary, error)
+	Changes(ctx context.Context, attempt string) (*conversationapi.ChangeSummary, error)
 	ProjectOf(ctx context.Context, conversation string) string
 	// Placement names the agent an attempt ran as and the machine it ran
 	// on, so a request for permission can say who is waiting.
@@ -171,7 +167,7 @@ type Inspector interface {
 
 // QuoteRef points at one stored line of a thread to carry along with a
 // message. The page only sends the pointer; the text is read here.
-type QuoteRef = consoleapi.QuoteRef
+type QuoteRef = conversationapi.QuoteRef
 
 // quoteLimits bound what a quote can cost the prompt.
 const (
@@ -203,7 +199,7 @@ func (s *Service) quoteBlock(ctx context.Context, conversation string, quotes []
 			return "", fmt.Errorf("quote from %s: not the same project as this thread", source)
 		}
 		s.mu.Lock()
-		var found *consoleapi.Reply
+		var found *conversationapi.Reply
 		for i := range s.replies[source] {
 			if s.replies[source][i].ID == q.ReplyID {
 				r := s.replies[source][i]
@@ -233,7 +229,7 @@ func (s *Service) quoteBlock(ctx context.Context, conversation string, quotes []
 	return b.String(), nil
 }
 
-func orUnknown(in *consoleapi.Injected) string {
+func orUnknown(in *conversationapi.Injected) string {
 	if in == nil || in.Agent == "" {
 		return ""
 	}
@@ -278,7 +274,7 @@ func (s *Service) installTranscript(saved transcript) {
 	// adapter did. Build fresh collections so a failed recovery projection
 	// cannot mutate the previous in-memory state.
 	for conversation, list := range s.replies {
-		merged := append([]consoleapi.Reply{}, saved.Replies[conversation]...)
+		merged := append([]conversationapi.Reply{}, saved.Replies[conversation]...)
 		saved.Replies[conversation] = append(merged, list...)
 	}
 	for conversation, meta := range s.meta {
@@ -337,7 +333,7 @@ func (s *Service) save() error {
 
 // Update takes what the owner said about a conversation: a name of their
 // own (empty gives it back to the agent's), or whether it is put away.
-func (s *Service) Update(_ context.Context, conversation string, patch consoleapi.ConversationPatch) error {
+func (s *Service) Update(_ context.Context, conversation string, patch conversationapi.ConversationPatch) error {
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
@@ -373,7 +369,7 @@ func (s *Service) Update(_ context.Context, conversation string, patch consoleap
 	}
 	s.mu.Unlock()
 	if s.model != nil {
-		s.model.Publish(readmodel.Event{At: m.UpdatedAt, Kind: "console.meta", Conversation: conversation, Text: m.Title})
+		s.model.Publish(conversationapi.Event{At: m.UpdatedAt, Kind: "console.meta", Conversation: conversation, Text: m.Title})
 	}
 	// A name given back to the agent is asked for again.
 	if patch.Title != nil && m.Title == "" && s.titler != nil {
@@ -439,7 +435,7 @@ func (s *Service) autoTitle(conversation, prompt, reply string) {
 	}
 	s.mu.Unlock()
 	if s.model != nil {
-		s.model.Publish(readmodel.Event{At: m.UpdatedAt, Kind: "console.meta", Conversation: conversation, Text: title})
+		s.model.Publish(conversationapi.Event{At: m.UpdatedAt, Kind: "console.meta", Conversation: conversation, Text: title})
 	}
 }
 
@@ -459,7 +455,7 @@ func (s *Service) Conversations() []string {
 // its name, where it stands, when it last spoke, whether it is busy.
 // Newest first. Where a conversation stands is asked of the coordinator,
 // so a fresh page shows the project and agent each thread would use.
-func (s *Service) Summaries(ctx context.Context) []consoleapi.Conversation {
+func (s *Service) Summaries(ctx context.Context) []conversationapi.Conversation {
 	s.mu.Lock()
 	// A thread that is waiting on its owner looks no different from one
 	// that is merely quiet, unless the sidebar is told how many answers
@@ -470,10 +466,10 @@ func (s *Service) Summaries(ctx context.Context) []consoleapi.Conversation {
 			waiting[q.Conversation]++
 		}
 	}
-	var out []consoleapi.Conversation
+	var out []conversationapi.Conversation
 	for name, list := range s.replies {
 		m := s.meta[name]
-		c := consoleapi.Conversation{ID: name, Count: len(list), Running: s.running[name] > 0, Title: m.Title, TitleBy: m.TitleBy, Archived: m.Archived, Questions: waiting[ConversationID(name)]}
+		c := conversationapi.Conversation{ID: name, Count: len(list), Running: s.running[name] > 0, Title: m.Title, TitleBy: m.TitleBy, Archived: m.Archived, Questions: waiting[ConversationID(name)]}
 		// The name is the first thing the owner said that was not a verb:
 		// "/fleet" names nothing, "把登录页改成深色" does.
 		for _, r := range list {
@@ -512,11 +508,11 @@ func (s *Service) Summaries(ctx context.Context) []consoleapi.Conversation {
 	return out
 }
 
-func placement(p *turn.Placement) *consoleapi.Placement {
+func placement(p *turn.Placement) *conversationapi.Placement {
 	if p == nil {
 		return nil
 	}
-	return &consoleapi.Placement{Workspace: p.Workspace, Kind: p.Kind, Node: p.Node}
+	return &conversationapi.Placement{Workspace: p.Workspace, Kind: p.Kind, Node: p.Node}
 }
 
 // clipTitle is a line's first sentence-ish, short enough for a sidebar.
@@ -525,20 +521,20 @@ func clipTitle(input string) string {
 }
 
 // Context is where a conversation stands, from the coordinator's own rules.
-func (s *Service) Context(ctx context.Context, conversation string) (consoleapi.Context, error) {
+func (s *Service) Context(ctx context.Context, conversation string) (conversationapi.Context, error) {
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
 	got, err := s.coordinator.Context(ctx, conversation)
 	if err != nil {
-		return consoleapi.Context{}, err
+		return conversationapi.Context{}, err
 	}
-	out := consoleapi.Context{Conversation: conversation, Agents: []consoleapi.AgentChoice{}}
+	out := conversationapi.Context{Conversation: conversation, Agents: []conversationapi.AgentChoice{}}
 	if got.Project != nil {
-		out.Project = &consoleapi.ContextProject{ID: got.Project.ID, Node: got.Project.Node, Path: got.Project.Path, Level: got.Project.Level, Repo: got.Project.Repo, Version: got.Project.Version, Bound: got.Project.Bound}
+		out.Project = &conversationapi.ContextProject{ID: got.Project.ID, Node: got.Project.Node, Path: got.Project.Path, Level: got.Project.Level, Repo: got.Project.Repo, Version: got.Project.Version, Bound: got.Project.Bound}
 	}
-	convert := func(a turn.AgentChoice) consoleapi.AgentChoice {
-		return consoleapi.AgentChoice{ID: a.ID, Node: a.Node, Harness: a.Harness, Model: a.Model, Ready: a.Ready, Why: a.Why, Usable: a.Usable, Because: a.Because, Current: a.Current, Place: placement(a.Place)}
+	convert := func(a turn.AgentChoice) conversationapi.AgentChoice {
+		return conversationapi.AgentChoice{ID: a.ID, Node: a.Node, Harness: a.Harness, Model: a.Model, Ready: a.Ready, Why: a.Why, Usable: a.Usable, Because: a.Because, Current: a.Current, Place: placement(a.Place)}
 	}
 	if got.Agent != nil {
 		current := convert(*got.Agent)
@@ -552,32 +548,32 @@ func (s *Service) Context(ctx context.Context, conversation string) (consoleapi.
 
 // Setup is the current agent's standing contract for a conversation:
 // the instructions a session opens with and what they are made of.
-func (s *Service) Setup(ctx context.Context, conversation, agent string) (consoleapi.Setup, error) {
+func (s *Service) Setup(ctx context.Context, conversation, agent string) (conversationapi.Setup, error) {
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
 	got, err := s.coordinator.SessionSetup(ctx, conversation, agent)
 	if err != nil {
-		return consoleapi.Setup{}, err
+		return conversationapi.Setup{}, err
 	}
-	out := consoleapi.Setup{
+	out := conversationapi.Setup{
 		Agent: got.Agent, Node: got.Node, Harness: got.Harness, Model: got.Model, Mode: got.Mode,
 		Instructions: got.Instructions, MCPServers: got.MCPServers, Applied: got.Applied,
 	}
 	for _, s := range got.Sections {
-		out.Sections = append(out.Sections, consoleapi.Section{Kind: s.Kind, Name: s.Name, Path: s.Path, Bytes: s.Bytes})
+		out.Sections = append(out.Sections, conversationapi.Section{Kind: s.Kind, Name: s.Name, Path: s.Path, Bytes: s.Bytes})
 	}
 	return out, nil
 }
 
 // Suggest completes a line by the coordinator's rules.
-func (s *Service) Suggest(ctx context.Context, conversation, line string) []consoleapi.Suggestion {
+func (s *Service) Suggest(ctx context.Context, conversation, line string) []conversationapi.Suggestion {
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	var out []consoleapi.Suggestion
+	var out []conversationapi.Suggestion
 	for _, x := range s.coordinator.Suggest(ctx, conversation, line) {
-		out = append(out, consoleapi.Suggestion{Label: x.Label, Args: x.Args, Detail: x.Detail, Insert: x.Insert, Muted: x.Muted})
+		out = append(out, conversationapi.Suggestion{Label: x.Label, Args: x.Args, Detail: x.Detail, Insert: x.Insert, Muted: x.Muted})
 	}
 	return out
 }
@@ -592,7 +588,7 @@ func IsConsole(conversationOrAnchor string) bool {
 // calls stream to the page as console.progress, a plan's steps report
 // theirs as step.progress, and the reply keeps the whole process so it
 // can be unfolded later.
-func (s *Service) Send(ctx context.Context, conversation, input string) (consoleapi.Reply, error) {
+func (s *Service) Send(ctx context.Context, conversation, input string) (conversationapi.Reply, error) {
 	return s.SendCommand(ctx, conversation, input, "")
 }
 
@@ -600,10 +596,10 @@ func (s *Service) Send(ctx context.Context, conversation, input string) (console
 // double click, a second tab — the same command id gets the first
 // answer back and nothing runs twice. It keeps the synchronous API while
 // the service owns execution.
-func (s *Service) SendCommand(ctx context.Context, conversation, input, commandID string) (consoleapi.Reply, error) {
+func (s *Service) SendCommand(ctx context.Context, conversation, input, commandID string) (conversationapi.Reply, error) {
 	exchange, _, err := s.enqueue(ctx, conversation, input, nil, enqueueOptions{Key: clientKey(commandID)})
 	if err != nil {
-		return consoleapi.Reply{}, err
+		return conversationapi.Reply{}, err
 	}
 	// Closing the page must not cancel either the queued work or its wait.
 	<-exchange.done
@@ -613,25 +609,25 @@ func (s *Service) SendCommand(ctx context.Context, conversation, input, commandI
 // runExchange only invokes the coordinator; queue completion records its
 // answer and terminal state together so a restart cannot replay a finished
 // turn.
-func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply consoleapi.Reply, err error) {
+func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply conversationapi.Reply, err error) {
 	if s.owner == "" {
-		return consoleapi.Reply{}, errors.New("the console needs gateway.owner_id: it acts as the owner")
+		return conversationapi.Reply{}, errors.New("the console needs gateway.owner_id: it acts as the owner")
 	}
 	requester := s.owner
 	if exchange.Requester != "" {
 		if exchange.Requester != s.owner {
-			return consoleapi.Reply{}, errors.New("scheduled owner is no longer the console owner")
+			return conversationapi.Reply{}, errors.New("scheduled owner is no longer the console owner")
 		}
 		requester = exchange.Requester
 	}
 	conversation, input := exchange.Conversation, exchange.Input
 	mediaText, media, err := s.executionMaterials(ctx, exchange, requester)
 	if err != nil {
-		return consoleapi.Reply{}, err
+		return conversationapi.Reply{}, err
 	}
 	block, err := s.quoteBlock(ctx, conversation, exchange.Quotes)
 	if err != nil {
-		return consoleapi.Reply{Text: err.Error(), Error: err.Error()}, err
+		return conversationapi.Reply{Text: err.Error(), Error: err.Error()}, err
 	}
 	text := input
 	if exchange.Prompt != "" {
@@ -662,7 +658,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return consoleapi.Reply{Text: err.Error(), Error: err.Error()}, err
+		return conversationapi.Reply{Text: err.Error(), Error: err.Error()}, err
 	}
 	work := newProcess()
 	stream := s.progress(conversation, exchange.ID, work)
@@ -679,8 +675,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 	if s.anchor != nil && !parsed.ScheduleControl() {
 		s.anchor(conversation, ChatID, AnchorMark+exchange.ID)
 	}
-	stop := s.follow(ctx, conversation, work)
-	identity := &questionIdentity{base: consoleapi.PendingQuestion{Conversation: conversation, ExchangeID: exchange.ID, Project: exchange.ExpectedProject, Locale: exchange.Locale}}
+	identity := &questionIdentity{base: conversationapi.PendingQuestion{Conversation: conversation, ExchangeID: exchange.ID, Project: exchange.ExpectedProject, Locale: exchange.Locale}}
 	result, err := s.coordinator.Handle(ctx, turn.Request{
 		Source: turn.Source{
 			Channel:        "console",
@@ -718,7 +713,6 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 	})
 	stream.Phase(view.PhaseSaving)
 	stream.Close()
-	stop()
 	reply = s.resultReply(ctx, exchange, work, result, err)
 	// The first real exchange names the conversation, unless it has a
 	// name already: the agent summarises what the owner wants, the way a
@@ -734,84 +728,23 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 	return reply, err
 }
 
-// follow collects plan progress. Delegations go through UpdateStep so a
-// child cannot be collected by an unrelated later turn in the same conversation.
-// The read model stamps step.progress with the conversation, so this is
-// the same stream the page watches.
-func (s *Service) follow(ctx context.Context, conversation string, work *process) func() {
-	if s.model == nil {
-		return func() {}
-	}
-	ctx, cancel := context.WithCancel(ctx)
-	// Subscribed before follow returns, so that nothing the turn publishes
-	// once it starts comes before the subscription.
-	events, stopEvents := s.model.Subscribe(ctx)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		last := ""
-		collect := func(ev readmodel.Event) {
-			last = s.model.EventID(ev)
-			if ev.Kind == "step.progress" && ev.Conversation == conversation && ev.Progress != nil {
-				work.step(readmodel.FromStepProgress(ev.StepID, *ev.Progress, consoleapi.StepInfo{}))
-			}
-		}
-		// The model closes a subscriber that falls behind. Subscribing
-		// again after the last event read replays the gap while the model
-		// still keeps it; each step's progress is a whole snapshot, so only
-		// a step whose last snapshot the model no longer keeps stays at the
-		// state collected before it. The first subscription replays
-		// nothing: what the model kept from before is not this turn's.
-		subscribe := func() (<-chan readmodel.Event, func()) {
-			if last == "" {
-				return s.model.Subscribe(ctx)
-			}
-			resume, events, stop := s.model.SubscribeAfter(ctx, last)
-			// A reset replays every event the model keeps. It comes only when
-			// the events right after last are no longer kept, so each event it
-			// replays came after last: none is from before this follow began.
-			if resume.Reset {
-				slog.Warn("console: fell behind the change stream further than it keeps; some step progress may be stale", "conversation", conversation)
-			}
-			for _, ev := range resume.Replay {
-				collect(ev)
-			}
-			return events, stop
-		}
-		for {
-			for ev := range events {
-				collect(ev)
-			}
-			stopEvents()
-			if ctx.Err() != nil {
-				return
-			}
-			events, stopEvents = subscribe()
-		}
-	}()
-	return func() {
-		cancel()
-		<-done
-	}
-}
-
 // process is what one console line caused, gathered as it happens.
 type process struct {
 	mu    sync.Mutex
-	last  consoleapi.Progress
-	steps map[string]consoleapi.StepProcess
+	last  conversationapi.Progress
+	steps map[string]conversationapi.StepProcess
 	order []string
 }
 
-func newProcess() *process { return &process{steps: map[string]consoleapi.StepProcess{}} }
+func newProcess() *process { return &process{steps: map[string]conversationapi.StepProcess{}} }
 
-func (w *process) turn(p consoleapi.Progress) {
+func (w *process) turn(p conversationapi.Progress) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.last = p
 }
 
-func (w *process) step(step consoleapi.StepProcess) {
+func (w *process) step(step conversationapi.StepProcess) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if _, seen := w.steps[step.ID]; !seen {
@@ -820,72 +753,64 @@ func (w *process) step(step consoleapi.StepProcess) {
 	w.steps[step.ID] = step
 }
 
-// UpdateStep keeps a child's snapshot with the reply that launched it,
-// even after that turn ends or another turn starts in the conversation.
-func (s *Service) UpdateStep(conversation, taskID string, step consoleapi.StepProcess) {
-	conversation = ConversationID(conversation)
-	step.ID = "#" + taskID
+// UpdateExecutionStep attaches a snapshot only to its original accepted exchange.
+// Execution observers provide the frozen source message, never the conversation's
+// mutable current anchor or the newest running line. A missing historical exchange
+// leaves this projection absent; it cannot adopt a later turn.
+func (s *Service) UpdateExecutionStep(conversation, sourceMessage, taskID string, step conversationapi.StepProcess) {
+	exchangeID, ok := strings.CutPrefix(sourceMessage, AnchorMark)
+	if !ok || exchangeID == "" || step.ID == "" {
+		return
+	}
+	step = conversationapi.CloneStep(step)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if work := s.processes[exchangeID]; work != nil {
+		for _, exchange := range s.exchanges[conversation] {
+			if exchange.ID == exchangeID && (exchange.State == conversationapi.ExchangeRunning || exchange.State == conversationapi.ExchangeRecovering || exchange.State == conversationapi.ExchangeAwaitingUser) {
+				work.step(step)
+				return
+			}
+		}
+	}
 	for i, reply := range s.replies[conversation] {
-		if reply.Process == nil {
+		if reply.ExchangeID != exchangeID || reply.Kind != "reply" {
 			continue
 		}
-		for j, old := range reply.Process.Steps {
-			if old.ID != step.ID {
-				continue
+		updated := conversationapi.Process{}
+		if reply.Process != nil {
+			updated = *reply.Process
+		}
+		updated.Steps = append([]conversationapi.StepProcess(nil), updated.Steps...)
+		replaced := false
+		for j, old := range updated.Steps {
+			if old.ID == step.ID {
+				updated.Steps[j] = step
+				replaced = true
+				break
 			}
-			// Readers may still be encoding the previous reply outside our
-			// lock. Replace its process instead of mutating shared slices.
-			updated := *reply.Process
-			updated.Steps = append([]consoleapi.StepProcess(nil), updated.Steps...)
-			updated.Steps[j] = step
-			s.replies[conversation][i].Process = &updated
-			if err := s.save(); err != nil {
-				s.replies[conversation][i] = reply
-				slog.Error("console: save step", "error", err)
-			} else if s.model != nil {
-				s.model.Publish(readmodel.Event{Kind: "console.step", Conversation: conversation,
-					TaskID: taskID, StepID: step.ID, ReplyID: reply.ID, Step: &step})
-			}
-			return
 		}
-	}
-	// An interrupted turn may still be finishing. Keep its known children
-	// there; new children belong to the newest turn, including a replacement
-	// started with "!". A concurrent /cancel command cannot launch a child.
-	var current *queuedExchange
-	for _, exchange := range s.exchanges[conversation] {
-		work := s.processes[exchange.ID]
-		if exchange.State != consoleapi.ExchangeRunning || work == nil {
-			continue
+		if !replaced {
+			updated.Steps = append(updated.Steps, step)
 		}
-		work.mu.Lock()
-		_, known := work.steps[step.ID]
-		work.mu.Unlock()
-		if known {
-			work.step(step)
-			return
+		s.replies[conversation][i].Process = &updated
+		if err := s.save(); err != nil {
+			s.replies[conversation][i] = reply
+			slog.Error("conversation: save execution step", "error", err)
+		} else if s.model != nil {
+			s.model.Publish(conversationapi.Event{Kind: "console.step", Conversation: conversation,
+				ExchangeID: exchangeID, TaskID: taskID, StepID: step.ID, ReplyID: reply.ID, Step: &step})
 		}
-		_, parsed := s.parseInput(exchange.Input)
-		if parsed.Control() && !parsed.Interrupt {
-			continue
-		}
-		if current == nil || exchange.StartedAt.After(current.StartedAt) {
-			current = exchange
-		}
-	}
-	if current != nil {
-		s.processes[current.ID].step(step)
+		return
 	}
 }
 
 // summary is the process as the reply keeps it, or nil when nothing was
 // observed — a verb answered from state has no process worth a fold.
-func (w *process) summary() *consoleapi.Process {
+func (w *process) summary() *conversationapi.Process {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	out := &consoleapi.Process{Reasoning: w.last.Reasoning, Tools: w.last.Tools, Timeline: w.last.Timeline}
+	out := &conversationapi.Process{Reasoning: w.last.Reasoning, Tools: w.last.Tools, Timeline: w.last.Timeline}
 	for _, id := range w.order {
 		out.Steps = append(out.Steps, w.steps[id])
 	}
@@ -896,13 +821,13 @@ func (w *process) summary() *consoleapi.Process {
 }
 
 // Replies is a conversation's recent exchanges, oldest first.
-func (s *Service) Replies(conversation string) []consoleapi.Reply {
+func (s *Service) Replies(conversation string) []conversationapi.Reply {
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := append([]consoleapi.Reply{}, s.replies[conversation]...)
+	out := append([]conversationapi.Reply{}, s.replies[conversation]...)
 	for i := range out {
 		out[i].Revision = replyRevision(out[i])
 		out[i].Refs = copyRefs(out[i].Refs)
@@ -922,7 +847,7 @@ func (s *Service) Notice(n turn.TaskNotice) {
 	if strings.HasPrefix(n.MessageID, AnchorMark) {
 		exchangeID = strings.TrimPrefix(n.MessageID, AnchorMark)
 	}
-	s.record(consoleapi.Reply{At: time.Now().UTC(), Conversation: conversation, ExchangeID: exchangeID, Title: "task #" + n.TaskID, Text: n.Text, Kind: "notice"})
+	s.record(conversationapi.Reply{At: time.Now().UTC(), Conversation: conversation, ExchangeID: exchangeID, Title: "task #" + n.TaskID, Text: n.Text, Kind: "notice"})
 }
 
 // newReplyID names a line: time-ordered, unique enough for a transcript.
@@ -934,7 +859,7 @@ func newReplyID() string {
 	return fmt.Sprintf("r%x%x", time.Now().UnixNano()/1000, raw)
 }
 
-func (s *Service) record(r consoleapi.Reply) consoleapi.Reply {
+func (s *Service) record(r conversationapi.Reply) conversationapi.Reply {
 	s.mu.Lock()
 	previous, existed := s.replies[r.Conversation]
 	r = s.recordLocked(r)
@@ -945,7 +870,7 @@ func (s *Service) record(r consoleapi.Reply) consoleapi.Reply {
 			delete(s.replies, r.Conversation)
 		}
 		slog.Error("console: save notice", "error", err)
-		r = consoleapi.Reply{Error: err.Error()}
+		r = conversationapi.Reply{Error: err.Error()}
 	} else {
 		s.publishReply(r)
 	}
@@ -955,7 +880,7 @@ func (s *Service) record(r consoleapi.Reply) consoleapi.Reply {
 
 // recordLocked appends without saving so an exchange transition and its
 // line can be committed in the same owner transaction.
-func (s *Service) recordLocked(r consoleapi.Reply) consoleapi.Reply {
+func (s *Service) recordLocked(r conversationapi.Reply) conversationapi.Reply {
 	if r.ProjectID == "" && r.ExchangeID != "" {
 		for _, e := range s.exchanges[r.Conversation] {
 			if e.ID == r.ExchangeID {
@@ -976,19 +901,19 @@ func (s *Service) recordLocked(r consoleapi.Reply) consoleapi.Reply {
 	return r
 }
 
-func replyRevision(r consoleapi.Reply) string {
+func replyRevision(r conversationapi.Reply) string {
 	raw, _ := json.Marshal(struct{ Text, Format, Project string }{r.Text, r.Format, r.ProjectID})
 	digest := sha256.Sum256(raw)
 	return hex.EncodeToString(digest[:])
 }
 
-func (s *Service) publishReply(r consoleapi.Reply) {
+func (s *Service) publishReply(r conversationapi.Reply) {
 	if s.model != nil {
 		text := r.Text
 		if r.Kind == "sent" {
 			text = r.Input
 		}
-		s.model.Publish(readmodel.Event{At: r.At, Kind: "console." + r.Kind, Conversation: r.Conversation, Text: text, Format: r.Format, Title: r.Title, ReplyID: r.ID, ExchangeID: r.ExchangeID, Silent: r.Silent})
+		s.model.Publish(conversationapi.Event{At: r.At, Kind: "console." + r.Kind, Conversation: r.Conversation, Text: text, Format: r.Format, Title: r.Title, ReplyID: r.ID, ExchangeID: r.ExchangeID, Silent: r.Silent})
 	}
 }
 
@@ -1014,7 +939,7 @@ func (s *Service) Resume(ctx context.Context, conversation, taskID, member, noti
 	if existing != nil {
 		defer s.mu.Unlock()
 		if existing.ExpectedTask != taskID || existing.ResumeAdmission != admission {
-			return consoleapi.ErrCommandConflict
+			return conversationapi.ErrCommandConflict
 		}
 		return nil
 	}
@@ -1033,7 +958,7 @@ func (s *Service) Resume(ctx context.Context, conversation, taskID, member, noti
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if e.ExpectedTask != taskID || e.ResumeAdmission != admission {
-			return consoleapi.ErrCommandConflict
+			return conversationapi.ErrCommandConflict
 		}
 	}
 	return err

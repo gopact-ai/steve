@@ -1,19 +1,15 @@
 package consoleapi
 
-type ExchangeState string
+import "github.com/gopact-ai/steve/internal/conversationapi"
+
+type ExchangeState = conversationapi.ExchangeState
 
 const (
-	ExchangeQueued       ExchangeState = "queued"
-	ExchangeRunning      ExchangeState = "running"
-	ExchangeRecovering   ExchangeState = "recovering"
-	ExchangeAwaitingUser ExchangeState = "awaiting-user"
-	ExchangeDone         ExchangeState = "done"
-	ExchangeFailed       ExchangeState = "failed"
-	ExchangeCancelled    ExchangeState = "cancelled"
+	ExchangeQueued       = conversationapi.ExchangeQueued
+	ExchangeRunning      = conversationapi.ExchangeRunning
+	ExchangeRecovering   = conversationapi.ExchangeRecovering
+	ExchangeAwaitingUser = conversationapi.ExchangeAwaitingUser
+	ExchangeDone         = conversationapi.ExchangeDone
+	ExchangeFailed       = conversationapi.ExchangeFailed
+	ExchangeCancelled    = conversationapi.ExchangeCancelled
 )
-
-// Terminal identifies a submission with a final receipt, including failure.
-// A recovering or awaiting-user exchange still owns its queue reservation.
-func (s ExchangeState) Terminal() bool {
-	return s == ExchangeDone || s == ExchangeFailed || s == ExchangeCancelled
-}

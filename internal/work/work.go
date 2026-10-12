@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/durable"
@@ -63,6 +64,9 @@ type Service struct {
 	Identity        *identity.Service
 	Conversations   Conversation
 	AuthorizeRecord func(*ledger.Tx, Record) error
+	Limits          durable.Limits
+	sweepMu         sync.Mutex
+	sweepAfter      string
 }
 
 func (s *Service) Submit(ctx context.Context, p identity.Principal, input Request) (out Record, err error) {
@@ -116,6 +120,9 @@ func (s *Service) Submit(ctx context.Context, p identity.Principal, input Reques
 				return errors.New("work receipt missing its work record")
 			}
 			return nil
+		}
+		if err := s.checkCapacityTx(tx, p.GrantID); err != nil {
+			return err
 		}
 		out = Record{ID: id, GrantID: p.GrantID, Owner: p.Owner, Request: input, State: StatePending, At: time.Now().UTC()}
 		if err := tx.PutBinding(RecordKind, id, out); err != nil {
@@ -224,6 +231,9 @@ func (s *Service) Status(ctx context.Context, p identity.Principal, id string) (
 	result, found, err = s.Conversations.WorkResult(ctx, record.Request.Conversation, record.Exchange)
 	if err == nil && !found {
 		err = errors.New("accepted work has no retained exchange")
+	}
+	if err == nil && terminalResult(result.State) {
+		err = s.sealResult(ctx, record, result)
 	}
 	return
 }

@@ -10,8 +10,8 @@ import (
 	"reflect"
 	"sort"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/conversation"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -27,26 +27,26 @@ const (
 // Recovery receipts are authority and survive independently of reply pruning.
 type DurableExchange struct {
 	Exchange
-	PayloadHash           string              `json:"payload_hash,omitempty"`
-	QuoteAliases          map[string]string   `json:"quote_aliases,omitempty"`
-	Receipt               *consoleapi.Reply   `json:"receipt,omitempty"`
-	RecoveryStopTarget    *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
-	RecoveryAbandon       *consoleapi.Reply   `json:"recovery_abandon,omitempty"`
-	RecoveryStop          *consoleapi.Reply   `json:"recovery_stop,omitempty"`
-	RecoveryStopPending   string              `json:"recovery_stop_pending,omitempty"`
-	RecoveryCancelPending bool                `json:"recovery_cancel_pending,omitempty"`
-	RecoveryStopTask      string              `json:"recovery_stop_task,omitempty"`
-	RecoveryPending       bool                `json:"recovery_pending,omitempty"`
-	ContinuationRejected  bool                `json:"continuation_rejected,omitempty"`
+	PayloadHash           string                 `json:"payload_hash,omitempty"`
+	QuoteAliases          map[string]string      `json:"quote_aliases,omitempty"`
+	Receipt               *conversationapi.Reply `json:"receipt,omitempty"`
+	RecoveryStopTarget    *recoveryStopTarget    `json:"recovery_stop_target,omitempty"`
+	RecoveryAbandon       *conversationapi.Reply `json:"recovery_abandon,omitempty"`
+	RecoveryStop          *conversationapi.Reply `json:"recovery_stop,omitempty"`
+	RecoveryStopPending   string                 `json:"recovery_stop_pending,omitempty"`
+	RecoveryCancelPending bool                   `json:"recovery_cancel_pending,omitempty"`
+	RecoveryStopTask      string                 `json:"recovery_stop_task,omitempty"`
+	RecoveryPending       bool                   `json:"recovery_pending,omitempty"`
+	ContinuationRejected  bool                   `json:"continuation_rejected,omitempty"`
 }
 
 // DurableState is an owner snapshot for stopped-service maintenance. Loading
 // or storing it does not resume work or reinterpret running exchanges.
 type DurableState struct {
-	Replies   map[string][]consoleapi.Reply         `json:"replies"`
-	Meta      map[string]Meta                       `json:"meta,omitempty"`
-	Exchanges map[string][]DurableExchange          `json:"exchanges,omitempty"`
-	Questions map[string]consoleapi.PendingQuestion `json:"questions,omitempty"`
+	Replies   map[string][]conversationapi.Reply         `json:"replies"`
+	Meta      map[string]Meta                            `json:"meta,omitempty"`
+	Exchanges map[string][]DurableExchange               `json:"exchanges,omitempty"`
+	Questions map[string]conversationapi.PendingQuestion `json:"questions,omitempty"`
 }
 
 func durableExchange(e *queuedExchange) DurableExchange {
@@ -87,7 +87,7 @@ type consoleHead struct {
 }
 type consoleReplyRecord struct {
 	Next string `json:"next,omitempty"`
-	consoleapi.Reply
+	conversationapi.Reply
 }
 type consoleExchangeRecord struct {
 	Next string `json:"next,omitempty"`
@@ -114,7 +114,7 @@ func decodeConsoleRecord(kind string, raw []byte) (any, error) {
 	case consoleExchangeKind:
 		value = &consoleExchangeRecord{}
 	case consoleQuestionKind:
-		value = &consoleapi.PendingQuestion{}
+		value = &conversationapi.PendingQuestion{}
 	default:
 		return nil, fmt.Errorf("console: unknown record kind %s", kind)
 	}
@@ -201,7 +201,7 @@ func loadConsoleRecordsTx(tx *ledger.Tx) (consoleRecords, error) {
 }
 
 func (r consoleRecords) state() (DurableState, error) {
-	out := DurableState{Replies: map[string][]consoleapi.Reply{}, Meta: map[string]Meta{}, Exchanges: map[string][]DurableExchange{}, Questions: map[string]consoleapi.PendingQuestion{}}
+	out := DurableState{Replies: map[string][]conversationapi.Reply{}, Meta: map[string]Meta{}, Exchanges: map[string][]DurableExchange{}, Questions: map[string]conversationapi.PendingQuestion{}}
 	visited := map[consoleRecordKey]bool{}
 	values := r.values
 	for key, value := range values {
@@ -219,7 +219,7 @@ func (r consoleRecords) state() (DurableState, error) {
 			out.Meta[key.id] = *head.Meta
 		}
 		if head.Replies {
-			out.Replies[key.id] = []consoleapi.Reply{}
+			out.Replies[key.id] = []conversationapi.Reply{}
 		}
 		for id := head.FirstReply; id != ""; {
 			rowKey := consoleRecordKey{consoleReplyKind, id}
@@ -253,7 +253,7 @@ func (r consoleRecords) state() (DurableState, error) {
 				return out, fmt.Errorf("console: orphan record %s/%s", key.kind, key.id)
 			}
 		case consoleQuestionKind:
-			q := value.(consoleapi.PendingQuestion)
+			q := value.(conversationapi.PendingQuestion)
 			if q.ID != key.id {
 				return out, fmt.Errorf("console: invalid question %s", key.id)
 			}

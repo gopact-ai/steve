@@ -1,7 +1,9 @@
 package schedule
 
 import (
+	"context"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"sort"
 	"time"
 )
@@ -211,6 +213,10 @@ func (s *Store) FailFiring(key string, cause error, unknown bool) error {
 // ResolveFiring is an explicit human decision after inspecting an uncertain
 // external delivery. Active requests cannot be resolved underneath a sender.
 func (s *Store) ResolveFiring(id, verdict, by string) error {
+	return s.ResolveFiringChecked(context.Background(), id, verdict, by, nil)
+}
+
+func (s *Store) ResolveFiringChecked(ctx context.Context, id, verdict, by string, guard func(*ledger.Tx, Job) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if by == "" {
@@ -223,14 +229,27 @@ func (s *Store) ResolveFiring(id, verdict, by string) error {
 		if s.active[key] {
 			return fmt.Errorf("firing %s is still active", key)
 		}
+		job, found := s.data.Jobs[id]
+		if !found {
+			return fmt.Errorf("schedule %s not found", id)
+		}
+		var check func(*ledger.Tx) error
+		if guard != nil {
+			check = func(tx *ledger.Tx) error { return guard(tx, *job) }
+		}
 		switch verdict {
 		case "confirm":
-			return s.acceptLocked(key, "confirmed:"+by, s.now(), by)
+			next := s.clone()
+			stored := next.Firings[key]
+			stored.State, stored.Receipt, stored.AcceptedAt, stored.ResolvedBy = FiringAccepted, "confirmed:"+by, s.now(), by
+			stored.Error = ""
+			advanceJob(next.Jobs, f.ID, f.FollowingAt, stored.AcceptedAt, true)
+			return s.replaceCheckedLocked(ctx, next, check)
 		case "retry":
 			next := s.clone()
 			next.Firings[key].State = FiringPending
 			next.Firings[key].ResolvedBy = by
-			return s.replaceLocked(next)
+			return s.replaceCheckedLocked(ctx, next, check)
 		default:
 			return fmt.Errorf("use confirm or retry for an uncertain schedule")
 		}

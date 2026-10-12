@@ -189,6 +189,21 @@ credential digests are stored. Connection tokens never pass the Console owner
 guard. Native account mappings and project policy are distinct from connection grants;
 retained actor IDs remain in their original namespaces.
 
+Connections retain their logical grant ID and principal across independent,
+revisioned scope edits and credential rotation. Authenticated HTTP requests carry
+the credential generation into protected transactions; accepted background work
+retains its grant identity and rechecks its live scopes. Legacy string credential
+receipts remain readable. Owner enrollment, scope changes, rotation and retirement
+have audit records, and a lost token no longer requires changing the provider's
+event source or client identity.
+
+`provider` describes externally managed event plugins on those same connection
+identities. Its registration generation and heartbeat describe availability,
+while immutable type/version/schema digests describe event contracts. Neither
+discovery nor plugin metadata grants execution or starts code. Old unregistered
+providers retain their existing protocol; registered providers expose contract
+metadata and health through the owner and scoped service APIs.
+
 `clientcap` separates advertised availability from permission. Explicit grants
 bind a capability to a conversation. Registration has a process generation and
 45-second heartbeat; claims have stable invocation IDs and unique tokens.
@@ -209,7 +224,10 @@ adapters behind the service ports. Native mail/calendar/IM providers and macOS/i
 capability implementations can use the versioned HTTP contract in
 [event-providers](event-providers.md). They are not installed by this change.
 Existing Skills/MCP immutable runtime bundles and user-managed harness versions
-continue unchanged. A2A adapters remain a product extension. Account/grant migration is part of the
+continue unchanged. Newly prepared Codex runtime homes explicitly disable native Apps, plugins,
+and remote plugin discovery, so shared model authentication does not import the
+operator's ChatGPT account tools. Steve supplies admitted MCP servers through ACP
+and materializes selected skills in the runtime home. A2A adapters remain a product extension. Account/grant migration is part of the
 foundation above, with explicit bindings and original execution evidence.
 
 ## Validation cadence
@@ -220,3 +238,62 @@ and assert an observable failure; call-count and coverage increases alone do not
 establish effectiveness. Reuse existing authorization, recovery and queue tests.
 After a failure or a later change, rerun the affected checks; final CI and required
 fleet evidence refer to the final runtime commit.
+
+## Control authority and conversation history
+
+`internal/control` owns resource policy for platform commands and MCP management.
+An admitted input fixes its transport, native account, account binding revision and
+private/group source. The mutation's ledger transaction checks that proof again,
+plus the original resource's project role. Task controls also match the original
+conversation and transport; schedules retain their requester. Owner fleet changes
+require the exact original private owner execution and reject delegated children.
+Configuration commits use the same authority guard, including shared configuration
+transactions. A conversation can belong to one admitted transport; colliding
+opaque IDs are refused rather than lending another channel's state or privileges.
+
+Read controls do not select an agent or change a conversation as a side effect.
+Project discovery filters by the original caller's read access. A remembered
+conversation mode and a `console:` prefix are display context, never caller proof.
+Trusted in-process embeddings without installed account authority retain their
+explicit internal APIs; authenticated providers receive only scoped service ports.
+
+`conversationapi` holds transport-neutral messages, questions, processes and
+publish-only presentation notifications. `consoleapi` retains compatible aliases.
+Conversation storage imports neither Console contracts nor the concrete read model.
+Plan and delegate observers deliver snapshots directly to the frozen source
+exchange before the UI stream applies throttling. Plans use their creation-time
+message; children use their recorded parent authorization attempt. Missing or
+removed original history never attaches a child to a newer turn. Recorded snapshots
+own their slices, so later producer updates cannot rewrite an earlier observation.
+
+## Backlog and lossless history storage
+
+Service intake limits unfinished work per logical source (default 256) and per
+service (default 4096). Existing accepted idempotent retries return their original
+receipts even when intake is full. HTTP reports capacity refusals as `429` with
+`Retry-After`; completion facts are recorded independently of external intake.
+Work completion retains the original exchange result and releases capacity.
+`GET /console/service-backlog` reports queue counts, oldest pending timestamps,
+limits and hot/cold payload sizes.
+
+The service worker makes bounded rotating lifecycle and retention passes.
+After seven days, eligible terminal payloads may be compressed losslessly in the
+same replicated ledger. Original IDs remain, and typed reads transparently verify
+and decode the retained content. Ingress identities, credentials, grants, routes,
+active registrations, subscriptions and unresolved effects are retained. Unknown
+and unfinished execution facts do not expire. Compression bounds hot payload cost;
+it does not impose a destructive TTL or a fixed total history size.
+`POST /console/service-history/compact` requests one bounded compaction pass.
+
+A retired consumer moves unclaimed deliveries to the Inbox and does not prevent
+an owner from disabling its subscription. Long waits are visible. Pending client
+calls retain the original canonical capability and relevant client/caller scope;
+changed contracts or authority retire an unclaimed request. Reconnecting with an
+identical contract may continue an approved call without approving a different
+operation. An owner can cancel an unclaimed invocation or reconcile an unknown
+client/event result with revision and evidence. Reconciliation retains the original
+claim, contract and unknown evidence and never dispatches another action:
+
+- `POST /console/client-invocations/{id}/cancel`
+- `POST /console/client-invocations/{id}/reconcile`
+- `POST /console/event-deliveries/{id}/reconcile`

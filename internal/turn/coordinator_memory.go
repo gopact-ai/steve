@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/memory"
 )
 
@@ -64,7 +65,17 @@ func (c *Coordinator) projectMemory(ctx context.Context, conversationID string, 
 // one. A delegated task may read but not write.
 func (c *Coordinator) memoryScope(ctx context.Context, conversationID, delegatedBy, raw string, write bool) (*memory.Service, memory.Scope, error) {
 	svc := c.memory
-	if c.modeOf(conversationID) != home.ModeOwner {
+	allowed := c.modeOf(conversationID) == home.ModeOwner
+	if accounts := c.owners.Configuration().Accounts; accounts != nil {
+		scope, ok := agentmcp.ScopeFromContext(ctx)
+		allowed = false
+		if ok {
+			allowed = accounts.Book.Read(ctx, func(tx *ledger.ReadTx) error {
+				return c.controls.ExecutionOwnerTx(tx, scope.AttemptID, write && delegatedBy != "")
+			}) == nil
+		}
+	}
+	if !allowed {
 		return nil, memory.Scope{}, errors.New("memory is the owner's, in private: this conversation is a group or a guest's, so nothing is remembered or recalled here")
 	}
 	if write && delegatedBy != "" {

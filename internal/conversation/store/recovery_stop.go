@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -243,7 +243,7 @@ func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, 
 }
 
 func (s *Service) finishRecoveryStop(ctx context.Context, target *queuedExchange, result turn.Result, release func()) (turn.Result, error) {
-	reply := consoleapi.Reply{Text: result.Text, Title: result.Title}
+	reply := conversationapi.Reply{Text: result.Text, Title: result.Title}
 	s.mu.Lock()
 	if target.State.Terminal() {
 		s.mu.Unlock()
@@ -337,8 +337,8 @@ func (r *exchangeRecovery) abandon(taskID string, cancel bool) {
 // it, and settling the stop needs neither the line nor the conversation's
 // tasks — so it holds neither the conversation's queue nor the end of the
 // conversation's tasks. Its card stays until the stop is confirmed.
-func stopSettling(tx ledger.Reader, state consoleapi.ExchangeState, recoveryPending bool, stopPending, stopTask string) (bool, error) {
-	if (state != consoleapi.ExchangeRecovering && state != consoleapi.ExchangeAwaitingUser) || recoveryPending || stopPending == "" || stopTask == "" {
+func stopSettling(tx ledger.Reader, state conversationapi.ExchangeState, recoveryPending bool, stopPending, stopTask string) (bool, error) {
+	if (state != conversationapi.ExchangeRecovering && state != conversationapi.ExchangeAwaitingUser) || recoveryPending || stopPending == "" || stopTask == "" {
 		return false, nil
 	}
 	tracked, found, err := task.GetTx(tx, stopTask)
@@ -352,7 +352,7 @@ func stopSettling(tx ledger.Reader, state consoleapi.ExchangeState, recoveryPend
 // lock. Until that observation exists, the exchange conservatively holds the line.
 func (s *Service) stopSettlingLocked(e *queuedExchange) bool {
 	return e.stopSetAside && !e.RecoveryPending && e.RecoveryStopPending != "" && e.RecoveryStopTask != "" &&
-		(e.State == consoleapi.ExchangeRecovering || e.State == consoleapi.ExchangeAwaitingUser)
+		(e.State == conversationapi.ExchangeRecovering || e.State == conversationapi.ExchangeAwaitingUser)
 }
 
 // A parent observer can finish before the stop of one of its children is
@@ -382,7 +382,7 @@ func (s *Service) waitRecoveryStopIntent(e *queuedExchange, checkNow, cancel boo
 		requester = e.Requester
 	}
 	w := &recoveryStopWait{s: s, e: e, ctx: e.ctx, requester: requester, reason: e.RecoveryStopPending, changed: make(chan struct{}, 1)}
-	e.State = consoleapi.ExchangeAwaitingUser
+	e.State = conversationapi.ExchangeAwaitingUser
 	saveErr := s.save()
 	if saveErr == nil {
 		// Waiting on the stop of a task set aside, the exchange no longer
@@ -392,7 +392,7 @@ func (s *Service) waitRecoveryStopIntent(e *queuedExchange, checkNow, cancel boo
 		}
 	}
 	s.publishQueue(e.Conversation)
-	w.base = consoleapi.PendingQuestion{Conversation: e.Conversation, ExchangeID: e.ID, Project: e.ExpectedProject, Locale: e.Locale}
+	w.base = conversationapi.PendingQuestion{Conversation: e.Conversation, ExchangeID: e.ID, Project: e.ExpectedProject, Locale: e.Locale}
 	s.mu.Unlock()
 	if saveErr != nil {
 		s.detachRecovery(e, saveErr)
@@ -415,7 +415,7 @@ type recoveryStopWait struct {
 	s         *Service
 	e         *queuedExchange
 	ctx       context.Context
-	base      consoleapi.PendingQuestion
+	base      conversationapi.PendingQuestion
 	requester string
 	changed   chan struct{}
 

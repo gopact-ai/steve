@@ -37,7 +37,10 @@ func (c *Coordinator) cancel(ctx context.Context, conversationID string, selecte
 	// child delegated and ended while it was being stopped — and a child
 	// stopped after that ends the same way. Neither may wake the task.
 	covered := c.coveredTasks(conversationID, selected.ID)
-	stamps := c.holdCovered(covered)
+	stamps, err := c.holdCoveredChecked(ctx, covered)
+	if err != nil {
+		return Result{}, err
+	}
 	running := c.turnInFlight(conversationID, selected.ID)
 	result, turnErr := c.cancelTurn(ctx, conversationID, selected)
 	stopped, stopErr := c.stopDelegations(ctx, covered)
@@ -100,13 +103,20 @@ func owing(child task.Task) bool {
 // stop is over. The stamps are for settleHolds to let go of the tasks
 // that turn out to have nothing.
 func (c *Coordinator) holdCovered(covered []task.Task) map[string]time.Time {
+	stamps, _ := c.holdCoveredChecked(context.Background(), covered)
+	return stamps
+}
+
+func (c *Coordinator) holdCoveredChecked(ctx context.Context, covered []task.Task) (map[string]time.Time, error) {
 	stamps := make(map[string]time.Time, len(covered))
 	for _, tracked := range covered {
-		if held, ok := c.hold(tracked); ok {
-			stamps[tracked.ID] = held.HeldAt
+		held, err := c.tasks.HoldChecked(ctx, tracked.ID, c.controls.TaskContextGuard(ctx, tracked.ID))
+		if err != nil {
+			return stamps, err
 		}
+		stamps[tracked.ID] = held.HeldAt
 	}
-	return stamps
+	return stamps, nil
 }
 
 // settleHolds is the stop's last word on each covered task. One with a
@@ -175,7 +185,7 @@ func (c *Coordinator) stopDelegations(ctx context.Context, covered []task.Task) 
 			if !atWork(child) {
 				continue
 			}
-			aside, err := c.tasks.SetAside(child.ID, task.StateCancelled)
+			aside, err := c.tasks.SetAsideChecked(ctx, child.ID, task.StateCancelled, c.controls.TaskContextGuard(ctx, tracked.ID))
 			if err != nil {
 				stopErr = errors.Join(stopErr, err)
 				continue

@@ -166,19 +166,23 @@ func (streamer) Handle(_ context.Context, req turn.Request) (turn.Result, error)
 
 // While a line runs, its progress streams to the page; when it is done,
 // the reply keeps the process — the turn's own, and the steps' progress
-// that came through the model for this conversation.
+// delivered directly by the original execution observer.
 func TestConsoleStreamsProgressAndKeepsTheProcess(t *testing.T) {
 	model := readmodel.New(readmodel.Sources{})
 	s := New(streamer{}, "ou_owner", model)
 	events, stop := model.Subscribe(context.Background())
 	defer stop()
-	// A plan step on this conversation reports while the line runs.
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		model.Publish(readmodel.Event{Kind: "step.progress", Conversation: "console:main", StepID: "repair",
-			Progress: &consoleapi.Progress{Agent: "builder", Node: "node-a", Tools: []consoleapi.ToolCall{{Kind: "shell", Name: "install", Status: "completed"}}}})
-	}()
-	slow := New(slowStreamer{}, "ou_owner", model)
+	// The execution observer supplies the original exchange, independently
+	// of whether the renderer delivered its optional progress event.
+	var slow *Service
+	h := &stepHandler{}
+	h.answer = func(req turn.Request) turn.Result {
+		step := consoleapi.StepProcess{ID: "repair", Agent: "builder", Node: "node-a", Tools: []consoleapi.ToolCall{{Kind: "shell", Name: "install", Status: "completed"}}}
+		slow.UpdateExecutionStep(req.Source.ConversationID, req.Source.MessageID, "task", step)
+		model.StepProgress("task", "repair", "install", "builder", "node-a", view.Progress{Tools: []view.Tool{{Kind: "shell", Name: "install", Status: view.ToolCompleted}}})
+		return turn.Result{Title: "修复", Text: "done"}
+	}
+	slow = New(h, "ou_owner", model)
 	reply, err := slow.Send(context.Background(), "main", "/repair fixer")
 	if err != nil {
 		t.Fatal(err)

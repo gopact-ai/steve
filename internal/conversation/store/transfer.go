@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -23,17 +23,17 @@ func transferExchange(e *queuedExchange) TransferExchange {
 // ProjectTransfer is a durable domain snapshot, without process contexts or
 // live callback waiters. Callers must stop the service before importing it.
 type ProjectTransfer struct {
-	Schema        int                                   `json:"schema"`
-	Project       string                                `json:"project"`
-	Conversations []string                              `json:"conversations"`
-	Replies       map[string][]consoleapi.Reply         `json:"replies"`
-	Meta          map[string]Meta                       `json:"meta"`
-	Exchanges     map[string][]TransferExchange         `json:"exchanges"`
-	Questions     map[string]consoleapi.PendingQuestion `json:"questions"`
+	Schema        int                                        `json:"schema"`
+	Project       string                                     `json:"project"`
+	Conversations []string                                   `json:"conversations"`
+	Replies       map[string][]conversationapi.Reply         `json:"replies"`
+	Meta          map[string]Meta                            `json:"meta"`
+	Exchanges     map[string][]TransferExchange              `json:"exchanges"`
+	Questions     map[string]conversationapi.PendingQuestion `json:"questions"`
 }
 
 func loadTranscript(doc ledger.Doc) (transcript, error) {
-	out := transcript{Replies: map[string][]consoleapi.Reply{}, Meta: map[string]Meta{}, Exchanges: map[string][]*queuedExchange{}, Questions: map[string]consoleapi.PendingQuestion{}}
+	out := transcript{Replies: map[string][]conversationapi.Reply{}, Meta: map[string]Meta{}, Exchanges: map[string][]*queuedExchange{}, Questions: map[string]conversationapi.PendingQuestion{}}
 	raw, ok, err := doc.Load()
 	if err != nil {
 		return out, err
@@ -54,7 +54,7 @@ func loadTranscript(doc ledger.Doc) (transcript, error) {
 		out.Exchanges = map[string][]*queuedExchange{}
 	}
 	if out.Questions == nil {
-		out.Questions = map[string]consoleapi.PendingQuestion{}
+		out.Questions = map[string]conversationapi.PendingQuestion{}
 	}
 	return out, nil
 }
@@ -77,7 +77,7 @@ func ExportProjectDocument(doc ledger.Doc, project string, conversations []strin
 }
 
 func exportProject(saved transcript, project string, conversations []string) (ProjectTransfer, error) {
-	out := ProjectTransfer{Schema: 1, Project: project, Replies: map[string][]consoleapi.Reply{}, Meta: map[string]Meta{}, Exchanges: map[string][]TransferExchange{}, Questions: map[string]consoleapi.PendingQuestion{}}
+	out := ProjectTransfer{Schema: 1, Project: project, Replies: map[string][]conversationapi.Reply{}, Meta: map[string]Meta{}, Exchanges: map[string][]TransferExchange{}, Questions: map[string]conversationapi.PendingQuestion{}}
 	if project == "" {
 		return out, errors.New("project is required")
 	}
@@ -185,7 +185,7 @@ func mergeProject(saved *transcript, in ProjectTransfer) error {
 		}
 		allowed[id] = true
 	}
-	existingReplies := map[string]consoleapi.Reply{}
+	existingReplies := map[string]conversationapi.Reply{}
 	for _, list := range saved.Replies {
 		for _, r := range list {
 			existingReplies[r.ID] = r
@@ -225,11 +225,11 @@ func mergeProject(saved *transcript, in ProjectTransfer) error {
 					return errors.New("imported material crosses project boundary")
 				}
 			}
-			if e.State == consoleapi.ExchangeRunning {
-				e.State = consoleapi.ExchangeFailed
+			if e.State == conversationapi.ExchangeRunning {
+				e.State = conversationapi.ExchangeFailed
 				if e.Receipt == nil {
 					e.ReplyID = "r-transfer-" + e.ID
-					e.Receipt = &consoleapi.Reply{ID: e.ReplyID, At: e.StartedAt, Conversation: conversation, ProjectID: in.Project, ExchangeID: e.ID, Kind: "reply", Text: "execution interrupted by transfer", Error: "execution interrupted by transfer"}
+					e.Receipt = &conversationapi.Reply{ID: e.ReplyID, At: e.StartedAt, Conversation: conversation, ProjectID: in.Project, ExchangeID: e.ID, Kind: "reply", Text: "execution interrupted by transfer", Error: "execution interrupted by transfer"}
 					if old, ok := existingReplies[e.ReplyID]; ok && !reflect.DeepEqual(old, *e.Receipt) {
 						return fmt.Errorf("reply %s conflicts", e.ReplyID)
 					} else if !ok {

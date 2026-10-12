@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
@@ -21,7 +21,7 @@ func (s *Service) DispatchResume(conversation string, admission task.ResumeAdmis
 	if e == nil || e.ResumeAdmission != admission {
 		return fmt.Errorf("resume input %s is not accepted", admission.ID)
 	}
-	if e.State != consoleapi.ExchangeQueued {
+	if e.State != conversationapi.ExchangeQueued {
 		return nil
 	}
 	return s.startNextLocked(e.Conversation)
@@ -44,9 +44,9 @@ func (s *Service) checkResumeLocked(e *queuedExchange) error {
 func (s *Service) rejectResumeLocked(e *queuedExchange, cause error) error {
 	previous := *e
 	previousReplies := s.replies[e.Conversation]
-	reply := consoleapi.Reply{Conversation: e.Conversation, ExchangeID: e.ID, Kind: "reply", Text: i18n.New(i18n.FromLang(e.Locale)).T(i18n.ConsoleResumeRefused, e.ExpectedTask), Error: cause.Error(), At: time.Now().UTC()}
+	reply := conversationapi.Reply{Conversation: e.Conversation, ExchangeID: e.ID, Kind: "reply", Text: i18n.New(i18n.FromLang(e.Locale)).T(i18n.ConsoleResumeRefused, e.ExpectedTask), Error: cause.Error(), At: time.Now().UTC()}
 	reply = s.recordLocked(reply)
-	e.State, e.Receipt = consoleapi.ExchangeFailed, &reply
+	e.State, e.Receipt = conversationapi.ExchangeFailed, &reply
 	if err := s.save(); err != nil {
 		*e = previous
 		s.replies[e.Conversation] = previousReplies

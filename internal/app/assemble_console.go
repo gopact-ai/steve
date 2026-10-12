@@ -11,15 +11,20 @@ import (
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/datalevel"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/localtoken"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/sameorigin"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
+	steveview "github.com/gopact-ai/steve/internal/view"
 )
 
 func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, identity homeAssembly, machines fleetAssembly, work executionAssembly, planning plansAssembly, projection readModelAssembly) (consoleAssembly, error) {
@@ -73,6 +78,7 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 	// The console: the owner acting from the page, through this same
 	// coordinator. Notices anchored on the console stay on the page.
 	cons := console.New(coordinator, cfg.EffectiveOwnerID(), view)
+	wireExecutionHistory(stepRunner, tasks, cons, view)
 	cons.SetRecoveryQuiet(time.Duration(cfg.Gateway.RecoveryQuiet))
 	if environment != nil {
 		cons.EnableRetainedRecovery(ctx)
@@ -140,6 +146,24 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 		manager.Stop()
 	})
 	return &consoleValues{admin: admin, cons: cons, dashboard: dashboard, materials: materials, reconciliations: reconciliations}, nil
+}
+
+func wireExecutionHistory(stepRunner *exec.AgentRunner, tasks *task.Store, cons *console.Service, view *readmodel.Model) {
+	// Execution history consumes the runner directly, before the optional UI
+	// stream can throttle or discard snapshots. PlanMessageID is frozen at creation.
+	stepRunner.SetObserver(func(req exec.StepRequest, p steveview.Progress, ended bool) {
+		if tracked, ok := tasks.Header(req.TaskID); ok && tracked.Transport == "console" && tracked.PlanMessageID != "" {
+			progress := conversationapi.FromProgress(p)
+			progress.Agent, progress.Node = req.Agent, req.Node
+			cons.UpdateExecutionStep(tracked.Channel, tracked.PlanMessageID, req.TaskID,
+				conversationapi.FromStepProgress(req.PlanID+"/"+req.StepID, progress, conversationapi.StepInfo{}))
+		}
+		if ended {
+			view.StepEnded(req.TaskID, req.PlanID, req.StepID, req.Agent, req.Node, p)
+		} else {
+			view.StepProgress(req.TaskID, req.PlanID, req.StepID, req.Agent, req.Node, p)
+		}
+	})
 }
 
 // registryLevels reads a machine's data level from nodes; a machine the

@@ -4,8 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
-	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 )
 
 // Seal closes a conversation to new work while it is being deleted, so
@@ -17,14 +16,14 @@ func (s *Service) Seal(conversation string) (func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing || s.maintenance {
-		return nil, consoleapi.ErrConsoleClosing
+		return nil, conversationapi.ErrConsoleClosing
 	}
 	if s.sealed[conversation] {
-		return nil, fmt.Errorf("%w: %s is being deleted", consoleapi.ErrBusy, conversation)
+		return nil, fmt.Errorf("%w: %s is being deleted", conversationapi.ErrBusy, conversation)
 	}
 	for _, e := range s.exchanges[conversation] {
-		if e.State == consoleapi.ExchangeRunning || e.State == consoleapi.ExchangeQueued {
-			return nil, fmt.Errorf("%w: %s has a line %s", consoleapi.ErrBusy, conversation, e.State)
+		if e.State == conversationapi.ExchangeRunning || e.State == conversationapi.ExchangeQueued {
+			return nil, fmt.Errorf("%w: %s has a line %s", conversationapi.ErrBusy, conversation, e.State)
 		}
 	}
 	if s.sealed == nil {
@@ -52,16 +51,16 @@ func (s *Service) Discard(conversation string) error {
 		return fmt.Errorf("no conversation %q", conversation)
 	}
 	for _, e := range s.exchanges[conversation] {
-		if e.State == consoleapi.ExchangeRunning || e.State == consoleapi.ExchangeQueued {
-			return fmt.Errorf("%w: %s has a line %s", consoleapi.ErrBusy, conversation, e.State)
+		if e.State == conversationapi.ExchangeRunning || e.State == conversationapi.ExchangeQueued {
+			return fmt.Errorf("%w: %s has a line %s", conversationapi.ErrBusy, conversation, e.State)
 		}
 		delete(s.processes, e.ID)
 	}
 	previous := transcript{
-		Replies:   map[string][]consoleapi.Reply{conversation: s.replies[conversation]},
+		Replies:   map[string][]conversationapi.Reply{conversation: s.replies[conversation]},
 		Meta:      map[string]Meta{conversation: s.meta[conversation]},
 		Exchanges: map[string][]*queuedExchange{conversation: s.exchanges[conversation]},
-		Questions: map[string]consoleapi.PendingQuestion{},
+		Questions: map[string]conversationapi.PendingQuestion{},
 	}
 	for id, q := range s.questions {
 		if q.Conversation == conversation {
@@ -91,7 +90,7 @@ func (s *Service) Discard(conversation string) error {
 		}
 	}
 	if s.model != nil {
-		s.model.Publish(readmodel.Event{At: time.Now().UTC(), Kind: "console.deleted", Conversation: conversation})
+		s.model.Publish(conversationapi.Event{At: time.Now().UTC(), Kind: "console.deleted", Conversation: conversation})
 	}
 	return nil
 }

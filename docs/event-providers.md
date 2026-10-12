@@ -23,8 +23,9 @@ The owner uses **Connections & Events → Connections** or
 The response contains `grant` and a bearer `token`. Only a credential digest is
 stored; the credential is returned once. Repeating enrollment with the same
 key and declaration returns the existing grant with an empty token. A changed
-declaration conflicts. After response loss, revoke the old connection and enroll
-with a new key. Do not pass an owner token to a provider/client. Connections
+enrollment declaration conflicts. The connection's ID and principal remain its
+logical identity when credentials or scopes change; do not reinstall a provider
+to recover a lost secret. Do not pass an owner token to a provider/client. Connections
 cannot use `/console/*`; owner tokens cannot substitute for connection credentials
 on `/services/*`. Revocation applies to new requests and is reread inside protected
 transactions and Work admission.
@@ -34,6 +35,104 @@ Native project grants and existing channel actor IDs retain their old meanings.
 Connection IDs are separate principals; matching a native actor's string confers
 no authority. Work is explicitly delegated owner intelligence within a named
 conversation/project pair, not a new external user's identity.
+
+Owners rotate a lost or compromised credential with
+`POST /console/connections/{id}/credential`:
+
+```json
+{"revision":1,"idempotency_key":"recover-mail-credential-1"}
+```
+
+Use the grant's `credential_revision` as `revision`. The response contains the
+same `grant` identity and a replacement `token`, returned once. The old token and
+requests authenticated with its old generation lose authority inside protected
+transactions. An identical rotation retry returns an empty token without
+rotating again. If that response was lost, read the grant's current revision and
+rotate again with a new operation key. Existing event IDs, subscriptions, claims,
+Work and client registrations retain their identities. Accepted background
+records recheck their live grant scope rather than inheriting a bearer secret.
+Legacy connections and their string credential receipts remain valid at
+revision zero until explicitly rotated.
+
+`PUT /console/connections/{id}/scope` edits a stable connection's complete scope:
+
+```json
+{
+  "revision":1,
+  "name":"Mail provider",
+  "event_types":["mail.received"],
+  "work":{"console:mail":"scratch"},
+  "capabilities":[]
+}
+```
+
+Use `scope_revision`, which is independent of credential revisions. Omitted
+scope collections remove those delegations. The connection kind, ID and principal
+stay fixed. An identical lost-response save is idempotent; a stale changed save
+returns 409. Native client grants can advertise only their own client ID (empty
+`client` is filled with that ID). Enrollment retries keep their original request
+receipt and return the current grant. Scope edits, enrollment, rotation and
+retirement have secret-free audit records at `GET /console/connection-audit`.
+Revocation retires a connection; rotation or scope editing cannot reactivate it.
+
+## Provider discovery and health
+
+An externally managed provider can register its plugin metadata and versioned
+event contracts with `POST /services/provider/register`:
+
+```json
+{
+  "generation":0,
+  "plugin_id":"mail.host",
+  "version":"1.0.0",
+  "events":[{
+    "type":"mail.received",
+    "version":"1",
+    "name":"Email received",
+    "description":"A newly received mailbox message",
+    "i18n":{
+      "zh-CN":{"name":"收到邮件","description":"邮件插件报告收到一封新邮件。"}
+    },
+    "schema":{"type":"object","properties":{"subject":{"type":"string"}}}
+  }]
+}
+```
+
+Registration stays attached to the existing grant ID and cannot expand its event
+scope. It describes at most 64 unique event types, each with a bounded JSON Schema
+object. The server canonicalizes schema JSON and computes each contract's digest;
+the same provider/type/version cannot later describe different content, even
+after removal and reintroduction. Bump the contract version for an incompatible
+change. Schemas are discovery metadata; publishers and consumers perform their
+own payload validation. Registration does not install or start plugin code.
+
+`type` is the stable routing identifier. `name`, `description` and `i18n` are
+optional display metadata and may be omitted or empty. `i18n` maps BCP 47 language
+tags to optional `name` and `description` strings. Each field resolves separately:
+the console tries its current language tag, the base language and its regional
+variants, the default field, English (including regional variants), then another
+available translation. The current Chinese console asks
+for `zh-CN`; a `zh` entry can serve the base-language fallback. Nonempty names and
+explanations appear in event history, activity, original-event/Inbox inspection,
+provider declarations and matching subscription editor hints. Empty text adds no
+placeholder; the technical `type` remains visible. Text renders as plain text.
+
+Names are bounded to 256 bytes and descriptions to 2,048 bytes per language.
+A contract supports at most 16 translations and 16 KiB of name/translation
+metadata; combined presentation per registration is bounded to 256 KiB. Language
+tags are canonicalized and duplicate equivalent nonempty tags are rejected.
+Display metadata is part of the immutable contract: bump the event version when
+changing its meaning or translations. Omitted metadata preserves legacy digests.
+
+Reconnect using the last observed registration generation. An identical
+lost-response retry returns that registration. Heartbeat every 15 seconds with
+`POST /services/provider/heartbeat` and `{"generation":1}`; availability expires
+after 45 seconds. Credential rotation retains this generation. A stale generation
+cannot refresh another provider process's health. `GET /services/provider` returns
+the caller's declaration; owners inspect keyset pages at
+`GET /console/event-providers?cursor=...`, including current online/offline/retired
+state. Existing providers without a registration keep their unversioned protocol
+and are reported as unregistered rather than guessed to be offline.
 
 ## Publish, subscribe and handle
 
@@ -48,6 +147,16 @@ JSON data (maximum 256 KiB):
   "payload": {"from": "sender@example.invalid", "subject": "Meeting"}
 }
 ```
+
+Registered providers may include `"schema_version":"1"` to select the advertised
+contract explicitly; omission selects the current declaration. First acceptance
+freezes its version, name, description, translations, schema and digest on the
+event's `contract`. Later declarations do not rewrite historical explanations.
+An unregistered legacy provider may omit the version. A withdrawn or incompatible
+explicit version cannot create a new event. Retrying the same immutable source/key
+request returns its original contract, even after a newer provider registration;
+the server-selected digest is not part of the publisher's request fingerprint.
+Changing an explicitly supplied version under an accepted key returns 409.
 
 The authenticated source is fixed by the server. Reusing the key with changed
 content or authority returns 409; the same immutable request returns its original
@@ -95,6 +204,100 @@ or explicitly reprocess an event after adding a subscription with
 under existing revisions; a new revision creates a new delivery. Retrying a failed
 or unknown delivery is an explicit operator action and replaces its claim token.
 Do not retry an uncertain external effect without reconciling the original action.
+
+## Observe event flow in the console
+
+**Connections & Events → Message Bus** shows routing backlog, deliveries awaiting
+claim, claimed/accepted processing, unknown effects and open Inbox entries. These
+counts have different units: one event may create several deliveries and attention
+entries. External intake limits and service hot/compressed storage are shown
+separately. A failed read does not display healthy zero counts. Queue/activity
+reads refresh every two seconds; Inbox, limits and storage refresh every ten
+seconds while the page is visible. Hidden pages do not continue polling.
+
+The dashboard uses compact queue metrics, a live flow instrument, plugin health,
+and a four-row activity digest. Recent events come from the latest 32 immutable
+intake receipts, with consecutive equal source/type/subject/routing states
+grouped together. Each group inspects its latest original event; the repeat count
+describes that bounded sample, not total throughput. Needs Attention reads up to
+four unresolved failed/unknown deliveries from the complete open Inbox index,
+including older compressed failures outside the recent window. A fifth match
+sets the "more" indicator. Resolving an Inbox entry removes it from this digest.
+
+The owner-only `GET /console/event-activity` reads both projections in one
+snapshot and omits payloads, receipts and claim credentials. It refreshes every
+ten seconds while visible. View All opens the complete paginated React Aria /
+Untitled UI event/delivery tables; dashboard polling stops in this records view.
+Capacity and storage live in a disclosure; original events, frozen subscriptions
+and receipts open in the inspector. The instrument has no demo playback controls
+or explanatory legend.
+
+The **Event Flow** instrument uses a thin neon transfer channel with adaptive columns.
+The light cores inside and outside the queue have the same size. Intakes move
+continuously across the entry boundary, then light successive slots toward the
+right-hand backlog. A claim glides out from the current head; the remaining
+lights shift right after it clears. Departures share a rail speed and wait for
+physical clearance, reserving room for the widest core a contracting grid can
+produce. This keeps outgoing lights separate during bursts and density changes.
+Appearance, handoff and departure fade are
+continuous, with browser-frame updates rather than stepped timers. Idle queues
+stop requesting animation frames. Layout is measured only at initialization and
+resize, and resize reconciles to the latest snapshot.
+
+At rest, ordinary backlogs retain one light per waiting delivery. Columns grow
+with the observed backlog and light cores shrink smoothly, with extra room for
+incoming events. The queue occupies 86% of the track. Density changes preserve
+in-flight packets; an eight-second low-water delay prevents repeated zooming
+as producers and consumers overlap. Dense grids retain the same browser-frame
+updates and a bounded traversal time.
+
+Only when individual lights would become narrower than a readable pixel does
+the display group deliveries. A small `×N` beside the exact pending count reveals
+the scale; the leading light retains its fractional width and consumer shifts
+use the same scale. The grid is bounded by available pixels and 1,024 columns.
+The positional gradient runs from red on the left to blue on the right. Counters
+show the current snapshot immediately; lights replay observed activity with a
+short delay and reconcile to that snapshot. Fan-out, unmatched publications and
+omitted activity never determine the durable count.
+
+This is a view of the waiting backlog, not a capacity progress bar. Capacity and
+storage remain in the provider disclosure. The flow snapshot also returns the
+global unfinished-delivery limit as `capacity`; claimed, accepted and unknown
+deliveries share that limit. Source limits and unfinished-event admission remain
+separate server checks.
+Unknown effects retain a separate amber count. Its owner-only `GET /console/event-flow` reads queue counts,
+the latest 64 immutable event intake receipts and 64 claim fingerprints in one
+ledger snapshot every two seconds. It never fetches payloads or claim credentials.
+Read indexes bound recent-record lookup without decompressing archived events.
+Queue counters share this snapshot with the graph.
+
+Particles retain their occurrence timing within each sample, so independent
+input/output can overlap rather than playing exclusive batches. This is bounded
+observability with a short delay, not a lossless transport or rate measurement:
+activity exceeding a sample window may be omitted. First load, reconnect and
+return from a hidden tab establish a baseline rather than replaying old activity.
+Acknowledgment updates do not create a second claim particle. Reduced-motion preferences keep a static queue while reads continue.
+The opt-in `STEVE_FIXTURE_BUS_MOTION=1` disposable acceptance fixture runs a real
+producer and consumer concurrently with different rates; production never injects
+preview events.
+
+The **Events** journal includes routed and unrouted envelopes, including compressed
+history. Its owner-only `GET /console/business-events?cursor=...` pages contain at
+most 32 envelopes and omit payloads and contract schemas; they include the original
+contract's display metadata. Activity groups do not merge different contract
+digests. **Deliveries** includes successful, pending,
+failed and unknown records. Inspection uses owner-only
+`GET /console/event-deliveries/{id}` and `GET /console/business-events/{id}` to show
+the original event, frozen subscription version, destination, claim evidence and
+receipt. Drawer links and page cursors survive reload. The journal is a stable
+ID-keyset browse, not a live chronological log. Viewing never claims, acknowledges,
+reprocesses or retries a delivery; those decisions remain in Inbox/subscriptions.
+
+"Routed" means subscription fanout committed. "Intelligent Work Accepted" means
+the Work service admitted a task; its receipt alone does not prove completion.
+An Inbox subscription is labelled "Sent to Inbox", not consumer completion. Plugin
+discovery includes enrolled producers/consumers without health registration and
+labels their health unregistered rather than offline.
 
 ## Call the user's intelligence
 

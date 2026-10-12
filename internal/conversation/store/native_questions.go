@@ -5,14 +5,14 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/acp"
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
-func nativeQuestionMatches(ctx context.Context, binding consoleapi.PendingQuestion, sessionID, requestID string) error {
+func nativeQuestionMatches(ctx context.Context, binding conversationapi.PendingQuestion, sessionID, requestID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -21,26 +21,26 @@ func nativeQuestionMatches(ctx context.Context, binding consoleapi.PendingQuesti
 		!nodewire.IsManagedSession(sessionID) || !strings.HasPrefix(requestID, "nq_") ||
 		binding.SessionID != sessionID || binding.RequestID != requestID || sourceSession != sessionID || sourceRequest != requestID ||
 		binding.Project != source.ProjectID || binding.TaskID != source.TaskID || binding.AttemptID != source.AttemptID {
-		return consoleapi.ErrInvalidAnswer
+		return conversationapi.ErrInvalidAnswer
 	}
 	return nil
 }
 
 // RequestNativeQuestion exposes an authenticated node callback in its parent
 // conversation. It creates no task, prompt or execution authorization.
-func (s *Service) RequestNativeQuestion(ctx context.Context, binding consoleapi.PendingQuestion, question view.Question) (view.Answer, error) {
+func (s *Service) RequestNativeQuestion(ctx context.Context, binding conversationapi.PendingQuestion, question view.Question) (view.Answer, error) {
 	if err := nativeQuestionMatches(ctx, binding, question.SessionID, question.RequestID); err != nil {
 		return view.Answer{}, err
 	}
 	if question.Kind != "" && question.Kind != "question" && question.Kind != "permission" {
-		return view.Answer{}, consoleapi.ErrInvalidAnswer
+		return view.Answer{}, conversationapi.ErrInvalidAnswer
 	}
 	return s.askUser(ctx, binding, question, true)
 }
 
 // RequestNativePermission requires the original node's explicit permission
 // options. The service derives the principal; a caller cannot supply an owner.
-func (s *Service) RequestNativePermission(ctx context.Context, binding consoleapi.PendingQuestion, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
+func (s *Service) RequestNativePermission(ctx context.Context, binding conversationapi.PendingQuestion, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 	if err := nativeQuestionMatches(ctx, binding, ask.SessionID, ask.RequestID); err != nil {
 		return permission.Choose(false, ask.Options), err
 	}
@@ -52,13 +52,13 @@ func (s *Service) RequestNativePermission(ctx context.Context, binding consoleap
 // passes as binding; a node-owned session and a node callback have their
 // own entry and are refused here. The question is bound to the execution,
 // not to an exchange, because the asker can outlive the turn that started it.
-func localQuestionMatches(ctx context.Context, binding consoleapi.PendingQuestion) error {
+func localQuestionMatches(ctx context.Context, binding conversationapi.PendingQuestion) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if _, _, _, native := harness.NativeQuestionSource(ctx); native || binding.Conversation == "" || binding.ExchangeID != "" ||
 		binding.TaskID == "" || binding.AttemptID == "" || binding.SessionID == "" || nodewire.IsManagedSession(binding.SessionID) {
-		return consoleapi.ErrInvalidAnswer
+		return conversationapi.ErrInvalidAnswer
 	}
 	return nil
 }
@@ -66,18 +66,18 @@ func localQuestionMatches(ctx context.Context, binding consoleapi.PendingQuestio
 // RequestLocalQuestion puts a question from a hub-local execution — a
 // delegated child or a plan step — before the owner in the conversation
 // binding names, and waits until it is answered or the execution stops.
-func (s *Service) RequestLocalQuestion(ctx context.Context, binding consoleapi.PendingQuestion, question view.Question) (view.Answer, error) {
+func (s *Service) RequestLocalQuestion(ctx context.Context, binding conversationapi.PendingQuestion, question view.Question) (view.Answer, error) {
 	if err := localQuestionMatches(ctx, binding); err != nil {
 		return view.Answer{}, err
 	}
 	if question.Kind != "" && question.Kind != "question" && question.Kind != "permission" {
-		return view.Answer{}, consoleapi.ErrInvalidAnswer
+		return view.Answer{}, conversationapi.ErrInvalidAnswer
 	}
 	return s.askUser(ctx, binding, localQuestion(question, binding.SessionID), true)
 }
 
 // RequestLocalPermission is RequestLocalQuestion for a tool permission.
-func (s *Service) RequestLocalPermission(ctx context.Context, binding consoleapi.PendingQuestion, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
+func (s *Service) RequestLocalPermission(ctx context.Context, binding conversationapi.PendingQuestion, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 	if err := localQuestionMatches(ctx, binding); err != nil {
 		return permission.Choose(false, ask.Options), err
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/state"
 )
@@ -39,7 +40,7 @@ func (c commands) historyCmd(req Request, selected agent.Agent, rest string) (Re
 		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel), Cause: admissionErr}
 	}
 	defer release()
-	restored, err := c.store.RestoreSession(conversationID, selected.ID, index)
+	restored, err := c.store.RestoreSessionChecked(context.Background(), conversationID, selected.ID, index, c.controls.Guard(req, project.RoleWrite))
 	if err != nil {
 		if errors.Is(err, state.ErrAbandonedContext) {
 			return Result{}, UserError{Text: c.text.T(i18n.HistoryAbandoned)}

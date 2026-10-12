@@ -160,6 +160,10 @@ func (s *Service) Lost(ctx context.Context, id string, cause error) error {
 // keeps it as done, "new" says it never did and the call may be made
 // again.
 func (s *Service) Resolve(ctx context.Context, id, verdict, by string) (Intent, error) {
+	return s.ResolveChecked(ctx, id, verdict, by, nil)
+}
+
+func (s *Service) ResolveChecked(ctx context.Context, id, verdict, by string, guard func(*ledger.Tx) error) (Intent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	to := State("")
@@ -185,14 +189,23 @@ func (s *Service) Resolve(ctx context.Context, id, verdict, by string) (Intent, 
 	if it.State != Unknown {
 		return Intent{}, ErrNotUnknown
 	}
-	if err := s.move(ctx, id, Unknown, to, nil, "resolved as "+verdict+" by "+by); err != nil {
+	if err := s.moveChecked(ctx, id, Unknown, to, nil, "resolved as "+verdict+" by "+by, guard); err != nil {
 		return Intent{}, err
 	}
 	return s.Get(ctx, id)
 }
 
 func (s *Service) move(ctx context.Context, id string, from, to State, receipt json.RawMessage, note string) error {
+	return s.moveChecked(ctx, id, from, to, receipt, note, nil)
+}
+
+func (s *Service) moveChecked(ctx context.Context, id string, from, to State, receipt json.RawMessage, note string, guard func(*ledger.Tx) error) error {
 	_, err := s.l.Transition(ctx, id, string(from), string(to), "intent", nil, nil, func(tx *ledger.Tx, op *ledger.Operation) error {
+		if guard != nil {
+			if err := guard(tx); err != nil {
+				return err
+			}
+		}
 		var it Intent
 		if err := json.Unmarshal(op.Data, &it); err != nil {
 			return err

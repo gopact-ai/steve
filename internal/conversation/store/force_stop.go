@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -13,7 +13,7 @@ type forceStopDriver interface {
 	ForceStopAttempt(context.Context, string, string, uint64) error
 }
 
-var _ consoleapi.ForceStops = (*Service)(nil)
+var _ conversationapi.ForceStops = (*Service)(nil)
 
 func (s *Service) SetForceStops(control forceStopDriver) { s.forceStops = control }
 

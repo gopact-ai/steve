@@ -33,12 +33,32 @@ type Acknowledgement struct {
 }
 
 func saveDelivery(tx *ledger.Tx, d Delivery) error {
+	old, found, err := durable.Get[Delivery](tx, DeliveryKind, d.ID)
+	if err != nil {
+		return err
+	}
+	if found {
+		d.Revision = old.Revision + 1
+	} else {
+		d.Revision = 1
+	}
 	d.UpdatedAt = time.Now().UTC()
 	if err := tx.PutBinding(DeliveryKind, d.ID, d); err != nil {
 		return err
 	}
 	for _, kind := range []string{deliveryQueue(d), ActiveKind, TrackingKind} {
 		if err := durable.Delete(tx, kind, d.ID); err != nil {
+			return err
+		}
+	}
+	for _, reason := range []string{StateFailed, StateUnknown, "waiting", StateCancelled} {
+		if reason == d.State {
+			continue
+		}
+		if reason == "waiting" && d.State == StatePending {
+			continue
+		}
+		if err := resolveInboxTx(tx, d.EventID, d.ID, reason); err != nil {
 			return err
 		}
 	}
@@ -49,7 +69,7 @@ func saveDelivery(tx *ledger.Tx, d Delivery) error {
 		return tx.PutBinding(ActiveKind, d.ID, d.ID)
 	case StateAccepted:
 		return tx.PutBinding(TrackingKind, d.ID, d.ID)
-	case StateFailed, StateUnknown:
+	case StateFailed, StateUnknown, StateCancelled:
 		return putInbox(tx, d.EventID, d.ID, d.State, d.Detail)
 	}
 	return nil
@@ -80,13 +100,15 @@ func (s *Service) claim(ctx context.Context, p identity.Principal, id string) (o
 		}
 		if !found || !current.Enabled {
 			d.State = StateCancelled
+			d.Detail = "Subscription was disabled before consumer dispatch"
 			return saveDelivery(tx, d)
 		}
 		d.State = StateClaimed
 		d.Token = identity.RandomID()
 		d.Incarnation = s.Book.Incarnation()
 		d.Runtime = s.Runtime
-		d.ClaimUntil = time.Now().UTC().Add(time.Minute)
+		d.ClaimedAt = time.Now().UTC()
+		d.ClaimUntil = d.ClaimedAt.Add(time.Minute)
 		if err := saveDelivery(tx, d); err != nil {
 			return err
 		}
@@ -203,11 +225,28 @@ func (s *Service) Retry(ctx context.Context, id string) error {
 		if !found || d.State != StateFailed && d.State != StateUnknown {
 			return ledger.ErrConflict
 		}
+		if err := s.availableConsumerTx(tx, d); err != nil {
+			return err
+		}
+		event, err := restoreEventTx(tx, d.EventID)
+		if err != nil {
+			return err
+		}
+		incoming := 1
+		if d.State == StateUnknown {
+			incoming = 0
+		}
+		if err := durable.CheckStateCapacityTx(tx, DeliveryKind, "$.rule.handler", d.Rule.Handler, []string{StatePending, StateClaimed, StateAccepted, StateUnknown}, s.Limits, incoming); err != nil {
+			return err
+		}
 		d.State = StatePending
 		d.Token = ""
 		d.Receipt = ""
 		d.Detail = ""
-		return saveDelivery(tx, d)
+		if err := saveDelivery(tx, d); err != nil {
+			return err
+		}
+		return s.checkCapacityTx(tx, event.Source, 0)
 	})
 }
 

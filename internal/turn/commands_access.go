@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 )
@@ -20,6 +21,9 @@ func (c commands) grantCmd(ctx context.Context, req Request, rest string) (Resul
 	fields := strings.Fields(rest)
 	switch len(fields) {
 	case 1:
+		if err := c.require(ctx, fields[0], req.Actor.ID, project.RoleAdmin); err != nil {
+			return Result{}, err
+		}
 		p, ok, err := c.projects.Get(ctx, fields[0])
 		if err != nil {
 			return Result{}, err
@@ -49,7 +53,12 @@ func (c commands) grantCmd(ctx context.Context, req Request, rest string) (Resul
 		if err != nil {
 			return Result{}, err
 		}
-		g, err := c.projects.Grant(ctx, fields[0], principal, project.Role(fields[2]), by)
+		g, err := c.projects.GrantChecked(ctx, fields[0], principal, project.Role(fields[2]), by, func(tx *ledger.Tx) error {
+			if c.owners.Configuration().Accounts == nil {
+				return nil
+			}
+			return c.controls.CheckProjectTx(tx, req, fields[0], project.RoleAdmin)
+		})
 		if err != nil {
 			if user, isUser := err.(UserError); isUser {
 				return Result{}, user
@@ -73,17 +82,17 @@ func (c commands) decideCmd(ctx context.Context, req Request, cmd protocol.Comma
 	}
 	c.disclosures.mu.Lock()
 	h, ok := c.disclosures.byID[id]
-	if ok {
-		delete(c.disclosures.byID, id)
-	}
 	c.disclosures.mu.Unlock()
 	if !ok {
 		return Result{Title: title, Text: c.text.T(i18n.DisclosureUnknown, id)}, nil
 	}
 	approved := cmd == protocol.CommandApprove
-	if err := c.projects.ResolveDisclosure(ctx, id, approved, req.Actor.ID); err != nil {
+	if err := c.projects.ResolveDisclosureChecked(ctx, id, approved, req.Actor.ID, c.controls.OwnerGuard(req)); err != nil {
 		return Result{}, err
 	}
+	c.disclosures.mu.Lock()
+	delete(c.disclosures.byID, id)
+	c.disclosures.mu.Unlock()
 	if !approved {
 		return Result{Title: title, Text: c.text.T(i18n.DisclosureDenied, id)}, nil
 	}
@@ -113,7 +122,7 @@ func (c commands) effectsCmd(ctx context.Context, req Request, rest string) (Res
 		if !c.isOwner(req) {
 			return Result{Title: title, Text: c.text.T(i18n.OwnerOnly)}, nil
 		}
-		it, err := c.intents.Resolve(ctx, fields[0], fields[1], req.Actor.ID)
+		it, err := c.intents.ResolveChecked(ctx, fields[0], fields[1], req.Actor.ID, c.controls.OwnerGuard(req))
 		if err != nil {
 			return Result{Title: title, Text: err.Error()}, nil
 		}

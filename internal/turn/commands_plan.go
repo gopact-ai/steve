@@ -84,13 +84,21 @@ func (c commands) planCmd(ctx context.Context, req Request, rest string) (Result
 }
 
 // plansCmd lists what has been planned in this conversation, newest first.
-func (c commands) plansCmd(req Request, rest string) Result {
+func (c commands) plansCmd(ctx context.Context, req Request, rest string) (Result, error) {
 	title := c.text.T(i18n.CardPlan)
 	id := strings.TrimSpace(strings.TrimPrefix(rest, "#"))
 	if id != "" {
-		stored, ok := c.plans.Latest(id)
+		list, err := c.controls.PlansFor(ctx, req, id)
+		if err != nil {
+			return Result{}, err
+		}
+		ok := len(list) > 0
+		var stored plan.Plan
+		if ok {
+			stored = list[0]
+		}
 		if !ok {
-			return Result{Title: title, Text: c.text.T(i18n.PlanUnknown, id)}
+			return Result{Title: title, Text: c.text.T(i18n.PlanUnknown, id)}, nil
 		}
 		var b strings.Builder
 		b.WriteString(c.planTree(stored, exec.Outcome{}))
@@ -101,11 +109,14 @@ func (c commands) plansCmd(req Request, rest string) Result {
 				fmt.Fprintf(&b, "\nrev %d · %s · %s", rev.Rev, rev.By, rev.Because)
 			}
 		}
-		return Result{Title: title, Text: b.String()}
+		return Result{Title: title, Text: b.String()}, nil
 	}
-	all := c.plans.List()
+	all, err := c.controls.PlansFor(ctx, req, "")
+	if err != nil {
+		return Result{}, err
+	}
 	if len(all) == 0 {
-		return Result{Title: title, Text: c.text.T(i18n.PlansEmpty, protocol.CommandPlan)}
+		return Result{Title: title, Text: c.text.T(i18n.PlansEmpty, protocol.CommandPlan)}, nil
 	}
 	var b strings.Builder
 	for i, p := range all {
@@ -125,7 +136,7 @@ func (c commands) plansCmd(req Request, rest string) Result {
 		fmt.Fprintf(&b, "**%s** rev %d · %d/%d · %s\n%s",
 			p.ID, p.Rev, done, len(p.Steps), p.By, p.Goal)
 	}
-	return Result{Title: title, Text: b.String()}
+	return Result{Title: title, Text: b.String()}, nil
 }
 
 // fleetCmd answers "what can I actually reach right now". It reads the live

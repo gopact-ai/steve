@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -28,7 +28,7 @@ func (in ProjectTransfer) Remap(taskID, conversation, key func(string) string) (
 		}
 		return fn(id)
 	}
-	reply := func(r consoleapi.Reply) consoleapi.Reply {
+	reply := func(r conversationapi.Reply) conversationapi.Reply {
 		r.Conversation = apply(conversation, r.Conversation)
 		if r.Process != nil {
 			for i := range r.Process.Steps {
@@ -44,7 +44,7 @@ func (in ProjectTransfer) Remap(taskID, conversation, key func(string) string) (
 		return r
 	}
 	replies := out.Replies
-	out.Replies = map[string][]consoleapi.Reply{}
+	out.Replies = map[string][]conversationapi.Reply{}
 	for id, list := range replies {
 		for _, r := range list {
 			mapped := apply(conversation, id)

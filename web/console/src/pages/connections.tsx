@@ -9,6 +9,7 @@ import { Drawer } from "@/components/steve/drawer";
 import { Nothing } from "@/components/steve/ui";
 import { ConnectionEditor } from "@/components/steve/connection-editor";
 import { SubscriptionEditor } from "@/components/steve/subscription-editor";
+import { EventBus } from "@/components/steve/event-bus";
 import { AssistantFeedback, AssistantPager } from "@/components/steve/assistant-projection";
 import { useAssistantPage } from "@/hooks/use-assistant-page";
 import { useI18n } from "@/providers/locale-provider";
@@ -16,18 +17,18 @@ import { useFleet } from "@/lib/fleet";
 import { message } from "@/lib/http";
 import { when } from "@/lib/format";
 import { enrollConnection, revokeConnection, saveSubscription } from "@/lib/api/assistant";
-import type { ClientRegistration, Connection, Subscription } from "@/lib/assistant-types";
+import type { ClientRegistration, Connection, EventProvider, Subscription } from "@/lib/assistant-types";
 
 export function ConnectionsPage() {
     const { t } = useI18n(); const [params, setParams] = useSearchParams();
-    const section = ["connections", "subscriptions", "clients"].includes(params.get("section") || "") ? params.get("section")! : "connections";
+    const section = ["bus", "connections", "subscriptions", "clients"].includes(params.get("section") || "") ? params.get("section")! : "connections";
     return <div className="workbench-page flex min-w-0 flex-col">
-        <PageHeader title={t("assistant.title")} description={t("assistant.description")}>
+        <PageHeader title={t("assistant.title")} description={section === "bus" ? undefined : t("assistant.description")}>
             <Tabs selectedKey={section} onSelectionChange={(key) => setParams({ section: String(key) })}>
-                <Tabs.List type="underline" size="sm" items={[{ id: "connections", label: t("assistant.connections") }, { id: "subscriptions", label: t("assistant.subscriptions") }, { id: "clients", label: t("assistant.clients") }]}>{(item) => <Tabs.Item {...item} />}</Tabs.List>
+                <Tabs.List type="underline" size="sm" aria-label={t("assistant.title")} className="flex-wrap" items={[{ id: "bus", label: t("assistant.bus") }, { id: "connections", label: t("assistant.connections") }, { id: "subscriptions", label: t("assistant.subscriptions") }, { id: "clients", label: t("assistant.clients") }]}>{(item) => <Tabs.Item {...item} />}</Tabs.List>
             </Tabs>
         </PageHeader>
-        <PageBody>{section === "subscriptions" ? <Subscriptions /> : section === "clients" ? <Clients /> : <Connections />}</PageBody>
+        <PageBody>{section === "bus" ? <EventBus /> : section === "subscriptions" ? <Subscriptions /> : section === "clients" ? <Clients /> : <Connections />}</PageBody>
     </div>;
 }
 
@@ -68,6 +69,7 @@ function Connections() {
 function Subscriptions() {
     const { t } = useI18n(); const resource = useAssistantPage<Subscription>("/console/subscriptions");
     const providers = useAssistantPage<Connection>("/console/connections", 15000, "providerCursor");
+    const definitions = useAssistantPage<EventProvider>("/console/event-providers", 15000, "eventProviderCursor");
     const projectRows = useFleet((fleet) => fleet.snap.projects);
     const projects = useMemo(() => projectRows.map((project) => project.id), [projectRows]);
     const [params, setParams] = useSearchParams(); const [initial, setInitial] = useState<Subscription | null>(null);
@@ -85,7 +87,7 @@ function Subscriptions() {
             footer={<AssistantPager next={resource.page?.next || ""} cursor={resource.cursor} onPage={resource.setCursor} disabled={busy || !!resource.error} />}>
             {resource.page?.items.length === 0 ? <Nothing icon={Link01} title={t("assistant.emptyRules")}>{t("assistant.emptyRulesHint")}</Nothing> : <ul className="divide-y divide-secondary">{resource.page?.items.map((rule) => <li key={rule.id} className="flex min-w-0 flex-wrap items-start justify-between gap-3 py-4 first:pt-0 last:pb-0 [content-visibility:auto]"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="break-words text-sm font-semibold">{rule.name}</h3><Badge type="pill-color" color={rule.enabled ? "success" : "gray"} size="sm">{t(rule.enabled ? "assistant.enabled" : "assistant.disabled")}</Badge></div><p className="mt-2 break-all text-sm text-secondary" translate="no">{rule.event_type} → {t(rule.mode === "work" ? "assistant.work" : rule.mode === "provider" ? "assistant.provider" : "assistant.manual")}</p><p className="mt-1 break-all text-xs text-tertiary">{rule.mode === "work" ? `${rule.conversation} · ${rule.project}` : rule.mode === "provider" ? providers.page?.items.find((item) => item.id === rule.handler)?.name || rule.handler : rule.source || "—"}</p>{rule.instruction ? <p className="mt-2 whitespace-pre-wrap break-words text-sm text-secondary">{rule.instruction}</p> : null}</div><Button size="sm" color="secondary" isDisabled={busy || !!resource.error || !!providers.error} onClick={() => open(rule)}>{t("assistant.edit")}</Button></li>)}</ul>}
         </Panel>
-        {editing ? <SubscriptionEditor key={editing.id} initial={editing} projects={projects} providers={providers.page?.items || []} busy={busy} error={error} onClose={close} onSubmit={(body) => void save(body)} /> : null}
+        {editing ? <SubscriptionEditor key={editing.id} initial={editing} projects={projects} providers={providers.page?.items || []} definitions={definitions.error ? [] : definitions.page?.items || []} busy={busy} error={error} onClose={close} onSubmit={(body) => void save(body)} /> : null}
     </>;
 }
 

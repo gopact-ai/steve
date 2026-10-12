@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/conversationapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -33,13 +33,13 @@ func ConfirmedAttemptDeliveryTx(tx ledger.Reader, attemptID, conversation, turnI
 	if row.ID != id || row.Conversation != conversation {
 		return "", false, errors.New("console delivery exchange identity differs")
 	}
-	if row.State != consoleapi.ExchangeDone && row.State != consoleapi.ExchangeFailed || row.Receipt == nil {
+	if row.State != conversationapi.ExchangeDone && row.State != conversationapi.ExchangeFailed || row.Receipt == nil {
 		return "", false, nil
 	}
 	reply := row.Receipt
 	if reply.ID == "" || reply.ID != row.ReplyID || reply.ExchangeID != id || reply.Conversation != conversation ||
 		reply.AttemptID != attemptID || reply.Kind != "reply" || reply.Silent ||
-		(row.State == consoleapi.ExchangeFailed) != (reply.Error != "") {
+		(row.State == conversationapi.ExchangeFailed) != (reply.Error != "") {
 		return "", false, errors.New("console delivery differs from its original native completion")
 	}
 	return reply.ID, true, nil

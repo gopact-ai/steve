@@ -7,6 +7,7 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/conversation"
 	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/eventlog"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -35,6 +36,7 @@ type InputRecord struct {
 	Actor            identity.Account `json:"actor"`
 	Principal        string           `json:"principal"`
 	AccountRevision  uint64           `json:"account_revision"`
+	ChatType         string           `json:"chat_type,omitempty"`
 	Digest           string           `json:"digest"`
 	State            string           `json:"state"`
 	Runtime          string           `json:"runtime"`
@@ -230,7 +232,7 @@ func (s *Engine) admitInput(ctx context.Context, req turnapi.Request) (InputReco
 	if err != nil {
 		return InputRecord{}, false, err
 	}
-	record := InputRecord{ID: id, Address: req.Address(), Actor: identity.Account{Channel: req.Source.Channel, ID: req.Actor.ID}, Digest: digest, State: InputRunning, Runtime: s.Runtime, At: time.Now().UTC()}
+	record := InputRecord{ID: id, Address: req.Address(), Actor: identity.Account{Channel: req.Source.Channel, ID: req.Actor.ID}, Digest: digest, ChatType: string(req.Source.ChatType), State: InputRunning, Runtime: s.Runtime, At: time.Now().UTC()}
 	replay := false
 	err = s.Book.Update(ctx, func(tx *ledger.Tx) error {
 		active, found, err := durable.Get[string](tx, interaction.RuntimeKind, "active")
@@ -242,6 +244,9 @@ func (s *Engine) admitInput(ctx context.Context, req turnapi.Request) (InputReco
 		}
 		account, err := identity.ResolveAccount(tx, record.Actor)
 		if err != nil {
+			return err
+		}
+		if err := conversation.BindRouteTx(tx, record.Address.Conversation, record.Address.Channel); err != nil {
 			return err
 		}
 		record.Principal, record.AccountRevision = account.Principal, account.Revision

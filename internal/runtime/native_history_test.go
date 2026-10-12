@@ -66,6 +66,7 @@ func TestNativeRuntimeCombinesSelectedHistoryWithAdmittedAccessAndSkills(t *test
 	if err != nil || !strings.Contains(string(raw), "approved") || strings.Contains(string(raw), "must-not-start") {
 		t.Fatalf("access filter: %s %v", raw, err)
 	}
+	assertCodexNativeDiscoveryDisabled(t, string(raw))
 	if _, err := os.Stat(filepath.Join(dest, "skills/unselected")); !os.IsNotExist(err) {
 		t.Fatal("old unselected skill imported")
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/clientcap"
+	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/events"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ingress"
@@ -20,7 +21,9 @@ import (
 func (s *Server) SetAssistant(ports *serviceapi.Services) { s.assistant = ports }
 
 func (s *Server) assistantRoutes(mux *http.ServeMux) {
-	for _, path := range []string{"connections", "subscriptions", "inbox", "event-deliveries", "client-capabilities", "client-invocations", "accounts", "grant-migrations", "work-interactions"} {
+	s.connectionLifecycleRoutes(mux)
+	s.stateLifecycleRoutes(mux)
+	for _, path := range []string{"connections", "subscriptions", "inbox", "business-events", "event-deliveries", "client-capabilities", "client-invocations", "accounts", "grant-migrations", "work-interactions"} {
 		mux.HandleFunc("GET /console/"+path, s.guard(s.assistantList))
 	}
 	mux.HandleFunc("POST /console/connections", s.guard(s.assistantEnroll))
@@ -28,6 +31,9 @@ func (s *Server) assistantRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /console/connections/{id}", s.guard(s.assistantRevoke))
 	mux.HandleFunc("PUT /console/subscriptions/{id}", s.guard(s.assistantSubscription))
 	mux.HandleFunc("GET /console/business-events/{id}", s.guard(s.assistantEvent))
+	mux.HandleFunc("GET /console/event-deliveries/{id}", s.guard(s.assistantDelivery))
+	mux.HandleFunc("GET /console/event-flow", s.guard(s.assistantFlow))
+	mux.HandleFunc("GET /console/event-activity", s.guard(s.assistantActivity))
 	mux.HandleFunc("POST /console/business-events/{id}/reprocess", s.guard(s.assistantReprocess))
 	mux.HandleFunc("POST /console/inbox/{id}/resolve", s.guard(s.assistantResolve))
 	mux.HandleFunc("POST /console/event-deliveries/{id}/retry", s.guard(s.assistantRetry))
@@ -56,6 +62,10 @@ func assistantResponse(w http.ResponseWriter, value any, err error) {
 		}
 		if errors.Is(err, ledger.ErrConflict) || errors.Is(err, ledger.ErrStale) || errors.Is(err, ingress.ErrConflict) {
 			status = http.StatusConflict
+		}
+		if errors.Is(err, durable.ErrCapacity) {
+			status = http.StatusTooManyRequests
+			w.Header().Set("Retry-After", "5")
 		}
 		w.WriteHeader(status)
 		writeJSON(w, map[string]string{"error": err.Error()})
@@ -153,6 +163,8 @@ func (s *Server) assistantList(w http.ResponseWriter, r *http.Request) {
 		value, err = s.assistant.Events.InboxEntries(r.Context(), after)
 	case "event-deliveries":
 		value, err = s.assistant.Events.Deliveries(r.Context(), after)
+	case "business-events":
+		value, err = s.assistant.Events.Journal(r.Context(), after)
 	case "client-capabilities":
 		value, err = s.assistant.Clients.Registrations(r.Context(), after)
 	case "client-invocations":
