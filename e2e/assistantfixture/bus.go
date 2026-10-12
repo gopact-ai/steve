@@ -23,6 +23,9 @@ func seedBus(ctx context.Context, services *servicehub.Services, producer identi
 	if _, err := services.Providers.Register(ctx, principal, provider.Register{PluginID: "mail.review", Version: "1", Events: []provider.Contract{}}); err != nil {
 		return nil, err
 	}
+	if _, err := services.Identity.Enroll(ctx, identity.Grant{Key: "unregistered-consumer", Name: "Unregistered Consumer", Kind: "provider"}); err != nil {
+		return nil, err
+	}
 	rule := events.Subscription{ID: "bus-review", Name: "Review event and retain receipt", Enabled: true, EventType: "fixture.notice", Mode: "provider", Handler: consumer.Grant.ID}
 	if _, err := services.Events.SaveSubscription(ctx, rule); err != nil {
 		return nil, err
