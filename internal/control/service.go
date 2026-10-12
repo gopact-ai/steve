@@ -229,7 +229,14 @@ func (s *Service) BindProject(ctx context.Context, req turnapi.Request, id strin
 
 // BindProjectTx shares the old/target project policy with BindProject while
 // allowing session archival to commit with the binding in a single write.
-func (s *Service) BindProjectTx(tx *ledger.Tx, req turnapi.Request, id string) (project.Binding, error) {
+func (s *Service) BindProjectTx(tx *ledger.Tx, req turnapi.Request, id string, expected project.Binding, bound bool) (project.Binding, error) {
+	current, found, err := durable.Get[project.Binding](tx, "conversation-project", req.Source.ConversationID)
+	if err != nil {
+		return project.Binding{}, err
+	}
+	if found != bound || found && current != expected {
+		return project.Binding{}, ledger.ErrConflict
+	}
 	if guard := s.bindGuard(req, id, false); guard != nil {
 		if err := guard(tx); err != nil {
 			return project.Binding{}, err

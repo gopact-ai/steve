@@ -181,6 +181,61 @@ func TestConversationMutationGuardPinsTheProjectBinding(t *testing.T) {
 	}
 }
 
+func TestAtomicProjectSwitchPreservesBindingAuthority(t *testing.T) {
+	for _, mode := range []string{"unbound reader", "bound reader", "revoked caller", "changed binding"} {
+		t.Run(mode, func(t *testing.T) {
+			s, accounts, req := controlFixture(t)
+			actor := identity.Account{Channel: "im", ID: req.Actor.ID}
+			if _, err := s.Projects.Grant(t.Context(), "private", actor.Principal(), project.RoleRead, accounts.Owner); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "unbound reader" {
+				req.Source.ConversationID = "im:unbound"
+				acceptControl(t, s, req)
+			}
+			before, bound, err := s.Projects.Binding(t.Context(), req.Source.ConversationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "unbound reader", "bound reader":
+				if _, err := s.Projects.Grant(t.Context(), "p", actor.Principal(), project.RoleRead, accounts.Owner); err != nil {
+					t.Fatal(err)
+				}
+			case "revoked caller":
+				if _, err := accounts.Bind(t.Context(), actor, "", 0, false); err != nil {
+					t.Fatal(err)
+				}
+			case "changed binding":
+				if _, err := s.Projects.Bind(t.Context(), req.Source.ConversationID, "private", "administrator"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sessions, err := state.OpenLedger(accounts.Book)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected := sessions.Conversation(req.Source.ConversationID).Sessions
+			err = sessions.ArchiveSessionsChecked(t.Context(), req.Source.ConversationID, expected, "now", func(tx *ledger.Tx) error {
+				_, err := s.BindProjectTx(tx, req, "private", before, bound)
+				return err
+			})
+			want := ErrDenied
+			if mode == "changed binding" {
+				want = ledger.ErrConflict
+			}
+			if mode == "unbound reader" {
+				after, found, readErr := s.Projects.Binding(t.Context(), req.Source.ConversationID)
+				if err != nil || readErr != nil || !found || after.ProjectID != "private" || after.Version != 1 {
+					t.Fatalf("unbound reader lost permission to select a readable target: %+v, %v, %v", after, err, readErr)
+				}
+			} else if !errors.Is(err, want) {
+				t.Fatalf("switch changed authority or followed another binding: %v, want %v", err, want)
+			}
+		})
+	}
+}
+
 func TestExecutionOwnerUsesOriginalPrivateInput(t *testing.T) {
 	for _, original := range []protocol.ChatType{protocol.ChatGroup, protocol.ChatP2P, ""} {
 		t.Run(string(original), func(t *testing.T) {

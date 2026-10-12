@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/control"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -49,9 +48,9 @@ func (c commands) projectCmd(ctx context.Context, req Request, rest string) (Res
 	}
 	defer release()
 	conversation := c.store.Conversation(req.Source.ConversationID)
-	guard := control.MutationGuard(ctx)
-	if guard == nil {
-		guard = c.controls.Guard(req, project.RoleWrite)
+	previous, bound, err := c.projects.Binding(ctx, req.Source.ConversationID)
+	if err != nil {
+		return Result{}, err
 	}
 	// A task belongs to the project it was opened in; the next turn here
 	// runs in another. What this conversation still held is closed, so it is
@@ -64,13 +63,8 @@ func (c commands) projectCmd(ctx context.Context, req Request, rest string) (Res
 	}
 	var binding project.Binding
 	err = c.store.ArchiveSessionsChecked(ctx, req.Source.ConversationID, conversation.Sessions, time.Now().UTC().Format(time.RFC3339), func(tx *ledger.Tx) error {
-		if guard != nil {
-			if err := guard(tx); err != nil {
-				return err
-			}
-		}
 		var err error
-		binding, err = c.controls.BindProjectTx(tx, req, p.ID)
+		binding, err = c.controls.BindProjectTx(tx, req, p.ID, previous, bound)
 		return err
 	})
 	if err != nil {
