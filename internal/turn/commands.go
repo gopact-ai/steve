@@ -100,6 +100,16 @@ func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) 
 	if err := c.controls.Check(ctx, req, project.RoleWrite); err != nil {
 		return Result{}, err
 	}
+	if session.UpstreamID == "" {
+		if err := c.store.ArchiveSessionChecked(ctx, conversationID, selected.ID, time.Now().UTC().Format(time.RFC3339Nano), control.MutationGuard(ctx)); err != nil {
+			return Result{}, err
+		}
+		return Result{AgentID: selected.ID, Text: c.text.T(i18n.Reset, selected.ID), Recover: true}, nil
+	}
+	session, err := c.store.BeginSessionCloseChecked(ctx, session, time.Now().UTC().Format(time.RFC3339Nano), control.MutationGuard(ctx))
+	if err != nil {
+		return Result{}, err
+	}
 	owed, err := c.closeSession(ctx, session)
 	if err != nil {
 		return Result{}, err
@@ -108,15 +118,14 @@ func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) 
 	// so the record is all that stands between the user and their own
 	// history; dropping it would make a cleared conversation unreachable
 	// forever.
-	at := time.Now().UTC().Format(time.RFC3339)
 	if owed != nil {
-		owed.OwedAt = at
+		owed.OwedAt = session.ClosingAt
 		slog.Warn(fmt.Sprintf("turn: /new let go of session %s on node %s before its node could be reached; the close is owed", session.UpstreamID, session.NodeID),
 			"conversation", conversationID, "agent", selected.ID, "node", session.NodeID, "session", session.UpstreamID, "task", owed.TaskID, "attempt", owed.AttemptID)
-		err = c.store.ArchiveSessionOwingCloseChecked(ctx, conversationID, selected.ID, at, *owed, control.MutationGuard(ctx))
-	} else {
-		err = c.store.ArchiveSessionChecked(ctx, conversationID, selected.ID, at, control.MutationGuard(ctx))
 	}
+	finishCtx, done := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer done()
+	err = c.store.FinishSessionClose(finishCtx, session, owed)
 	if err != nil {
 		return Result{}, err
 	}
@@ -134,6 +143,11 @@ func (c commands) reset(ctx context.Context, req Request, selected agent.Agent) 
 // may have landed, or cannot be sent rightly later, so the session stays.
 func (c commands) closeSession(ctx context.Context, session state.Session) (*state.OwedClose, error) {
 	err := c.runtime.CloseSession(ctx, harness.Placement{Node: session.NodeID, Harness: session.HarnessID}, session.UpstreamID)
+	var absent interface{ SessionErrorCode() string }
+	if session.ClosingAt != "" && errors.As(err, &absent) && absent.SessionErrorCode() == "absent" {
+		// A retry after a lost reply or failed finalization confirms the intent.
+		err = nil
+	}
 	var notSent *nodewire.SessionNotDispatched
 	if err == nil || !errors.As(err, &notSent) || !nodewire.IsManagedSession(session.UpstreamID) {
 		return nil, err

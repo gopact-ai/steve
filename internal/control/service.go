@@ -220,6 +220,25 @@ func (s *Service) ProjectsFor(ctx context.Context, req turnapi.Request) ([]proje
 }
 
 func (s *Service) BindProject(ctx context.Context, req turnapi.Request, id string, initial bool) (project.Binding, error) {
+	by := req.Actor.ID
+	if initial {
+		by = "default"
+	}
+	return s.Projects.BindChecked(ctx, req.Source.ConversationID, id, by, s.bindGuard(req, id, initial))
+}
+
+// BindProjectTx shares the old/target project policy with BindProject while
+// allowing session archival to commit with the binding in a single write.
+func (s *Service) BindProjectTx(tx *ledger.Tx, req turnapi.Request, id string) (project.Binding, error) {
+	if guard := s.bindGuard(req, id, false); guard != nil {
+		if err := guard(tx); err != nil {
+			return project.Binding{}, err
+		}
+	}
+	return s.Projects.BindTx(tx, req.Source.ConversationID, id, req.Actor.ID)
+}
+
+func (s *Service) bindGuard(req turnapi.Request, id string, initial bool) func(*ledger.Tx) error {
 	var guard func(*ledger.Tx) error
 	if s.book() != nil {
 		guard = func(tx *ledger.Tx) error {
@@ -242,30 +261,9 @@ func (s *Service) BindProject(ctx context.Context, req turnapi.Request, id strin
 			return s.CheckProjectTx(tx, req, id, want)
 		}
 	}
-	by := req.Actor.ID
-	if initial {
-		by = "default"
-	}
-	return s.Projects.BindChecked(ctx, req.Source.ConversationID, id, by, guard)
+	return guard
 }
 
-// BoundGuard pins a continuation of a successful switch to its resulting
-// binding; archive writes cannot silently act on a subsequent project switch.
-func (s *Service) BoundGuard(req turnapi.Request, expected project.Binding, want project.Role) func(*ledger.Tx) error {
-	if s.book() == nil {
-		return nil
-	}
-	return func(tx *ledger.Tx) error {
-		b, found, err := durable.Get[project.Binding](tx, "conversation-project", req.Source.ConversationID)
-		if err != nil {
-			return err
-		}
-		if !found || b != expected {
-			return ledger.ErrConflict
-		}
-		return s.CheckProjectTx(tx, req, expected.ProjectID, want)
-	}
-}
 func (s *Service) TaskGuard(req turnapi.Request, id string, want project.Role) func(*ledger.Tx) error {
 	if s.book() == nil {
 		return nil

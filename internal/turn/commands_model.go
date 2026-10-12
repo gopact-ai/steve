@@ -55,11 +55,14 @@ func (c commands) modelCmd(parent context.Context, req Request, selected agent.A
 	if err := c.controls.Check(ctx, req, project.RoleWrite); err != nil {
 		return Result{}, err
 	}
-	if err := configurable.SetModel(ctx, optionID, picked.Value); err != nil {
-		return Result{}, err
-	}
+	// Persist the authorized choice before the native RPC. If admission fails,
+	// the running session has not changed. A failed/uncertain RPC leaves the
+	// durable choice to be reapplied before the next prompt, just like UI prefs.
 	if err := c.store.SetPreferencesChecked(ctx, req.Source.ConversationID, selected.ID, map[string]string{"model": picked.Value}, control.MutationGuard(ctx)); err != nil {
 		return Result{}, err
+	}
+	if err := configurable.SetModel(ctx, optionID, picked.Value); err != nil {
+		return Result{}, fmt.Errorf("model preference %q was saved; native update is unconfirmed and will be retried before the next prompt: %w", picked.Value, err)
 	}
 	// Read back rather than echoing the request: the agent confirms with a
 	// config option update, and it is the authority on what it now runs.

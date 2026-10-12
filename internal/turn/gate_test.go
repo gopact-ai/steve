@@ -228,10 +228,12 @@ func TestRemoteAgentGetsItsOwnNodeLoopback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, _ := state.OpenLedger(testLedger(t))
+	book := testLedger(t)
+	store, _ := state.OpenLedger(book)
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}, mcpHTTP: true}
 	gate := &fakeGate{}
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
+		onLedger(book),
 		withDeps(func(d *Deps) { d.Nodes = fakeEndpoints{port: map[string]int{"host-3": 45999}} }),
 		withCallbacks(func(cb *Callbacks) { cb.AgentGate = gate }))
 

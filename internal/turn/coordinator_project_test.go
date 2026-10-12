@@ -22,9 +22,10 @@ func TestProjectVerbShowsBindsAndArchives(t *testing.T) {
 		"codex": {Harness: "codex", Default: true},
 		"other": {Harness: "codex", Aliases: []string{"other"}},
 	})
-	store, _ := state.OpenLedger(testLedger(t))
+	book := testLedger(t)
+	store, _ := state.OpenLedger(book)
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, onLedger(book))
 
 	// Before any turn: unbound, but the list is there.
 	result, err := handle(coordinator, t.Context(), "/project")
@@ -82,10 +83,11 @@ func TestProjectSwitchRefusedWhileATurnRuns(t *testing.T) {
 		"codex": {Harness: "codex", Default: true},
 		"other": {Harness: "codex", Aliases: []string{"other"}},
 	})
-	store, _ := state.OpenLedger(testLedger(t))
+	book := testLedger(t)
+	store, _ := state.OpenLedger(book)
 	slow := &fakeRunner{reply: "done", started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": slow}}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute, onLedger(book))
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)

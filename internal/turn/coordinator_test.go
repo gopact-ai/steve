@@ -824,11 +824,13 @@ func TestAgentRunsOnItsConfiguredNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, _ := state.OpenLedger(testLedger(t))
+	book := testLedger(t)
+	store, _ := state.OpenLedger(book)
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
 	labWork := t.TempDir()
 	// Attaching gives the project no directory on host-3.
 	coordinator := newCoordinatorIn(t, map[string]string{"lab": labWork}, catalog, store, capability.NewAssembler(nil), manager, time.Minute,
+		onLedger(book),
 		withCallbacks(func(cb *Callbacks) { cb.WorkspaceAttach = func(context.Context, string, string) error { return nil } }))
 
 	// A hub-homed project without a directory on host-3 cannot be worked

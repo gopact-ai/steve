@@ -52,6 +52,9 @@ type Session struct {
 	// Keep the previous token and fingerprints until the admitted native resume
 	// succeeds, so a crash cannot lose either side of the configuration proof.
 	PendingAgentToken string `json:"pending_agent_token,omitempty"`
+	// ClosingAt is the durable, authorized intent to close this exact session.
+	// Until it is finalized, neither a restart nor a lost response may reuse it.
+	ClosingAt string `json:"closing_at,omitempty"`
 }
 
 type Conversation struct {
@@ -236,6 +239,9 @@ func (s *Store) SaveSession(session Session) error {
 		conversation.Sessions = map[string]Session{}
 	}
 	if existing, ok := conversation.Sessions[session.AgentID]; ok {
+		if existing.ClosingAt != "" {
+			return ErrSessionClosing
+		}
 		if existing.HarnessID != session.HarnessID {
 			return fmt.Errorf("session harness is immutable: %q != %q", existing.HarnessID, session.HarnessID)
 		}
@@ -457,6 +463,9 @@ func (s *Store) RestoreSessionChecked(ctx context.Context, conversationID, agent
 	defer s.mu.Unlock()
 	next := cloneData(s.data)
 	conversation := next.Conversations[conversationID]
+	if conversation.Sessions[agentID].ClosingAt != "" {
+		return Session{}, ErrSessionClosing
+	}
 	matches := make([]int, 0, len(conversation.Archived))
 	for i, archived := range conversation.Archived {
 		if archived.AgentID == agentID {
@@ -472,6 +481,9 @@ func (s *Store) RestoreSessionChecked(ctx context.Context, conversationID, agent
 	}
 	at := matches[index-1]
 	restored := conversation.Archived[at].Session
+	if restored.ClosingAt != "" {
+		return Session{}, ErrSessionClosing
+	}
 	if conversation.Archived[at].AbandonedAttempt != "" || retiredContext(next, restored) {
 		return Session{}, ErrAbandonedContext
 	}
