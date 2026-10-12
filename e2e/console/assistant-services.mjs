@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { createServer } from "../../web/console/node_modules/vite/dist/node/index.js";
 import { chromium } from "../../web/console/node_modules/playwright/index.mjs";
+import { checkQueueBurst } from "./queue-motion.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const web = path.join(root, "web/console");
@@ -165,6 +166,8 @@ try {
     assert.equal(await page.locator(".bus-flow-particle").count(),0,"read recovery replayed old claims");
     assert.deepEqual(writes,[],"the animation invoked a consumer action");
     console.log("PASS overlapping real publication/claim, shared queue snapshots, secret-free stable claim timing, dashboard live updates/reduced motion and read recovery");
+    await checkQueueBurst(page, await observe());
+    console.log("PASS saturated queues retain a dense pile, local consumer exits and equal light dimensions during 32 rapid claims at wide and narrow widths");
     assert.deepEqual(errors,[]);console.log("PASS keyboard, narrow layout and read-failure recovery keep decisions grounded in committed facts");
 } finally {
     await browser?.close();await server?.close();

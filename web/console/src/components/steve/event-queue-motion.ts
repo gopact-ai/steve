@@ -13,6 +13,7 @@ interface Geometry { width: number; height: number; pitch: number; inlet: number
 interface Packet { el: HTMLSpanElement; animation: Animation; handoff: number | null }
 interface Transit { id: string; position: number; entered: number; lastFrame: number; initialSpeed: number; bridge: Packet | null }
 interface Scheduled extends FlowParticle { at: number }
+interface Shift { started: number; wait: number }
 
 // React owns the snapshot and the fixed slot nodes. This renderer owns only
 // transient light levels/packets: no per-frame React commits or layout reads.
@@ -23,16 +24,22 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
     const transits: Transit[] = [];
     const scheduled: Scheduled[] = [];
     const packets = new Set<Packet>();
+    const shifts: Shift[] = [];
     let seen = new Set<string>();
     let geometry: Geometry | null = null;
-    let shift: { started: number; wait: number; amount: number } | null = null;
     let count = 0, target = 0, parkedBefore = -1, shiftBefore = -1;
     let frame = 0, destroyed = false, lastDeparture = -Infinity;
 
     const shiftAmount = (now: number) => {
-        if (!shift) return 0;
-        const amount = shift.amount * (1 - smooth((now - shift.started - shift.wait) / SHIFT));
-        if (amount === 0) shift = null;
+        let amount = 0;
+        // Each removal keeps its own clearance/settling deadline. Resetting a
+        // combined deadline on every claim can push the entire pile off-screen.
+        for (let i = shifts.length - 1; i >= 0; i--) {
+            const shift = shifts[i];
+            const remaining = 1 - smooth((now - shift.started - shift.wait) / SHIFT);
+            if (remaining === 0) shifts.splice(i, 1);
+            else amount += remaining;
+        }
         return amount;
     };
     const measure = () => {
@@ -65,7 +72,7 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         active.forEach(finish);
         transits.length = 0;
         scheduled.length = 0;
-        shift = null;
+        shifts.length = 0;
         count = target;
         paint(performance.now());
     };
@@ -81,7 +88,8 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         let duration = INGRESS, clearance = 0;
         let keyframes: Keyframe[];
         if (outgoing) {
-            const speed = (g.inlet + g.width) / INGRESS;
+            // Short outer rails must not slow consumption relative to the grid.
+            const speed = Math.max((g.inlet + g.width) / INGRESS, g.pitch / CELL_STEP);
             const distance = Math.min((to - from) * .4, speed * Math.max(140, 2 * g.pitch / speed) / 2);
             const launch = 2 * distance / speed;
             clearance = g.pitch <= distance ? Math.sqrt(2 * g.pitch * launch / speed) : launch + (g.pitch - distance) / speed;
@@ -103,8 +111,7 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         const packet: Packet = { el, animation: el.animate(keyframes, { duration, easing: "linear", fill: "both" }), handoff: null };
         packets.add(packet);
         if (outgoing) {
-            const offset = shiftAmount(now);
-            shift = { started: now, wait: clearance, amount: offset + 1 };
+            shifts.push({ started: now, wait: clearance });
             count--;
             lastDeparture = now;
             packet.animation.finished.then(() => {
@@ -204,7 +211,7 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         if (destroyed || document.hidden) return;
         advance(now);
         paint(now);
-        if (scheduled.length || transits.length || shift) frame = requestAnimationFrame(tick);
+        if (scheduled.length || transits.length || shifts.length) frame = requestAnimationFrame(tick);
     };
     const wake = () => { if (motion && geometry && !document.hidden && !frame) frame = requestAnimationFrame(tick); };
     const visibility = () => {
