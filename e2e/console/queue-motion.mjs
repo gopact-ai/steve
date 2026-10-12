@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 
 // A full 80-delivery queue drains to 48 under a 32-claim burst.
 // This reproduces the old accumulating-clearance failure at both viewport sizes.
-export function queueBurstSnapshots(snapshot) {
+export function queueBurstSnapshots(snapshot, initial = 80, departures = 32) {
     const at = Date.now();
-    const before = { ...snapshot, capacity: 80, observed_at: new Date(at).toISOString(), events: [], claims: [], queues: { ...snapshot.queues, pending: { ...snapshot.queues.pending, pending: 80 }, claimed: { pending: 0 }, accepted: { pending: 0 }, unknown: { pending: 0 } } };
-    const after = { ...before, observed_at: new Date(at + 1000).toISOString(), queues: { ...before.queues, pending: { ...before.queues.pending, pending: 48 } }, claims: Array.from({ length: 32 }, (_, i) => ({ id: `burst-${i}`, claim: `burst-claim-${i}`, at: new Date(at + 1).toISOString(), until: new Date(at + 60000).toISOString() })) };
+    const before = { ...snapshot, capacity: Math.max(80,initial), observed_at: new Date(at).toISOString(), events: [], claims: [], queues: { ...snapshot.queues, pending: { ...snapshot.queues.pending, pending: initial }, claimed: { pending: 0 }, accepted: { pending: 0 }, unknown: { pending: 0 } } };
+    const after = { ...before, observed_at: new Date(at + 1000).toISOString(), queues: { ...before.queues, pending: { ...before.queues.pending, pending: initial - departures } }, claims: Array.from({ length: departures }, (_, i) => ({ id: `burst-${i}`, claim: `burst-claim-${i}`, at: new Date(at + 1).toISOString(), until: new Date(at + 60000).toISOString() })) };
     return { before, after };
 }
 
@@ -60,7 +60,7 @@ export function assertQueueGrowth(value) {
 
 // Browser-only acceptance probe: observe visible lights, not renderer internals.
 export function queueBurstProbe() {
-    let started = 0, minimumVisible = Infinity, minimumExit = Infinity, maximumSizeError = 0;
+    let started = 0, minimumVisible = Infinity, minimumExit = Infinity, maximumSizeError = 0, minimumGap = Infinity;
     const departures = new Set();
     const sample = (now) => {
         const stage = document.querySelector(".bus-flow-track");
@@ -85,8 +85,10 @@ export function queueBurstProbe() {
                     minimumExit = Math.min(minimumExit, (rect.left - track.left) / track.width);
                     maximumSizeError = Math.max(maximumSizeError, Math.abs(rect.width - first.width), Math.abs(rect.height - first.height));
                 }
-                if (now - started >= 5200) {
-                    document.body.dataset.queueBurst = JSON.stringify({ minimumVisible, minimumExit, maximumSizeError, departures: departures.size, slots: cells.length, units: Number(stage.dataset.unitScale), settled: cells.filter((cell) => cell.dataset.filled === "true").length, fill: cells.reduce((sum,cell)=>sum+Number(cell.style.getPropertyValue('--bus-fill')),0), packets: stage.querySelectorAll(".bus-flow-particle").length, queueRatio: queue.width / track.width, pending: Number(document.querySelector(".bus-flow-values strong").textContent.replace(/[^0-9]/g,"")), overflow: document.documentElement.scrollWidth > innerWidth });
+                const visibleExits=outgoing.map(el=>({rect:el.getBoundingClientRect(),opacity:Number(getComputedStyle(el).opacity)})).filter(item=>item.opacity>=.2&&item.rect.left<track.right).sort((a,b)=>a.rect.left-b.rect.left);
+                for(let i=1;i<visibleExits.length;i++) minimumGap=Math.min(minimumGap,visibleExits[i].rect.left-visibleExits[i-1].rect.right);
+                if (now - started >= 5200 && stage.querySelectorAll(".bus-flow-particle").length === 0 && Number(stage.querySelector("[data-flow-taken]").dataset.flowTaken) === 0) {
+                    document.body.dataset.queueBurst = JSON.stringify({ minimumVisible, minimumExit, maximumSizeError, minimumGap, departures: departures.size, slots: cells.length, units: Number(stage.dataset.unitScale), settled: cells.filter((cell) => cell.dataset.filled === "true").length, fill: cells.reduce((sum,cell)=>sum+Number(cell.style.getPropertyValue('--bus-fill')),0), packets: stage.querySelectorAll(".bus-flow-particle").length, queueRatio: queue.width / track.width, pending: Number(document.querySelector(".bus-flow-values strong").textContent.replace(/[^0-9]/g,"")), overflow: document.documentElement.scrollWidth > innerWidth });
                     return;
                 }
             }
@@ -96,18 +98,19 @@ export function queueBurstProbe() {
     requestAnimationFrame(sample);
 }
 
-export function assertQueueBurst(value) {
-    assert.equal(value.departures, 32, "the burst did not exercise all 32 departures");
-    assert.ok(value.minimumVisible >= 46, "the remaining pile slid out of the queue during rapid consumption");
+export function assertQueueBurst(value, expected = { initial:80, pending:48, departures:32 }) {
+    assert.equal(value.departures, expected.departures, "the burst did not exercise every departure");
+    assert.ok(value.minimumGap >= 1, "outgoing light cores overlapped during continuous consumption");
+    assert.ok(value.minimumVisible >= expected.pending - 2, "the remaining pile slid out of the queue during rapid consumption");
     assert.ok(value.minimumExit >= .8, "consumer packets originated in the middle of the pile");
     assert.ok(value.maximumSizeError < .1, "outer packets and queue cells have different dimensions");
     assert.ok(value.queueRatio >= .85, "the durable queue is shorter than the requested 85%");
     assert.equal(value.units, 1, "an ordinary backlog should retain one delivery per light");
-    assert.equal(value.settled, 48, "48 waiting deliveries should leave 48 lights");
-    assert.ok(Math.abs(value.fill - 48) < .002, "the pile lost waiting deliveries");
-    assert.ok(value.slots > 80, "the display did not grow beyond the original 32 slots");
+    assert.equal(value.settled, expected.pending, "waiting deliveries did not retain one light each");
+    assert.ok(Math.abs(value.fill - expected.pending) < .002, "the pile lost waiting deliveries");
+    assert.ok(value.slots > expected.initial, "the display has no headroom for the initial backlog");
     assert.equal(value.packets, 0, "completed claims left detached packets behind");
-    assert.equal(value.pending, 48, "cosmetic replay changed the observed backlog");
+    assert.equal(value.pending, expected.pending, "cosmetic replay changed the observed backlog");
     assert.equal(value.overflow, false, "the neon queue overflowed the viewport");
 }
 
@@ -116,17 +119,20 @@ export async function checkQueueBurst(page, snapshot) {
     await page.addInitScript(queueBurstProbe);
     await page.addInitScript(queueGrowthProbe);
     for (const width of [1280, 390]) {
-        const values = queueBurstSnapshots(snapshot);
-        let burst = false;
-        await page.route("**/console/event-flow", (route) => route.fulfill({ json: burst ? values.after : values.before }));
         await page.setViewportSize({ width, height: 900 });
-        await page.reload();
-        await page.waitForFunction(() => document.querySelector(".bus-flow-values strong")?.textContent === "80");
-        burst = true;
-        await page.getByRole("button", { name: "Refresh", exact: true }).first().click();
-        await page.waitForFunction(() => document.body.dataset.queueBurst, undefined, { timeout: 15000 });
-        assertQueueBurst(await page.evaluate(() => JSON.parse(document.body.dataset.queueBurst)));
-        await page.unroute("**/console/event-flow");
+        for(const [initial,departures] of [[80,32],[24,16]]) {
+            const values=queueBurstSnapshots(snapshot,initial,departures);
+            let burst=false;
+            await page.route("**/console/event-flow", route=>route.fulfill({json:burst?values.after:values.before}));
+            await page.reload();
+            await page.waitForFunction(initial=>document.querySelector('.bus-flow-values strong')?.textContent===String(initial),initial);
+            burst=true;
+            await page.getByRole("button",{name:"Refresh",exact:true}).first().click();
+            await page.waitForFunction(()=>document.body.dataset.queueBurst,undefined,{timeout:15000});
+            assertQueueBurst(await page.evaluate(()=>JSON.parse(document.body.dataset.queueBurst)),{initial,pending:initial-departures,departures});
+            await page.unroute("**/console/event-flow");
+        }
+        const values=queueBurstSnapshots(snapshot);
         const growth=queueGrowthSnapshots(snapshot);
         let growing=false;
         await page.route("**/console/event-flow",route=>route.fulfill({json:growing?growth.after:growth.before}));

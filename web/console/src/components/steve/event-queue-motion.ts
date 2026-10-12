@@ -6,6 +6,7 @@ const CELL_STEP = 70;
 const SHIFT = 260;
 const RESCALE = 500;
 const MIN_PITCH = 1.5;
+const MIN_COLUMNS = 32;
 const smooth = (value: number) => {
     const clamped = Math.max(0, Math.min(1, value));
     return clamped * clamped * (3 - 2 * clamped);
@@ -18,6 +19,7 @@ interface Scheduled extends FlowParticle { at: number }
 interface Shift { started: number; wait: number }
 interface Density { slots: number; units: number }
 interface Rescale { started: number; pitch: number; units: number }
+interface Departure { packet: Packet; from: number; speed: number; launch: number; duration: number }
 
 // React owns observed facts. This renderer owns the adaptive light grid and
 // transient packets; animation frames neither commit React nor read layout.
@@ -32,8 +34,9 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
     const shifts: Shift[] = [];
     let seen = new Set<string>();
     let geometry: Geometry | null = null;
-    let density: Density = { slots: 32, units: 1 }, units = 1;
+    let density: Density = { slots: MIN_COLUMNS, units: 1 }, units = 1;
     let rescale: Rescale | null = null;
+    let lastExit: Departure | null = null;
     let count = 0, target = 0, shiftBefore = -1, frame = 0;
     let destroyed = false, initialized = false, lastDeparture = -Infinity, shrinkSince = 0;
 
@@ -76,10 +79,10 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         if (!geometry) return;
         // Grow for the backlog, not the service quota. Leave room to receive
         // new events; group only below the physical width of a readable light.
-        const maximum = Math.max(32, Math.min(1024, Math.floor(geometry.buffer / MIN_PITCH)));
+        const maximum = Math.max(MIN_COLUMNS, Math.min(1024, Math.floor(geometry.buffer / MIN_PITCH)));
         const reserve = Math.max(8, Math.ceil(demand * .25));
         const nextUnits = demand + 4 <= maximum ? 1 : Math.max(1, Math.ceil((demand + reserve) / maximum));
-        const nextSlots = Math.max(32, Math.min(maximum, Math.ceil((demand + reserve) / nextUnits / 16) * 16));
+        const nextSlots = Math.max(MIN_COLUMNS, Math.min(maximum, Math.ceil((demand + reserve) / nextUnits / 16) * 16));
         const crowded = demand + 4 > density.slots * density.units;
         const smaller = demand < density.slots * density.units * .35;
         if (!smaller) shrinkSince = 0;
@@ -110,6 +113,21 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         packet.animation.cancel();
         packet.el.remove();
     };
+    const exitReady = (now: number) => {
+        if (now - lastDeparture < 120) return false;
+        if (!lastExit || !packets.has(lastExit.packet)) return true;
+        // A newly created compositor animation can start on the next frame.
+        // Its actual clock avoids releasing a follower one frame too early.
+        const age = lastExit.packet.animation.currentTime;
+        if (typeof age !== "number") return false;
+        if (age >= lastExit.duration) return true;
+        // This is the same quadratic launch as the compositor keyframes.
+        const distance = lastExit.speed * (age < lastExit.launch ? age * age / (2 * lastExit.launch) : age - lastExit.launch / 2);
+        const head = geometry!.last - shiftAmount(now) * geometry!.pitch;
+        // Reserve a whole pitch of the widest possible light. In-flight cores
+        // also grow when the grid contracts, so today's width is insufficient.
+        return lastExit.from + distance - head >= geometry!.buffer / MIN_COLUMNS;
+    };
     const completeTransit = (index: number) => {
         const [transit] = transits.splice(index, 1);
         removePacket(transit.bridge);
@@ -126,6 +144,7 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         for (const packet of packets) removePacket(packet);
         active.forEach(finish);
         transits.length = 0; scheduled.length = 0; shifts.length = 0;
+        lastExit = null; lastDeparture = -Infinity;
         count = target;
         configure(target, performance.now(), true);
         paint(performance.now());
@@ -152,11 +171,15 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         const from = outgoing ? g.last - shiftAmount(now) * g.pitch : -g.width;
         const to = outgoing ? g.length : g.inlet;
         let duration = INGRESS, clearance = 0;
+        let exitSpeed = 0, exitLaunch = 0;
         let keyframes: Keyframe[];
         if (outgoing) {
-            const speed = Math.max((g.inlet + g.width) / INGRESS, g.pitch / CELL_STEP);
+            // A shared rail speed prevents later, wider cores from catching
+            // earlier departures while density changes. Resize resets the rail.
+            const speed = g.buffer / MIN_COLUMNS / CELL_STEP;
             const distance = Math.min((to - from) * .4, speed * Math.max(140, 2 * g.pitch / speed) / 2);
             const launch = 2 * distance / speed;
+            exitSpeed = speed; exitLaunch = launch;
             const step = g.pitch / units;
             clearance = step <= distance ? Math.sqrt(2 * step * launch / speed) : launch + (step - distance) / speed;
             duration = launch + (to - from - distance) / speed;
@@ -177,6 +200,7 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         const packet: Packet = { el, animation: el.animate(keyframes, { duration, easing: "linear", fill: "both" }), handoff: null };
         packets.add(packet);
         if (outgoing) {
+            lastExit = { packet, from, speed: exitSpeed, launch: exitLaunch, duration };
             shifts.push({ started: now, wait: clearance });
             count--; lastDeparture = now;
             packet.animation.finished.then(() => {
@@ -202,7 +226,7 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
         for (let i = 0; i < scheduled.length;) {
             const item = scheduled[i];
             // A claim can share a read with its publication: wait for a real head.
-            if (item.at > now || (item.direction === "out" && (parkedCount() === 0 || now - lastDeparture < 120))) { i++; continue; }
+            if (item.at > now || (item.direction === "out" && (parkedCount() === 0 || !exitReady(now)))) { i++; continue; }
             scheduled.splice(i, 1); spawn(item, now);
         }
         for (let i = 0; i < transits.length;) {

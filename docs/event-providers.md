@@ -213,7 +213,10 @@ The **Event Flow** instrument uses a thin neon transfer channel with adaptive co
 The light cores inside and outside the queue have the same size. Intakes move
 continuously across the entry boundary, then light successive slots toward the
 right-hand backlog. A claim glides out from the current head; the remaining
-lights shift right after it clears. Appearance, handoff and departure fade are
+lights shift right after it clears. Departures share a rail speed and wait for
+physical clearance, reserving room for the widest core a contracting grid can
+produce. This keeps outgoing lights separate during bursts and density changes.
+Appearance, handoff and departure fade are
 continuous, with browser-frame updates rather than stepped timers. Idle queues
 stop requesting animation frames. Layout is measured only at initialization and
 resize, and resize reconciles to the latest snapshot.
