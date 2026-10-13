@@ -32,6 +32,16 @@ export function loadConfig(path, { managed = false } = {}) {
   config.admin_token_env ||= 'STEVE_MAIL_ADMIN_TOKEN';
   config.admin_port ??= 8787;
   if (!Number.isInteger(config.admin_port) || config.admin_port < 0 || config.admin_port > 65535) throw new SetupError('Invalid mail administration port');
+  if (config.onepassword !== undefined) {
+    const value = config.onepassword;
+    if (!value || !Array.isArray(value.vaults) || !value.vaults.length || value.vaults.length > 20 ||
+        !value.vaults.every(vault => typeof vault === 'string' && vault.trim() === vault && vault.length > 0 && vault.length <= 80 && !/[\x00-\x1f]/.test(vault)) ||
+        (value.command !== undefined && (typeof value.command !== 'string' || !value.command || /[\x00-\x1f]/.test(value.command))) ||
+        (value.account !== undefined && (typeof value.account !== 'string' || !value.account || /[\x00-\x1f]/.test(value.account))) ||
+        (value.auto_login !== undefined && typeof value.auto_login !== 'boolean') ||
+        (value.approve_readonly_consent !== undefined && typeof value.approve_readonly_consent !== 'boolean') ||
+        (value.channel !== undefined && !['chrome', 'chromium'].includes(value.channel))) throw new SetupError('Configure allowed 1Password vaults, CLI command and browser login options');
+  }
   return config;
 }
 

@@ -14,6 +14,7 @@
     "@azure/msal-node": "7.0.1",
     "@googleapis/gmail": "22.0.1",
     "@microsoft/microsoft-graph-client": "3.0.7",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "csv-parse": "7.0.3",
     "csv-stringify": "6.9.0",
     "fflate": "0.8.3",
@@ -22,6 +23,7 @@
     "imapflow": "2.4.0",
     "mailparser": "3.9.38",
     "open": "11.0.4",
+    "playwright": "1.64.0",
     "proper-lockfile": "4.1.2"
   }
 }

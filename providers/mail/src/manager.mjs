@@ -2,11 +2,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readImport, writeExport } from './formats.mjs';
 import { SetupError } from './errors.mjs';
 import { LoginJobs } from './login-jobs.mjs';
+import { OnePassword } from './onepassword.mjs';
+import { LoginBrowser } from './login-browser.mjs';
 
 export class MailManager {
   constructor(config, store, runner, loginFactory) {
     Object.assign(this, { config, store, runner });
     this.accounts = store.secret('managed:accounts') || config.accounts.map(a => ({ ...a, enabled: true }));
+    this.onepassword = new OnePassword(config.onepassword);
+    this.loginBrowser = new LoginBrowser(this.onepassword, config.onepassword);
     this.jobs = new LoginJobs(this, loginFactory);
     this.syncTasks = new Set();
     this.save();
@@ -23,6 +27,7 @@ export class MailManager {
     return { id: a.id, provider: a.provider, address: a.address, title: a.title || a.address, group: a.group || '', tags: a.tags || [], enabled: a.enabled !== false,
       authorized: this.authorized(a),
       has_password: !!(a.password || a.app_password), needs_app_password: a.provider === 'icloud' && !a.app_password && !a.password_env,
+      login_method: a.credential_ref && this.config.onepassword?.auto_login === true ? 'onepassword' : 'manual',
       pending: state?.pending || 0, health, login: this.jobs.forAccount(a.id) };
   }
   authorized(a) { return !!this.store.get(`authorized:${a.id}`) || !!this.store.secret(`google:${a.id}`) || !!this.store.get(`microsoft-owner:${a.id}`); }
@@ -41,6 +46,16 @@ export class MailManager {
     return { items: this.accounts.filter(a => !a.archived).map(a => this.publicAccount(a, states)), next: '',
       apps: { google: !!apps.google_keys, microsoft: !!apps.client_id },
       ai: { enabled: !!client, client: client?.id, conversation: client?.conversation } };
+  }
+  onePasswordStatus() {
+    return { configured: this.onepassword.configured(), vaults: this.config.onepassword?.vaults || [],
+      auto_login: this.config.onepassword?.auto_login === true, provider: 'gmail' };
+  }
+  async previewOnePassword(vault) {
+    const parsed = await this.onepassword.preview(vault);
+    const id = randomUUID();
+    this.store.secret(`draft:${id}`, { rows: parsed.accounts.map((row, index) => ({ ...row, id: String(index) })), skipped: parsed.skipped, expires: Date.now() + 24 * 3600000 });
+    return this.draft(id);
   }
   configureApps(input) {
     const before = this.store.secret('managed:oauth') || {};
@@ -119,7 +134,7 @@ export class MailManager {
   archive(id) {
     const account = this.get(id);
     if (this.runner?.inflight?.has(id) || this.jobs.active(id)) throw new SetupError('Wait for the mailbox operation to finish');
-    Object.assign(account, { archived: true, enabled: false, password: '', app_password: '' });
+    Object.assign(account, { archived: true, enabled: false, password: '', app_password: '' }); delete account.credential_ref;
     for (const key of [`google:${id}`, `msal:${id}`]) this.store.deleteSecret(key);
     this.store.set(`microsoft-owner:${id}`, ''); this.store.set(`authorized:${id}`, '');
     this.runner?.adapters.delete(id); this.save();
@@ -136,8 +151,9 @@ export class MailManager {
   draft(id) {
     const draft = this.store.secret(`draft:${id}`);
     if (!draft || draft.expires < Date.now()) throw new SetupError('Import preview expired; choose the file again');
-    return { id, skipped: draft.skipped, committed: !!draft.committed, imported: draft.imported || [], items: draft.rows.map(({ password, ...row }) => ({
+    return { id, skipped: draft.skipped, committed: !!draft.committed, imported: draft.imported || [], items: draft.rows.map(({ password, credential_ref, ...row }) => ({
       ...row, has_password: row.has_password ?? !!password,
+      ...(credential_ref ? { login_method: 'onepassword' } : {}),
       duplicate: this.accounts.some(a => !a.archived && a.provider === row.provider && a.address.toLowerCase() === row.address.toLowerCase()) })) };
   }
   commit(input) {
@@ -152,10 +168,15 @@ export class MailManager {
     try {
       for (const row of draft.rows.filter(row => selected.has(row.id))) {
         const account = this.add({ ...row, credential_kind: input.icloud_app_passwords && row.provider === 'icloud' ? 'app_password' : row.credential_kind });
-        if (!account.duplicate) imported.push(account.id);
+        if (row.credential_ref) {
+          const target = this.get(account.id);
+          if (this.runner?.inflight?.has(target.id) || this.jobs.active(target.id)) throw new SetupError('Wait for the mailbox operation to finish before linking 1Password');
+          target.credential_ref = row.credential_ref; this.save();
+        }
+        if (!account.duplicate || row.credential_ref) imported.push(account.id);
       }
       // A committed preview only needs metadata and its receipt, never a second credential copy.
-      for (const row of draft.rows) { row.has_password = !!row.password; delete row.password; }
+      for (const row of draft.rows) { row.has_password = !!row.password; if (row.credential_ref) row.login_method = 'onepassword'; delete row.password; delete row.credential_ref; }
       draft.committed = true; draft.imported = imported;
       this.store.secret(`draft:${input.draft_id}`, draft); this.store.db.exec('COMMIT');
     } catch (error) { this.store.db.exec('ROLLBACK'); this.accounts = before; throw error; }

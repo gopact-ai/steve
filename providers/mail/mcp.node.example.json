@@ -1,0 +1,10 @@
+{
+  "mcp_servers": {
+    "mail_1password": {
+      "type": "stdio",
+      "command": "/absolute/path/to/node24/bin/node",
+      "args": ["/absolute/path/to/steve/providers/mail/src/cli.mjs", "mcp"],
+      "env": { "STEVE_MAIL_ADMIN_URL": "http://127.0.0.1:8787" }
+    }
+  }
+}

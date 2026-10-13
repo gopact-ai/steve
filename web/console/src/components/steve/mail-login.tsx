@@ -22,10 +22,10 @@ export function MailLogin({ id, onClose, onDone }: { id: string; onClose: () => 
     const safeURL = (() => { try { const url = new URL(job?.url || ""); return url.protocol === "https:" && ["accounts.google.com", "login.microsoftonline.com", "microsoft.com", "www.microsoft.com"].includes(url.hostname) ? url.href : undefined; } catch { return undefined; } })();
     return <Drawer title={t("mail.login")} onClose={onClose}>
         <div className="flex min-w-0 flex-col gap-4" aria-live="polite">
-            <p className="text-sm text-secondary">{t(job?.state === "authorized" ? "mail.authorizedHint" : job?.state === "error" ? "mail.loginError" : job?.state === "waiting" ? "mail.waitingHint" : "mail.starting")}</p>
+            <p className="text-sm text-secondary">{t(job?.state === "authorized" ? "mail.authorizedHint" : job?.state === "error" ? "mail.loginError" : job?.method === "onepassword" ? job.stage === "queued" ? "mail.loginQueued" : job.stage === "onepassword_approval" ? "mail.onePasswordApproval" : job.needs_owner ? "mail.loginOwnerAction" : "mail.autoLoginHint" : job?.state === "waiting" ? "mail.waitingHint" : "mail.starting")}</p>
             {job?.user_code ? <div><p className="mb-2 text-xs text-tertiary">{t("mail.deviceCode")}</p><code className="break-all rounded-md bg-secondary p-3 text-lg font-semibold tracking-widest" translate="no">{job.user_code}</code></div> : null}
-            {safeURL ? <Button size="sm" color="primary" href={safeURL} target="_blank" rel="noreferrer">{t("mail.openLogin")}</Button> : null}
-            {error || job?.hint ? <p role="alert" className="break-words text-sm text-error-primary">{error || job?.hint}</p> : null}
+            {safeURL && job?.method !== "onepassword" ? <Button size="sm" color="primary" href={safeURL} target="_blank" rel="noreferrer">{t("mail.openLogin")}</Button> : null}
+            {error || job?.hint ? <p role={error || job?.state === "error" ? "alert" : "status"} className={`break-words text-sm ${error || job?.state === "error" ? "text-error-primary" : "text-secondary"}`}>{error || job?.hint}</p> : null}
             {job?.state === "authorized" ? <Button size="sm" onClick={onDone}>{t("mail.done")}</Button> : null}
         </div>
     </Drawer>;

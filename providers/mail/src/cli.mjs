@@ -8,6 +8,7 @@ import { Steve } from './steve.mjs';
 import { Runner, adapter, errorCode } from './runner.mjs';
 import { SetupError } from './errors.mjs';
 import { serveMail } from './daemon.mjs';
+import { runMailMCP } from './mcp-server.mjs';
 
 async function main() {
   const args = parseArgs({ allowPositionals: true, options: {
@@ -15,8 +16,11 @@ async function main() {
   } });
   const command = args.positionals[0] || 'run';
   if (args.values.help) {
-    console.log('node src/cli.mjs [serve|login|run|once|status] --config config.json [--account account-id]');
+    console.log('node src/cli.mjs [serve|login|run|once|status|mcp] --config config.json [--account account-id]');
     return;
+  }
+  if (command === 'mcp' && args.positionals.length === 1) {
+    await runMailMCP(requiredEnv('STEVE_MAIL_ADMIN_URL'), requiredEnv('STEVE_MAIL_ADMIN_TOKEN')); return;
   }
   if (!['serve', 'login', 'run', 'once', 'status'].includes(command) || args.positionals.length > 1) throw new SetupError('Unknown command; use --help');
   const config = loadConfig(resolve(args.values.config), { managed: ['serve', 'status'].includes(command) });
