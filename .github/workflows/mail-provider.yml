@@ -1,0 +1,29 @@
+name: mail-provider
+on:
+  push:
+    branches: [master]
+    paths: ['providers/mail/**', '.github/workflows/mail-provider.yml']
+  pull_request:
+    paths: ['providers/mail/**', '.github/workflows/mail-provider.yml']
+jobs:
+  mail:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: providers/mail/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: providers/mail
+      - run: npm test
+        working-directory: providers/mail
+        env:
+          STEVE_MAIL_INTEGRATION: '1'

@@ -5,6 +5,13 @@ Steve exposes three server modules: `events.v1`, `work.v1` and `clients.v1` in
 and clients to the existing server. It does not install a mail service, replace
 ACP, manage harness versions, or add a second model executor.
 
+The independently runnable [mail provider](../providers/mail/README.md) connects
+Gmail through Google's SDK, Outlook/Hotmail through Graph and MSAL, and iCloud
+Mail through ImapFlow. It publishes `mail.received` using this existing contract;
+account authorization, SDK dependencies and private synchronization state remain
+with the provider process. Work subscriptions continue to use the server's
+existing conversation/project admission.
+
 ## Authority and enrollment
 
 The owner uses **Connections & Events → Connections** or
