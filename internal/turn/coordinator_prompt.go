@@ -170,6 +170,9 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	conversation := c.store.Conversation(req.Source.ConversationID)
 	saved := conversation.Sessions[selected.ID]
 	saved.ConversationID = req.Source.ConversationID
+	if saved.ClosingAt != "" {
+		return state.ErrSessionClosing
+	}
 	if saved.HarnessID != "" && saved.HarnessID != selected.Harness {
 		return fmt.Errorf("session belongs to harness %q, not %q", saved.HarnessID, selected.Harness)
 	}
@@ -239,6 +242,9 @@ func (c *Coordinator) buildingProfile(req Request) (bool, error) {
 
 func (c *Coordinator) open(ctx context.Context, saved state.Session, selected agent.Agent, workspace string, servers []acp.MCPServer) (harness.Runner, error) {
 	if err := c.store.CheckSessionContext(saved); err != nil {
+		if errors.Is(err, state.ErrSessionClosing) {
+			return nil, err
+		}
 		return nil, UserError{Text: c.text.T(i18n.HistoryAbandoned), Cause: err}
 	}
 	ctx = harness.WithPluginProfile(ctx, saved.PluginRuntime)

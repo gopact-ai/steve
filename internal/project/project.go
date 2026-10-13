@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/datalevel"
+	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -642,6 +643,27 @@ func (s *Store) BindChecked(ctx context.Context, conversationID, projectID, by s
 		return Binding{}, err
 	}
 	return b, nil
+}
+
+// BindTx composes a binding change with other stores' writes in the caller's
+// transaction. The caller must check authority and its expected old binding.
+func (s *Store) BindTx(tx *ledger.Tx, conversationID, projectID, by string) (Binding, error) {
+	if _, found, err := durable.Get[Project](tx, kindProject, projectID); err != nil {
+		return Binding{}, err
+	} else if !found {
+		return Binding{}, fmt.Errorf("%w: %s", ErrUnknown, projectID)
+	}
+	name := bindingNameBase + conversationID + "/project"
+	current, _, err := tx.Name(name)
+	if err != nil {
+		return Binding{}, err
+	}
+	version, err := tx.CompareAndSetName(name, current.Version, projectID)
+	if err != nil {
+		return Binding{}, err
+	}
+	b := Binding{ConversationID: conversationID, ProjectID: projectID, By: by, At: s.now().UTC(), Version: version}
+	return b, tx.PutBinding(kindBinding, conversationID, b)
 }
 
 // Conflict finds the workspace, of any project, whose directory on node is

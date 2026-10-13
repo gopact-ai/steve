@@ -23,18 +23,46 @@ func (s *Store) Hold(id string) (Task, error) {
 }
 
 func (s *Store) HoldChecked(ctx context.Context, id string, guard func(*ledger.Tx) error) (Task, error) {
+	held, err := s.HoldSetChecked(ctx, []string{id}, guard)
+	if err != nil {
+		return Task{}, err
+	}
+	return held[0], nil
+}
+
+// HoldSetChecked stamps the complete stop scope in one transaction. A refused
+// guard or write leaves every earlier hold (including its stamp) unchanged.
+func (s *Store) HoldSetChecked(ctx context.Context, ids []string, guard func(*ledger.Tx) error) ([]Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	stored, ok := s.data.Tasks[id]
-	if !ok {
-		return Task{}, fmt.Errorf("task %s not found", id)
+	if len(ids) == 0 {
+		return nil, nil
 	}
-	at := s.now()
-	if !at.After(stored.HeldAt) {
-		// Two stops within the clock's resolution are still two stops.
-		at = stored.HeldAt.Add(time.Nanosecond)
+	next := s.draft()
+	held := make([]Task, 0, len(ids))
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		stored, ok := s.data.Tasks[id]
+		if !ok {
+			return nil, fmt.Errorf("task %s not found", id)
+		}
+		at := s.now()
+		if !at.After(stored.HeldAt) {
+			// Two stops within the clock's resolution are still two stops.
+			at = stored.HeldAt.Add(time.Nanosecond)
+		}
+		t := next.edit(id)
+		t.HeldAt, t.UpdatedAt = at, at
+		held = append(held, *t.clone())
 	}
-	return s.setHoldCheckedLocked(ctx, id, at, guard)
+	if err := s.replaceRecordsLocked(ctx, next, guard); err != nil {
+		return nil, err
+	}
+	return held, nil
 }
 
 // ReleaseHold lifts the hold a turn accounted for: seen is the stamp the

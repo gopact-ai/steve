@@ -83,6 +83,32 @@ func acceptControl(t *testing.T, s *Service, req turnapi.Request) {
 	}
 }
 
+func TestRecoveryCallerRetainsInputIdentityWithoutProjectAuthority(t *testing.T) {
+	s, accounts, req := controlFixture(t)
+	if _, err := s.Projects.Grant(t.Context(), "p", identity.Account{Channel: "im", ID: "actor"}.Principal(), project.RoleNone, accounts.Owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CheckCaller(t.Context(), req); err != nil {
+		t.Fatalf("project revocation rejected an authenticated recovery input: %v", err)
+	}
+	for _, change := range []string{"actor", "transport", "input", "conversation"} {
+		forged := req
+		switch change {
+		case "actor":
+			forged.Actor.ID = "other"
+		case "transport":
+			forged.Source.Channel = "other"
+		case "input":
+			forged.Source.MessageID = "other"
+		case "conversation":
+			forged.Source.ConversationID = "other"
+		}
+		if err := s.CheckCaller(t.Context(), forged); !errors.Is(err, ErrDenied) {
+			t.Fatalf("recovery accepted a changed %s: %v", change, err)
+		}
+	}
+}
+
 // The permission change happens after admission and after the guard is built.
 // The actual task/session commit must refuse it without altering either cache.
 func TestControlsRecheckRevocationAtCommit(t *testing.T) {
@@ -178,6 +204,61 @@ func TestConversationMutationGuardPinsTheProjectBinding(t *testing.T) {
 	}
 	if err := s.book().Update(t.Context(), guard); !errors.Is(err, ledger.ErrConflict) {
 		t.Fatalf("a stale session write followed a new project binding: %v", err)
+	}
+}
+
+func TestAtomicProjectSwitchPreservesBindingAuthority(t *testing.T) {
+	for _, mode := range []string{"unbound reader", "bound reader", "revoked caller", "changed binding"} {
+		t.Run(mode, func(t *testing.T) {
+			s, accounts, req := controlFixture(t)
+			actor := identity.Account{Channel: "im", ID: req.Actor.ID}
+			if _, err := s.Projects.Grant(t.Context(), "private", actor.Principal(), project.RoleRead, accounts.Owner); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "unbound reader" {
+				req.Source.ConversationID = "im:unbound"
+				acceptControl(t, s, req)
+			}
+			before, bound, err := s.Projects.Binding(t.Context(), req.Source.ConversationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "unbound reader", "bound reader":
+				if _, err := s.Projects.Grant(t.Context(), "p", actor.Principal(), project.RoleRead, accounts.Owner); err != nil {
+					t.Fatal(err)
+				}
+			case "revoked caller":
+				if _, err := accounts.Bind(t.Context(), actor, "", 0, false); err != nil {
+					t.Fatal(err)
+				}
+			case "changed binding":
+				if _, err := s.Projects.Bind(t.Context(), req.Source.ConversationID, "private", "administrator"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sessions, err := state.OpenLedger(accounts.Book)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected := sessions.Conversation(req.Source.ConversationID).Sessions
+			err = sessions.ArchiveSessionsChecked(t.Context(), req.Source.ConversationID, expected, "now", func(tx *ledger.Tx) error {
+				_, err := s.BindProjectTx(tx, req, "private", before, bound)
+				return err
+			})
+			want := ErrDenied
+			if mode == "changed binding" {
+				want = ledger.ErrConflict
+			}
+			if mode == "unbound reader" {
+				after, found, readErr := s.Projects.Binding(t.Context(), req.Source.ConversationID)
+				if err != nil || readErr != nil || !found || after.ProjectID != "private" || after.Version != 1 {
+					t.Fatalf("unbound reader lost permission to select a readable target: %+v, %v, %v", after, err, readErr)
+				}
+			} else if !errors.Is(err, want) {
+				t.Fatalf("switch changed authority or followed another binding: %v, want %v", err, want)
+			}
+		})
 	}
 }
 

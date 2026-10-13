@@ -74,6 +74,9 @@ func retiredContext(d data, session Session) bool {
 func (s *Store) CheckSessionContext(session Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if session.ClosingAt != "" || s.data.Conversations[session.ConversationID].Sessions[session.AgentID].ClosingAt != "" {
+		return ErrSessionClosing
+	}
 	if retiredContext(s.data, session) {
 		return ErrAbandonedContext
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -47,6 +48,10 @@ func (c commands) projectCmd(ctx context.Context, req Request, rest string) (Res
 	}
 	defer release()
 	conversation := c.store.Conversation(req.Source.ConversationID)
+	previous, bound, err := c.projects.Binding(ctx, req.Source.ConversationID)
+	if err != nil {
+		return Result{}, err
+	}
 	// A task belongs to the project it was opened in; the next turn here
 	// runs in another. What this conversation still held is closed, so it is
 	// not silently continued under a different directory and a different
@@ -56,16 +61,14 @@ func (c commands) projectCmd(ctx context.Context, req Request, rest string) (Res
 		refusal := c.closeRefusal(req.Source.ConversationID, refused, err)
 		return Result{Title: title, Text: refusal.Text}, refusal
 	}
-	binding, err := c.controls.BindProject(ctx, req, p.ID, false)
+	var binding project.Binding
+	err = c.store.ArchiveSessionsChecked(ctx, req.Source.ConversationID, conversation.Sessions, time.Now().UTC().Format(time.RFC3339), func(tx *ledger.Tx) error {
+		var err error
+		binding, err = c.controls.BindProjectTx(tx, req, p.ID, previous, bound)
+		return err
+	})
 	if err != nil {
 		return Result{}, err
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	for agentID := range conversation.Sessions {
-		if err := c.store.ArchiveSessionChecked(ctx, req.Source.ConversationID, agentID, now, c.controls.BoundGuard(req, binding, project.RoleRead)); err != nil {
-			slog.Error(fmt.Sprintf("turn: archive %s session on project switch: %v", agentID, err), "conversation", req.Source.ConversationID, "agent", agentID, "project", p.ID)
-			return Result{}, err
-		}
 	}
 	slog.Info(fmt.Sprintf("turn: conversation %s bound to project %s (v%d) by %s", req.Source.ConversationID, p.ID, binding.Version, req.Actor.ID), "conversation", req.Source.ConversationID, "project", p.ID)
 	return Result{Title: title, Text: c.text.T(i18n.ProjectSwitched, p.ID, homeLabel(p))}, nil

@@ -18,6 +18,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -109,12 +110,27 @@ func (c *Coordinator) holdCovered(covered []task.Task) map[string]time.Time {
 
 func (c *Coordinator) holdCoveredChecked(ctx context.Context, covered []task.Task) (map[string]time.Time, error) {
 	stamps := make(map[string]time.Time, len(covered))
+	ids := make([]string, 0, len(covered))
+	var guards []func(*ledger.Tx) error
 	for _, tracked := range covered {
-		held, err := c.tasks.HoldChecked(ctx, tracked.ID, c.controls.TaskContextGuard(ctx, tracked.ID))
-		if err != nil {
-			return stamps, err
+		ids = append(ids, tracked.ID)
+		if guard := c.controls.TaskContextGuard(ctx, tracked.ID); guard != nil {
+			guards = append(guards, guard)
 		}
-		stamps[tracked.ID] = held.HeldAt
+	}
+	heldSet, err := c.tasks.HoldSetChecked(ctx, ids, func(tx *ledger.Tx) error {
+		for _, guard := range guards {
+			if err := guard(tx); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, held := range heldSet {
+		stamps[held.ID] = held.HeldAt
 	}
 	return stamps, nil
 }

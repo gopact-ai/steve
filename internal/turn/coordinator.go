@@ -419,6 +419,18 @@ func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 	address, parsed := c.ParseInput(req.Input)
 	_, explicitSelection := c.catalog.Select(req.Input)
 	switchOnly := address != "" && strings.TrimSpace(parsed.Prompt) == ""
+	if parsed.Command == protocol.CommandNew || parsed.Command == protocol.CommandClear {
+		// A closing slot already carries authority for this exact action. Use
+		// read-only selection: its retry must not admit a new agent selection,
+		// task retirement or project mutation under a later policy.
+		selected, _, _, err := c.conversations.Resolve(c.catalog, req.Source.ConversationID, req.Input)
+		if err == nil {
+			session := c.store.Conversation(req.Source.ConversationID).Sessions[selected.ID]
+			if session.ClosingAt != "" {
+				return c.commands().retryReset(ctx, req, selected, session)
+			}
+		}
+	}
 	if err := c.controls.CheckCommand(ctx, req, parsed.Command, parsed.Rest, switchOnly); err != nil {
 		return Result{}, err
 	}

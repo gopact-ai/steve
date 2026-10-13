@@ -68,7 +68,11 @@ try {
     await page.goto(url+"?token=assistant-fixture-owner#/connections?section=bus");
     await page.getByRole("heading",{name:"Event Flow",exact:true}).waitFor();
     await page.getByRole("heading",{name:"Mail Fixture",exact:true}).waitFor();
-    await page.getByText("Health Not Registered",{exact:true}).waitFor();
+    const mailProvider=page.locator(".bus-provider-list > li").filter({has:page.getByRole("heading",{name:"Mail Fixture",exact:true})});
+    await mailProvider.getByText("mail.fixture",{exact:true}).waitFor();
+    await mailProvider.getByText(/^(Online|Offline)$/).waitFor();
+    const unregisteredProvider=page.locator(".bus-provider-list > li").filter({has:page.getByRole("heading",{name:"Unregistered Consumer",exact:true})});
+    await unregisteredProvider.getByText("Health Not Registered",{exact:true}).waitFor();
     await page.locator('[data-bus-queue="event_unknown"] dd').first().filter({hasText:"1"}).waitFor();
     await page.getByRole("link",{name:"View All",exact:true}).click();
     const completed=page.getByRole("grid",{name:"Deliveries",exact:true}).getByRole("row").filter({hasText:connection.bus.done});

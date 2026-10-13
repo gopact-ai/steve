@@ -34,6 +34,9 @@ func ExportProject(doc ledger.Doc, project string, ids []string) (ProjectTransfe
 				c.Preferences = nil
 				continue
 			}
+			if s.ClosingAt != "" {
+				return out, ErrSessionClosing
+			}
 			s.AgentToken = ""
 			s.PendingAgentToken = ""
 			s.UpstreamID = ""
@@ -75,12 +78,12 @@ func ImportProject(doc ledger.Doc, in ProjectTransfer) error {
 	}
 	for id, c := range in.Conversations {
 		for _, a := range c.Archived {
-			if a.ProjectID != in.Project || a.AgentToken != "" || a.PendingAgentToken != "" || a.UpstreamID != "" {
+			if a.ProjectID != in.Project || a.AgentToken != "" || a.PendingAgentToken != "" || a.UpstreamID != "" || a.ClosingAt != "" {
 				return fmt.Errorf("invalid imported archived session")
 			}
 		}
 		for _, s := range c.Sessions {
-			if s.ProjectID != in.Project || s.AgentToken != "" || s.PendingAgentToken != "" || s.UpstreamID != "" {
+			if s.ProjectID != in.Project || s.AgentToken != "" || s.PendingAgentToken != "" || s.UpstreamID != "" || s.ClosingAt != "" {
 				return fmt.Errorf("invalid imported session")
 			}
 		}

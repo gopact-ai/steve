@@ -110,6 +110,11 @@ func TestSealIdleRejectsCommandBeforeExecutionRegistryAdmission(t *testing.T) {
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &resetBarrier{fakeManager: &fakeManager{}, started: make(chan struct{}), proceed: make(chan struct{})}
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	// A reset with no native context needs no lifecycle RPC. Keep a real live
+	// slot so the barrier represents an irreversible close in flight.
+	if err := store.SaveSession(state.Session{ConversationID: "reset", AgentID: "worker", HarnessID: "mock", UpstreamID: "native-reset"}); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
 	go func() {
 		_, err := c.Handle(t.Context(), Request{
