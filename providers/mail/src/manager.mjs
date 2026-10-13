@@ -24,11 +24,12 @@ export class MailManager {
   publicAccount(a, states) {
     const health = JSON.parse(this.store.get(`health:${a.id}`) || 'null');
     const state = states ? states.get(a.id) : this.store.status().find(row => row.id === a.id);
+    const login = this.jobs.forAccount(a.id);
     return { id: a.id, provider: a.provider, address: a.address, title: a.title || a.address, group: a.group || '', tags: a.tags || [], enabled: a.enabled !== false,
       authorized: this.authorized(a),
       has_password: !!(a.password || a.app_password), needs_app_password: a.provider === 'icloud' && !a.app_password && !a.password_env,
       login_method: a.credential_ref && this.config.onepassword?.auto_login === true ? 'onepassword' : 'manual',
-      pending: state?.pending || 0, health, login: this.jobs.forAccount(a.id) };
+      pending: state?.pending || 0, health, login, login_status: login ? this.jobs.status(login, true) : undefined };
   }
   authorized(a) { return !!this.store.get(`authorized:${a.id}`) || !!this.store.secret(`google:${a.id}`) || !!this.store.get(`microsoft-owner:${a.id}`); }
   startSync(id) {

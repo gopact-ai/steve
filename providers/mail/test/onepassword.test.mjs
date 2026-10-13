@@ -16,7 +16,7 @@ const itemID = 'a'.repeat(26), vaultID = 'v'.repeat(26), secret = 'private-fixtu
 const google = { id: itemID, category: 'LOGIN', title: 'Google: owner', vault: { id: vaultID }, urls: [{ href: 'https://accounts.google.com' }], tags: ['Work'] };
 function cliFixture() {
   const calls = []; let address = 'owner@gmail.com'; let items = [google,
-    { ...google, id: 'b'.repeat(26), title: 'Apple', urls: [{ href: 'https://appleid.apple.com' }] },
+    { ...google, id: 'b'.repeat(26), title: 'Apple', urls: [{ href: 'https://appleid.apple.com', primary: true }, { href: 'https://mail.google.com' }] },
     { ...google, id: 'c'.repeat(26), archived: true },
     { ...google, id: 'd'.repeat(26), urls: [{ href: 'https://accounts.google.com.evil.example' }] }];
   const executor = async (command, args, options) => {
@@ -82,10 +82,15 @@ test('automatic login waits for the SDK receipt and reports owner challenges wit
   let called = 0;
   manager.loginBrowser = { enqueue(operation) { return Promise.resolve().then(operation); }, async login(account, url, hooks) { called++; assert.equal(account.id, id); hooks.progress('owner_action_required', 'Confirm the passkey in the Steve login browser'); }, async close() { finish(); } };
   const first = manager.jobs.start(id); const second = manager.jobs.start(id); assert.equal(first.id, second.id); assert.equal(first.stage, 'queued');
+  assert.equal(first.address, 'owner@gmail.com'); assert.equal(first.provider, 'gmail');
   await new Promise(resolve => setImmediate(resolve)); assert.equal(called, 1);
   const waiting = manager.jobs.status(first.id, true);
   assert.equal(waiting.state, 'waiting'); assert.equal(waiting.method, 'onepassword'); assert.equal(waiting.needs_owner, true);
   assert.ok(!('url' in waiting)); assert.equal(manager.authorized(manager.get(id)), false);
+  const account = manager.snapshot().items.find(account => account.id === id);
+  assert.equal(account.login_status.id, first.id); assert.equal(account.login_status.needs_owner, true);
+  assert.equal(account.login_status.stage, 'owner_action_required');
+  assert.ok(!JSON.stringify(account).includes('private-oauth-url')); assert.ok(!JSON.stringify(account).includes(secret));
   finish(); await manager.jobs.jobs.get(first.id).promise;
   assert.equal(manager.jobs.status(first.id, true).state, 'authorized'); assert.equal(manager.jobs.status(first.id, true).needs_owner, false);
 });

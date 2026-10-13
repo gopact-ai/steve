@@ -42,10 +42,11 @@ export async function fillGoogleStep(page, account, credentials, otp, completed,
   }
   if (new URL(page.url()).pathname.startsWith('/v3/signin/challenge/') || new URL(page.url()).pathname.startsWith('/signin/v2/challenge/')) {
     for (const [name, expression] of [
-      ['password_option', /^(Use your password|Enter your password|使用密码|使用密碼|输入密码|輸入密碼)$/],
-      ['another_method', /^(Try another way|尝试其他方式|嘗試其他方式)$/],
+      ['password_option', /^(Use your password|Enter your password|使用密码|使用密碼|输入密码|輸入密碼|输入您的密码|輸入您的密碼)$/],
+      ['otp_option', /^(Get a verification code from the Google Authenticator app|Get a code from the Google Authenticator app|从 Google 身份验证器应用获取验证码|從 Google 驗證器應用程式取得驗證碼)$/],
+      ['another_method', /^(Try another way|尝试其他方式|嘗試其他方式|试试其他方式|試試其他方式)$/],
     ]) {
-      const button = page.getByRole('button', { name: expression });
+      const button = page.getByRole('button', { name: expression }).or(page.getByRole('link', { name: expression }));
       const step = `${name}:${new URL(page.url()).pathname}`;
       if (!completed.has(step) && await button.count() === 1 && await button.isVisible()) {
         await button.click({ timeout: 5000 }); completed.add(step); return name;

@@ -13,9 +13,12 @@ import { Nothing } from "@/components/steve/ui";
 import { useI18n } from "@/providers/locale-provider";
 import { providerNames, type MailAccount } from "@/lib/mail-types";
 import { when } from "@/lib/format";
+import { loginActive, loginLabel } from "@/lib/mail-login-state";
 
 type RowAction = "edit" | "login" | "sync" | "pause" | "remove" | "job";
 function mailState(row: MailAccount) {
+    if (loginActive(row.login_status)) return "signingIn";
+    if (row.login_status?.state === "error") return "loginFailed";
     return !row.enabled ? "paused" : row.health?.state === "error" ? "error" : row.health?.state === "syncing" ? "syncing" : row.authorized ? "ready" : "needsLogin";
 }
 
@@ -64,7 +67,7 @@ export function MailRoster({ accounts, params, change, disabled, busy, error, on
                 <div className="col-span-3"><Input name="mail-search" type="search" label={t("mail.search")} value={search} onChange={value => filter("q", value)} autoComplete="off" placeholder={t("mail.searchPlaceholder")} /></div>
                 <Select label={t("mail.groupBy")} selectedKey={grouping} onSelectionChange={key => filter("group_by", String(key))} items={[{ id: "category", label: t("mail.byCategory") }, { id: "provider", label: t("mail.byProvider") }]}>{item => <Select.Item {...item} />}</Select>
                 <Select label={t("mail.provider")} selectedKey={provider} onSelectionChange={key => filter("provider", String(key))} items={[{ id: "all", label: t("mail.allProviders") }, ...Object.entries(providerNames).map(([id, label]) => ({ id, label }))]}>{item => <Select.Item {...item} />}</Select>
-                <Select label={t("mail.statusFilter")} selectedKey={status} onSelectionChange={key => filter("status", String(key))} items={[{ id: "all", label: t("mail.allStates") }, ...(["needsLogin", "ready", "paused", "error", "syncing"] as const).map(id => ({ id, label: t(`mail.${id}`) }))]}>{item => <Select.Item {...item} />}</Select>
+                <Select label={t("mail.statusFilter")} selectedKey={status} onSelectionChange={key => filter("status", String(key))} items={[{ id: "all", label: t("mail.allStates") }, ...(["needsLogin", "signingIn", "loginFailed", "ready", "paused", "error", "syncing"] as const).map(id => ({ id, label: t(`mail.${id}`) }))]}>{item => <Select.Item {...item} />}</Select>
             </div>
             <div className="flex min-h-12 min-w-0 shrink-0 flex-wrap items-center gap-3 border-b border-secondary px-3 py-2">
                 <Checkbox aria-label={t("mail.selectVisible")} isSelected={!!visible.length && chosen.length === visible.length} isIndeterminate={!!chosen.length && chosen.length < visible.length} isDisabled={disabled || !visible.length} onChange={checked => select(visible.map(row => row.id), checked)} />
@@ -93,16 +96,21 @@ export function MailRoster({ accounts, params, change, disabled, busy, error, on
 
 function MailRosterRow({ row, selected, disabled, busy, onSelect, onAction }: { row: MailAccount; selected: boolean; disabled: boolean; busy: boolean; onSelect: (checked: boolean) => void; onAction: (action: RowAction) => void }) {
     const { t, locale } = useI18n(); const state = mailState(row); const locked = disabled || state === "syncing";
+    const active = loginActive(row.login_status);
+    const label = t(active && row.login_status ? loginLabel(row.login_status) : `mail.${state}`);
+    const color = state === "ready" ? "success" : state === "error" || state === "loginFailed" ? "error" : row.login_status?.needs_owner || state === "needsLogin" ? "warning" : active ? "blue" : "gray";
+    const hint = row.login_status?.hint;
     return <li className={`flex min-w-0 items-center gap-3 px-3 py-2.5 ${selected ? "bg-primary_hover" : ""}`}>
         <Checkbox aria-label={t("mail.selectAccount", { address: row.address })} isSelected={selected} isDisabled={disabled} onChange={onSelect} />
         <div className="min-w-0 flex-1">
             <h3 className="truncate text-sm font-medium text-primary" title={row.title}>{row.title}</h3>
             <div className="flex min-w-0 items-center gap-2 text-xs text-tertiary"><span className="truncate" translate="no" title={row.address}>{row.title !== row.address ? row.address : providerNames[row.provider]}</span>{row.title !== row.address ? <span className="hidden shrink-0 sm:inline" translate="no">{providerNames[row.provider]}</span> : null}{row.tags?.length ? <span className="hidden truncate md:inline" title={row.tags.join(", ")}>· {row.tags.join(" · ")}</span> : null}</div>
-            <span className="mt-1 inline-flex sm:hidden"><Badge type="pill-color" size="sm" color={state === "ready" ? "success" : state === "error" ? "error" : state === "needsLogin" ? "warning" : "gray"}>{t(`mail.${state}`)}</Badge></span>
+            <span className="mt-1 inline-flex sm:hidden"><Badge type="pill-color" size="sm" color={color}>{label}</Badge></span>
+            {hint && (active || state === "loginFailed") ? <p className="mt-1 truncate text-xs text-secondary" title={hint}>{hint}</p> : null}
             {row.health ? <p className="truncate text-xs text-tertiary" title={row.health.hint || row.health.code}>{t("mail.lastSync")} · {when(row.health.at, locale)}{row.health.hint ? ` · ${row.health.hint}` : row.health.code ? ` · ${row.health.code}` : ""}</p> : null}
         </div>
-        <div className="hidden shrink-0 flex-col items-end gap-1 sm:flex"><Badge type="pill-color" size="sm" color={state === "ready" ? "success" : state === "error" ? "error" : state === "needsLogin" ? "warning" : "gray"}>{t(`mail.${state}`)}</Badge>{row.pending ? <span className="text-xs tabular-nums text-tertiary">{t("mail.pending", { count: row.pending })}</span> : null}</div>
-        <Button size="sm" color="secondary" isDisabled={locked || (row.authorized && !row.enabled)} isLoading={busy} onClick={() => onAction(row.authorized ? "sync" : "login")}>{t(row.authorized ? "mail.sync" : "mail.login")}</Button>
+        <div className="hidden shrink-0 flex-col items-end gap-1 sm:flex" aria-live={active ? "polite" : "off"}><Badge type="pill-color" size="sm" color={color}>{label}</Badge>{row.pending ? <span className="text-xs tabular-nums text-tertiary">{t("mail.pending", { count: row.pending })}</span> : null}</div>
+        <Button size="sm" color="secondary" isDisabled={locked || (!active && row.authorized && !row.enabled)} isLoading={busy} onClick={() => onAction(active ? "job" : state === "loginFailed" ? "login" : row.authorized ? "sync" : "login")}>{t(active ? "mail.viewLogin" : state === "loginFailed" ? "mail.reconnect" : row.authorized ? "mail.sync" : "mail.login")}</Button>
         <Dropdown.Root><IconButton label={t("mail.accountActions", { address: row.address })} isDisabled={locked} icon={DotsHorizontal} /><Dropdown.Popover><Dropdown.Menu aria-label={t("mail.accountActions", { address: row.address })} onAction={key => onAction(String(key) as RowAction)}>
             <Dropdown.Item id="edit" label={t("mail.edit")} /><Dropdown.Item id="pause" label={t(row.enabled ? "mail.pause" : "mail.resume")} />
             {row.authorized ? <Dropdown.Item id="login" label={t("mail.reconnect")} /> : null}{row.login ? <Dropdown.Item id="job" label={t("mail.loginStatus")} /> : null}

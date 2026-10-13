@@ -22,7 +22,9 @@ export class LoginJobs {
     const job = this.jobs.get(id);
     if (!job) throw new SetupError('Login session expired; start login again');
     const { promise, controller, url, user_code, ...result } = job;
-    return publicOnly ? result : { ...result, url, user_code };
+    const account = this.manager.accounts.find(account => account.id === job.account);
+    const identity = account ? { address: account.address, title: account.title || account.address, provider: account.provider } : {};
+    return publicOnly ? { ...result, ...identity } : { ...result, ...identity, url, user_code };
   }
   start(id) {
     const account = this.manager.get(id);

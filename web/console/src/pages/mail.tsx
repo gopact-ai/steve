@@ -26,7 +26,7 @@ export function MailPage() {
     const saved = () => { close(); resource.refresh(); };
     const open = (value: string, account?: string) => { setParams(before => { const next = new URLSearchParams(before); next.set("panel", value); if (account) next.set("account", account); else next.delete("account"); return next; }); setError(""); };
     const action = async (id: string, run: () => Promise<unknown>) => { setBusy(id); setError(""); try { await run(); resource.refresh(); return true; } catch (cause) { setError(message(cause)); return false; } finally { setBusy(""); } };
-    const login = (id: string) => action(id, async () => { const job = await startMailLogin(id); setParams(before => { const next = new URLSearchParams(before); next.set("login", job.id); return next; }); });
+    const login = (id: string) => action(id, async () => { const job = await startMailLogin(id); if (job.method !== "onepassword" || job.needs_owner) setParams(before => { const next = new URLSearchParams(before); next.set("login", job.id); return next; }); });
     const assist = (account?: string) => {
         const ai = snapshot?.ai; if (!ai?.enabled || !ai.client || !ai.conversation) return;
         act(t(account ? "mail.aiLoginPrompt" : "mail.aiManagePrompt", { client: ai.client, account: account || "" })); navigate(conversationURL(ai.conversation));
@@ -72,6 +72,6 @@ export function MailPage() {
         {panel === "export" && snapshot && !resource.error ? <MailExport onClose={close} /> : null}
         {panel === "ai" && snapshot && !resource.error ? <MailAI current={snapshot.ai} onClose={close} onSaved={saved} /> : null}
         {panel === "import" && snapshot && !resource.error ? <MailImport draftID={params.get("draft") || undefined} ai={snapshot.ai} onDraft={id => change("draft", id)} onClose={close} onSaved={saved} /> : null}
-        {params.get("login") && !resource.error ? <MailLogin id={params.get("login")!} onClose={() => { change("login", ""); resource.refresh(); }} onDone={() => { change("login", ""); resource.refresh(); }} /> : null}
+        {params.get("login") && !resource.error ? <MailLogin id={params.get("login")!} accounts={snapshot?.items || []} onClose={() => { change("login", ""); resource.refresh(); }} onDone={() => { change("login", ""); resource.refresh(); }} /> : null}
     </div>;
 }

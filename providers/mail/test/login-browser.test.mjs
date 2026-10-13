@@ -63,6 +63,19 @@ test('real isolated browser fills username, password and fresh OTP once and refu
   assert.equal(await fillGoogleStep(page, account, credentials, otp, fallback), 'password_option');
   assert.equal(await fillGoogleStep(page, account, credentials, otp, fallback), 'password');
   assert.equal(await page.locator('input[name="Passwd"]').inputValue(), credentials.password);
+  await page.goto('https://accounts.google.com/v3/signin/challenge/selection');
+  await page.setContent('<a href="#" onclick="event.preventDefault(); window.passwordChoice = true">输入您的密码</a>');
+  const localized = new Set();
+  assert.equal(await fillGoogleStep(page, account, credentials, otp, localized), 'password_option');
+  assert.equal(await page.evaluate(() => window.passwordChoice), true);
+  assert.equal(await fillGoogleStep(page, account, credentials, otp, localized), 'owner_action_required');
+  await page.setContent(`<a href="#" id="otp">从 Google 身份验证器应用获取验证码</a><script>document.querySelector('#otp').onclick = event => {
+    event.preventDefault(); document.body.innerHTML = '<input id="totpPin"><button id="totpNext">Next</button>';
+  };</script>`);
+  const totpChoice = new Set();
+  assert.equal(await fillGoogleStep(page, account, credentials, otp, totpChoice), 'otp_option');
+  assert.equal(await fillGoogleStep(page, account, credentials, otp, totpChoice), 'verification_code');
+  assert.equal(await page.locator('#totpPin').inputValue(), '123456'); assert.equal(otpCalls, 2);
 });
 test('browser hands the real PKCE loopback callback to the Google SDK and serializes login windows', async t => {
   const starts = [], stages = []; let active = 0; let maximum = 0;

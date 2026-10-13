@@ -5,7 +5,9 @@ import { SetupError } from './errors.mjs';
 const exec = promisify(execFile);
 const id = value => typeof value === 'string' && /^[a-z0-9]{26}$/i.test(value);
 export function googleLoginItem(item) {
-  return item?.category === 'LOGIN' && !item.archived && item.urls?.some(entry => {
+  const urls = Array.isArray(item?.urls) ? item.urls : [];
+  const primary = urls.filter(entry => entry.primary);
+  return item?.category === 'LOGIN' && !item.archived && (primary.length ? primary : urls).some(entry => {
     try { const url = new URL(entry.href); return url.protocol === 'https:' && !url.username && !url.password && ['accounts.google.com', 'mail.google.com'].includes(url.hostname); }
     catch { return false; }
   });
