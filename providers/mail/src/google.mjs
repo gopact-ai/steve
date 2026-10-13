@@ -7,12 +7,12 @@ import { envelope, plainText } from './message.mjs';
 
 export const GOOGLE_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
 
-export async function googleClient(account, store, login = false) {
-  const keys = JSON.parse(readFileSync(account.credentials_file, 'utf8')).installed;
+export async function googleClient(account, store, login = false, options = {}) {
+  const keys = account.google_keys || JSON.parse(readFileSync(account.credentials_file, 'utf8')).installed;
   if (!keys?.client_id) throw new SetupError('Use Google desktop OAuth application credentials');
   let auth;
   if (login) {
-    auth = await authorizeGoogle(keys, GOOGLE_SCOPES);
+    auth = await authorizeGoogle(keys, GOOGLE_SCOPES, options);
   } else {
     const saved = store.secret(`google:${account.id}`);
     if (!saved?.refresh_token) throw new SetupError('Run login for this Gmail account');

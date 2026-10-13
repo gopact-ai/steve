@@ -1,3 +1,4 @@
+import { mailZh } from "./zh/mail.ts";
 import { assistantZh } from "./zh/assistant.ts";
 import { appearanceZh } from "./zh/appearance.ts";
 import { workHistoryZh } from "./zh/work-history.ts";
@@ -29,4 +30,4 @@ import { usageZh } from "./zh/usage.ts";
 import { setupZh } from "./zh/setup.ts";
 
 // Loaded on demand: see loadLocale in ../i18n.ts.
-export const zh = { ...assistantZh, ...appearanceZh, ...workHistoryZh, ...pluginsZh, ...nodeAgentsZh, ...coordinationZh, ...sshZh, ...desktopZh, ...selectionZh, ...sideChatZh, ...commonZh, ...consoleZh, ...consoleChromeZh, ...materialsZh, ...settingsPageZh, ...mcpToolsZh, ...tasksZh, ...settingsEditorZh, ...inboxZh, ...conflictsZh, ...historyZh, ...boardZh, ...homeZh, ...skillsZh, ...mcpZh, ...fleetZh, ...projectsZh, ...usageZh, ...setupZh } as const;
+export const zh = { ...mailZh, ...assistantZh, ...appearanceZh, ...workHistoryZh, ...pluginsZh, ...nodeAgentsZh, ...coordinationZh, ...sshZh, ...desktopZh, ...selectionZh, ...sideChatZh, ...commonZh, ...consoleZh, ...consoleChromeZh, ...materialsZh, ...settingsPageZh, ...mcpToolsZh, ...tasksZh, ...settingsEditorZh, ...inboxZh, ...conflictsZh, ...historyZh, ...boardZh, ...homeZh, ...skillsZh, ...mcpZh, ...fleetZh, ...projectsZh, ...usageZh, ...setupZh } as const;

@@ -19,6 +19,7 @@ export class Runner {
   constructor(config, store, steve, factory = adapter, report = row => console.log(JSON.stringify(row))) {
     Object.assign(this, { config, store, steve, factory, report });
     this.adapters = new Map();
+    this.inflight = new Set();
   }
   async cycle() {
     // SDK calls can wait on network/OAuth for one mailbox. Other accounts still
@@ -37,7 +38,10 @@ export class Runner {
     }));
   }
   async sync(account) {
+    if (this.inflight.has(account.id)) return false;
+    this.inflight.add(account.id);
     try {
+      this.store.set(`health:${account.id}`, JSON.stringify({ account: account.id, state: 'syncing', at: new Date().toISOString() }));
       let { cutoff, cursor } = this.store.account(account);
       let published = await this.steve.drain(account.id);
       if (!this.adapters.has(account.id)) this.adapters.set(account.id, await this.factory(account, this.store));
@@ -59,6 +63,6 @@ export class Runner {
       this.store.set(`health:${account.id}`, JSON.stringify(row));
       this.report(row);
       return false;
-    }
+    } finally { this.inflight.delete(account.id); }
   }
 }

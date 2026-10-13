@@ -5,7 +5,7 @@ import { envelope, plainText } from './message.mjs';
 
 export const MICROSOFT_SCOPES = ['https://graph.microsoft.com/Mail.Read', 'https://graph.microsoft.com/User.Read'];
 
-export async function microsoftClient(account, store, login = false, prompt = console.log) {
+export async function microsoftClient(account, store, login = false, prompt = console.log, { signal } = {}) {
   const msal = new PublicClientApplication({
     auth: { clientId: account.client_id, authority: 'https://login.microsoftonline.com/consumers' },
     system: { loggerOptions: { logLevel: LogLevel.Error, piiLoggingEnabled: false, loggerCallback() {} } },
@@ -16,9 +16,12 @@ export async function microsoftClient(account, store, login = false, prompt = co
   });
   let owner;
   if (login) {
-    const result = await msal.acquireTokenByDeviceCode({ scopes: MICROSOFT_SCOPES,
-      deviceCodeCallback: response => prompt(response.message) });
-    owner = result?.account;
+    const request = { scopes: MICROSOFT_SCOPES, timeout: 300, cancel: signal?.aborted || false,
+      deviceCodeCallback: response => prompt(response.message, response) };
+    const cancel = () => { request.cancel = true; };
+    signal?.addEventListener('abort', cancel, { once: true });
+    try { owner = (await msal.acquireTokenByDeviceCode(request))?.account; }
+    finally { signal?.removeEventListener('abort', cancel); }
   } else {
     const homeId = store.get(`microsoft-owner:${account.id}`);
     owner = homeId ? await msal.getTokenCache().getAccountByHomeId(homeId) : null;

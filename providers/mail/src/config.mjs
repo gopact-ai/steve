@@ -2,10 +2,11 @@ import { SetupError } from './errors.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-export function loadConfig(path) {
+export function loadConfig(path, { managed = false } = {}) {
   const config = JSON.parse(readFileSync(path, 'utf8'));
   const ids = new Set();
-  if (!Array.isArray(config.accounts) || !config.accounts.length) throw new SetupError('Configure at least one mail account');
+  config.accounts ??= [];
+  if (!Array.isArray(config.accounts) || (!managed && !config.accounts.length)) throw new SetupError('Configure at least one mail account');
   for (const account of config.accounts) {
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(account.id) || ids.has(account.id)) throw new SetupError('Account IDs must be unique stable names');
     ids.add(account.id);
@@ -28,6 +29,9 @@ export function loadConfig(path) {
   if (!Number.isFinite(config.poll_seconds) || config.poll_seconds < 15) throw new SetupError('poll_seconds must be at least 15');
   config.steve_token_env ||= 'STEVE_MAIL_CONNECTION_TOKEN';
   config.secrets_key_env ||= 'STEVE_MAIL_SECRETS_KEY';
+  config.admin_token_env ||= 'STEVE_MAIL_ADMIN_TOKEN';
+  config.admin_port ??= 8787;
+  if (!Number.isInteger(config.admin_port) || config.admin_port < 0 || config.admin_port > 65535) throw new SetupError('Invalid mail administration port');
   return config;
 }
 

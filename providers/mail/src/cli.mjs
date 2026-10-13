@@ -7,6 +7,7 @@ import { Store } from './store.mjs';
 import { Steve } from './steve.mjs';
 import { Runner, adapter, errorCode } from './runner.mjs';
 import { SetupError } from './errors.mjs';
+import { serveMail } from './daemon.mjs';
 
 async function main() {
   const args = parseArgs({ allowPositionals: true, options: {
@@ -14,11 +15,11 @@ async function main() {
   } });
   const command = args.positionals[0] || 'run';
   if (args.values.help) {
-    console.log('node src/cli.mjs [login|run|once|status] --config config.json [--account account-id]');
+    console.log('node src/cli.mjs [serve|login|run|once|status] --config config.json [--account account-id]');
     return;
   }
-  if (!['login', 'run', 'once', 'status'].includes(command) || args.positionals.length > 1) throw new SetupError('Unknown command; use --help');
-  const config = loadConfig(resolve(args.values.config));
+  if (!['serve', 'login', 'run', 'once', 'status'].includes(command) || args.positionals.length > 1) throw new SetupError('Unknown command; use --help');
+  const config = loadConfig(resolve(args.values.config), { managed: ['serve', 'status'].includes(command) });
   if (command === 'status') {
     const store = new Store(config.state_dir, Buffer.alloc(32), { readOnly: true });
     try {
@@ -42,6 +43,7 @@ async function main() {
       store.account(account, false);
       const client = await adapter(account, store, true);
       if (account.provider === 'icloud') await client.poll(null, new Date().toISOString());
+      store.set(`authorized:${account.id}`, '1');
       console.log(JSON.stringify({ account: account.id, state: 'authorized' }));
       return;
     }
@@ -59,7 +61,8 @@ async function main() {
         if ([401, 403, 409].includes(error.statusCode)) { process.exitCode = 1; stop.abort(); }
       }).finally(() => { heartbeat = null; });
     }, 15000);
-    if (command === 'once') process.exitCode = await runner.cycle() ? 0 : 1;
+    if (command === 'serve') await serveMail(config, store, steve, stop.signal);
+    else if (command === 'once') process.exitCode = await runner.cycle() ? 0 : 1;
     else await runner.run(stop.signal);
     process.removeListener('SIGINT', onStop);
     process.removeListener('SIGTERM', onStop);

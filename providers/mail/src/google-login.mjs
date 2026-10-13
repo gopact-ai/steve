@@ -6,7 +6,7 @@ import { SetupError } from './errors.mjs';
 
 // OAuth URL generation, PKCE and code/token exchange belong to Google's SDK.
 // This is the local application's browser/callback glue only.
-export async function authorizeGoogle(keys, scopes, { openBrowser = open, clientFactory = options => new OAuth2Client(options) } = {}) {
+export async function authorizeGoogle(keys, scopes, { openBrowser = open, clientFactory = options => new OAuth2Client(options), signal } = {}) {
   const state = randomBytes(32).toString('base64url');
   let client;
   let verifier;
@@ -14,6 +14,8 @@ export async function authorizeGoogle(keys, scopes, { openBrowser = open, client
   let accepted = false;
   const result = new Promise((resolve, reject) => { finish = resolve; fail = reject; });
   result.catch(() => {}); // The browser can cancel while its launch is still awaited.
+  const abort = () => fail(new SetupError('Google authorization cancelled'));
+  signal?.addEventListener('abort', abort, { once: true });
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     const candidate = Buffer.from(url.searchParams.get('state') || '');
@@ -47,9 +49,11 @@ export async function authorizeGoogle(keys, scopes, { openBrowser = open, client
     const url = client.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: scopes,
       state, code_challenge: pkce.codeChallenge, code_challenge_method: 'S256' });
     await openBrowser(url);
+    if (signal?.aborted) abort();
     return await result;
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener('abort', abort);
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
   }

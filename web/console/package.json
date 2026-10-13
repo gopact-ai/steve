@@ -43,7 +43,8 @@
     "test:performance": "node ../../e2e/console/performance-ui.mjs && node ../../e2e/console/deferred-details.mjs && node scripts/lazy-region-browser.test.mjs && node scripts/locale-lazy-browser.test.mjs && node scripts/fleet-render-browser.test.mjs && node scripts/sessions-render-browser.test.mjs",
     "test:channel-conversations": "node scripts/channel-history-refresh-browser.test.mjs && node scripts/channel-conversation-browser.test.mjs",
     "generate:palettes": "node scripts/generate-palettes.mjs",
-    "test:appearance": "node scripts/generate-palettes.mjs --check && node scripts/appearance-browser.test.mjs"
+    "test:appearance": "node scripts/generate-palettes.mjs --check && node scripts/appearance-browser.test.mjs",
+    "test:mail": "node ../../e2e/console/mail-ui.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

@@ -10,7 +10,7 @@ export class ICloudInbox {
   async poll(cursor, cutoff) {
     const account = this.account;
     const client = this.factory({ host: 'imap.mail.me.com', port: 993, secure: true,
-      auth: { user: account.username || account.address, pass: requiredEnv(account.password_env || 'STEVE_ICLOUD_APP_PASSWORD') },
+      auth: { user: account.username || account.address, pass: account.app_password || requiredEnv(account.password_env || 'STEVE_ICLOUD_APP_PASSWORD') },
       logger: false, emitLogs: false, connectionTimeout: 30000, greetingTimeout: 30000, socketTimeout: 60000 });
     let lock;
     const deadline = setTimeout(() => client.close(), 90000);

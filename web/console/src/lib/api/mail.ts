@@ -1,0 +1,17 @@
+import { request } from "@/lib/http";
+import type { MailAccount, MailDraft, MailLogin, MailSnapshot } from "@/lib/mail-types";
+const base = "/console/mail";
+export const mailSnapshot = (signal?: AbortSignal) => request<MailSnapshot>(`${base}/accounts`, { signal });
+export const addMailbox = (body: unknown) => request<MailAccount>(`${base}/accounts`, { method: "POST", body });
+export const updateMailbox = (id: string, body: unknown) => request<MailAccount>(`${base}/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body });
+export const batchMailboxes = (body: unknown) => request<{ updated: string[] }>(`${base}/accounts/batch`, { method: "POST", body });
+export const removeMailbox = (id: string) => request(`${base}/accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
+export const startMailLogin = (id: string) => request<MailLogin>(`${base}/accounts/${encodeURIComponent(id)}/login`, { method: "POST", body: {} });
+export const readMailLogin = (id: string, signal?: AbortSignal) => request<MailLogin>(`${base}/logins/${encodeURIComponent(id)}`, { signal });
+export const syncMailbox = (id: string) => request(`${base}/accounts/${encodeURIComponent(id)}/sync`, { method: "POST", body: {} });
+export const previewMailImport = (body: unknown) => request<MailDraft>(`${base}/imports/preview`, { method: "POST", body });
+export const readMailDraft = (id: string, signal?: AbortSignal) => request<MailDraft>(`${base}/imports/${encodeURIComponent(id)}`, { signal });
+export const commitMailImport = (body: unknown) => request<MailDraft>(`${base}/imports/commit`, { method: "POST", body });
+export const configureMailApps = (body: unknown) => request(`${base}/apps`, { method: "PUT", body });
+export const configureMailAI = (body: unknown) => request(`${base}/ai`, { method: "PUT", body });
+export const exportMail = (body: unknown) => request<{ name: string; type: string; data: string }>(`${base}/exports`, { method: "POST", body });

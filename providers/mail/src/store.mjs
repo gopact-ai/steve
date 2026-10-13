@@ -24,6 +24,7 @@ export class Store {
   close() { this.db.close(); }
   get(name) { return this.db.prepare('SELECT value FROM settings WHERE key=?').get(name)?.value; }
   set(name, value) { this.db.prepare('INSERT OR REPLACE INTO settings VALUES (?,?)').run(name, value); }
+  deleteSecret(name) { this.db.prepare('DELETE FROM secrets WHERE key=?').run(name); }
   secret(name, value) {
     if (value === undefined) {
       const stored = this.db.prepare('SELECT value FROM secrets WHERE key=?').get(name)?.value;
@@ -41,7 +42,7 @@ export class Store {
     this.db.prepare('INSERT OR REPLACE INTO secrets VALUES (?,?)').run(name, Buffer.concat([iv, cipher.getAuthTag(), data]).toString('base64'));
   }
   account(account, start = true) {
-    const identity = JSON.stringify([account.provider, account.address.toLowerCase(), account.client_id || '', account.credentials_file || '']);
+    const identity = JSON.stringify([account.provider, account.address.toLowerCase(), account.client_id || account.google_keys?.client_id || '', account.credentials_file || '']);
     let row = this.db.prepare('SELECT * FROM accounts WHERE id=?').get(account.id);
     if (row && row.identity !== identity) throw new SetupError('Account identity changed: configure a new stable account ID');
     if (!row) {
