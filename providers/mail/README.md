@@ -272,9 +272,12 @@ HTTPS 网站的有效 Login 条目，Apple 等条目不会因用户名是 Gmail 
 ## 验证
 
 ```sh
+npx playwright install chromium
 npm test
 STEVE_MAIL_INTEGRATION=1 npm test
 ```
+
+也可设置 `BROWSER_CHANNEL=chrome`，使用已安装 Chrome 运行隔离浏览器测试。
 
 测试覆盖分页、过期游标恢复、跨账号去重、正文截断、缓存加密与身份绑定、发布
 回执丢失和容量回滚，并覆盖真实导出格式解析、分类往返、50 邮箱批量原子更新、
