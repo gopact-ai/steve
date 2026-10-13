@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/events"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/mailcontrol"
 	"github.com/gopact-ai/steve/internal/serviceapi"
 	"github.com/gopact-ai/steve/internal/servicehub"
 	"github.com/gopact-ai/steve/internal/task"
@@ -46,6 +47,7 @@ func assembleAssistant(boot runtimeAssembly, page consoleAssembly, delegates del
 		return events.DepthAfter(r, w.Request.Causation)
 	}
 	page.Dashboard().SetAssistant(&serviceapi.Services{Maintenance: services, Identity: services.Identity, Providers: services.Providers, Events: services.Events, Work: services.Work, Clients: services.Clients, Accounts: execution.Accounts(), Interactions: execution.Interactions(), Policy: page.Admin().Projects})
+	page.Dashboard().SetMailControl(mailcontrol.FromEnvironment())
 	if gate := delegates.Gate(); gate != nil {
 		gate.SetClientInvoker(&clientCapabilityTools{services: services})
 	}

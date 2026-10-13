@@ -1,0 +1,13 @@
+{
+  "steve_url": "http://127.0.0.1:7710",
+  "state_dir": "state",
+  "poll_seconds": 60,
+  "steve_token_env": "STEVE_MAIL_CONNECTION_TOKEN",
+  "secrets_key_env": "STEVE_MAIL_SECRETS_KEY",
+  "accounts": [
+    { "id": "personal-gmail", "provider": "gmail", "address": "owner@gmail.com", "credentials_file": "credentials-google.json" },
+    { "id": "personal-outlook", "provider": "outlook", "address": "owner@outlook.com", "client_id": "YOUR-MICROSOFT-PUBLIC-CLIENT-ID" },
+    { "id": "personal-hotmail", "provider": "hotmail", "address": "owner@hotmail.com", "client_id": "YOUR-MICROSOFT-PUBLIC-CLIENT-ID" },
+    { "id": "personal-icloud", "provider": "icloud", "address": "owner@icloud.com", "password_env": "STEVE_ICLOUD_APP_PASSWORD" }
+  ]
+}

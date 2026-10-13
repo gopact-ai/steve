@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/mailcontrol"
 	providerapi "github.com/gopact-ai/steve/internal/provider"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/serviceapi"
@@ -93,6 +94,7 @@ func run() error {
 		go previewBusMotion(ctx, services, provider.Grant.ID, busRecords["consumer"])
 	}
 	server.SetConsole(conversation)
+	server.SetMailControl(mailcontrol.FromEnvironment())
 	server.SetAssistant(&serviceapi.Services{Maintenance: services, Providers: services.Providers, Identity: services.Identity, Events: services.Events, Work: services.Work, Clients: services.Clients})
 	done := make(chan error, 1)
 	go func() { done <- server.Serve() }()

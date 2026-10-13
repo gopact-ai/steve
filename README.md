@@ -212,6 +212,7 @@ agent 用 `steve_delegate` 交出一件有界工作；调用短暂等待后返�
 - [docs/architecture.md](docs/architecture.md)：模块依赖、状态权威、提交与读取边界。
 - [docs/plugins-local.md](docs/plugins-local.md)：插件页面操作、作者清单、节点凭据与固定版本参考。
 - [docs/plugins.md](docs/plugins.md)：插件系统契约：能力包、版本与节点绑定、分阶段验收。
+- [providers/mail/README.md](providers/mail/README.md)：Gmail、Outlook、Hotmail 和 iCloud Mail 事件 Provider，官方 SDK、授权与持久同步。
 - [docs/operations.md](docs/operations.md)：逐键配置参考、部署、门禁与排障。
 - 代码入口：[cmd/](cmd/)、核心实现 [internal/](internal/)、控制台 [web/console/](web/console/)、验收 [e2e/](e2e/)。
 

@@ -18,12 +18,14 @@ test:
 	$(GO) test -race -timeout 30m ./cmd/... ./internal/... ./e2e/...
 
 test-console:
+	npm --prefix providers/mail ci --ignore-scripts --no-audit --no-fund
 	npm --prefix web/console run test:boundaries
 	npm --prefix web/console run test:unit
 	npm --prefix web/console run build
 	npm --prefix web/console run test:styles
 	npm --prefix web/console run test:performance
 	npm --prefix web/console run test:ui
+	npm --prefix web/console run test:mail
 	npm --prefix web/console run test:task-completion
 	npm --prefix web/console run test:architecture
 	npm --prefix web/console run test:appearance

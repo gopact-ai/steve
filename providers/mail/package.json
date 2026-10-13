@@ -1,0 +1,27 @@
+{
+  "name": "@gopact/steve-mail-provider",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/cli.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@azure/msal-node": "7.0.1",
+    "@googleapis/gmail": "22.0.1",
+    "@microsoft/microsoft-graph-client": "3.0.7",
+    "csv-parse": "7.0.3",
+    "csv-stringify": "6.9.0",
+    "fflate": "0.8.3",
+    "google-auth-library": "11.3.0",
+    "html-to-text": "10.0.1",
+    "imapflow": "2.4.0",
+    "mailparser": "3.9.38",
+    "open": "11.0.4",
+    "proper-lockfile": "4.1.2"
+  }
+}

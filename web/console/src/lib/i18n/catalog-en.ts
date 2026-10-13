@@ -1,3 +1,4 @@
+import { mailEn } from "./en/mail.ts";
 import { assistantEn } from "./en/assistant.ts";
 import { appearanceEn } from "./en/appearance.ts";
 import { workHistoryEn } from "./en/work-history.ts";
@@ -30,4 +31,4 @@ import { setupEn } from "./en/setup.ts";
 import type { zh } from "./catalog-zh.ts";
 
 // Loaded on demand: see loadLocale in ../i18n.ts.
-export const en = { ...assistantEn, ...appearanceEn, ...workHistoryEn, ...pluginsEn, ...nodeAgentsEn, ...coordinationEn, ...sshEn, ...desktopEn, ...selectionEn, ...sideChatEn, ...commonEn, ...consoleEn, ...consoleChromeEn, ...materialsEn, ...settingsPageEn, ...mcpToolsEn, ...tasksEn, ...settingsEditorEn, ...inboxEn, ...conflictsEn, ...historyEn, ...boardEn, ...homeEn, ...skillsEn, ...mcpEn, ...fleetEn, ...projectsEn, ...usageEn, ...setupEn } as const satisfies Record<keyof typeof zh, string>;
+export const en = { ...mailEn, ...assistantEn, ...appearanceEn, ...workHistoryEn, ...pluginsEn, ...nodeAgentsEn, ...coordinationEn, ...sshEn, ...desktopEn, ...selectionEn, ...sideChatEn, ...commonEn, ...consoleEn, ...consoleChromeEn, ...materialsEn, ...settingsPageEn, ...mcpToolsEn, ...tasksEn, ...settingsEditorEn, ...inboxEn, ...conflictsEn, ...historyEn, ...boardEn, ...homeEn, ...skillsEn, ...mcpEn, ...fleetEn, ...projectsEn, ...usageEn, ...setupEn } as const satisfies Record<keyof typeof zh, string>;

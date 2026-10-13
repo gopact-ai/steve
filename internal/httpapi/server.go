@@ -59,6 +59,7 @@ type ServerConfig struct {
 // Server exposes the snapshot, the change stream and the dashboard.
 type Server struct {
 	assistant      *serviceapi.Services
+	mail           consoleapi.MailControl
 	plugins        consoleapi.PluginsService
 	coordination   consoleapi.CoordinationService
 	ssh            SSHService
@@ -121,6 +122,7 @@ func (s *Server) Serve() error {
 	s.pluginRoutes(mux)
 	s.coordinationRoutes(mux)
 	s.assistantRoutes(mux)
+	s.mailRoutes(mux)
 	mux.HandleFunc("GET /console/desktop", s.guard(s.consoleDesktop))
 	mux.HandleFunc("GET /console/desktop/agents", s.guard(s.consoleDesktopAgents))
 	mux.HandleFunc("POST /console/desktop/agents", s.guard(s.consoleDesktopAgents))

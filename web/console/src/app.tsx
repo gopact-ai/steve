@@ -6,7 +6,7 @@ import { SideChatProvider } from "@/providers/side-chat-provider";
 import { CloseStackProvider } from "@/providers/close-stack";
 import { lazy, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
-import { BarChartSquare02, BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Zap, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
+import { BarChartSquare02, BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Zap, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, Mail01, X } from "@untitledui/icons";
 import appIcon from "@/assets/app-icon.png";
 import { Sheet } from "@/components/steve/drawer";
 import { PaneResizer } from "@/components/steve/pane-resizer";
@@ -29,6 +29,7 @@ const NAV_MIN = 168;
 const NAV_MAX = 360;
 
 const PluginsPage = lazy(() => import("@/pages/plugins").then((module) => ({ default: module.PluginsPage })));
+const MailPage = lazy(() => import("@/pages/mail").then((module) => ({ default: module.MailPage })));
 const ConnectionsPage = lazy(() => import("@/pages/connections").then((module) => ({ default: module.ConnectionsPage })));
 const FleetPage = lazy(() => import("@/pages/fleet").then((module) => ({ default: module.FleetPage })));
 const DashboardPage = lazy(() => import("@/pages/dashboard").then((module) => ({ default: module.DashboardPage })));
@@ -74,6 +75,7 @@ function Shell() {
             { href: "/inbox", label: t("nav.inbox"), icon: Inbox01, badge: snap.inbox.length + (snap.conflicts?.length || 0) },
         ] },
         { id: "manage", title: t("nav.manage"), items: [
+            { href: "/mail", label: t("mail.title"), icon: Mail01, badge: 0 },
             { href: "/connections", label: t("assistant.nav"), icon: Dataflow03, badge: 0 },
             { href: "/projects", label: t("nav.projects"), icon: Folder, badge: 0 },
             { href: "/fleet", label: t("nav.fleet"), icon: Server01, badge: 0 },
@@ -98,7 +100,7 @@ function Shell() {
             {groups.map((group) => <div key={group.id} className="app-nav-group">
                 {!small && <span className="app-nav-label">{group.title}</span>}
                 {group.items.map((item) => <a key={item.href} href={"#" + item.href} aria-label={small ? item.label : undefined}
-                    aria-current={(item.href === "/home" ? location.pathname === "/home" : item.href === "/console?view=board" ? location.pathname === "/console" && new URLSearchParams(location.search).get("view") === "board" : item.href === "/console" ? location.pathname === "/console" && new URLSearchParams(location.search).get("view") !== "board" : selected === item.href) ? "page" : undefined} title={small ? item.label : undefined}
+                    aria-current={(item.href === "/home" || item.href === "/mail" ? location.pathname === item.href : item.href === "/console?view=board" ? location.pathname === "/console" && new URLSearchParams(location.search).get("view") === "board" : item.href === "/console" ? location.pathname === "/console" && new URLSearchParams(location.search).get("view") !== "board" : selected === item.href) ? "page" : undefined} title={small ? item.label : undefined}
                     className="app-nav-item" onClick={() => setMobileNav(false)}>
                     <item.icon aria-hidden="true" />
                     {!small && <span>{item.label}</span>}
@@ -144,6 +146,7 @@ function Shell() {
                 <Route path="/skills" element={<SkillsPage />} />
                 <Route path="/mcp" element={<MCPPage />} />
                 <Route path="/plugins" element={<PluginsPage />} />
+                <Route path="/mail" element={<MailPage />} />
                 <Route path="/connections" element={<ConnectionsPage />} />
                 <Route path="/home" element={<HomePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
