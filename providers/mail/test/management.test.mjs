@@ -30,6 +30,8 @@ test('real 1Password CSV headers, escaped fields, service filtering and duplicat
   const retry = manager.commit({ draft_id: draft.id, rows: draft.items.map(row => row.id) });
   assert.deepEqual(retry.imported, first.imported); assert.equal(manager.snapshot().items.length, 2);
   assert.equal(store.secret('managed:accounts')[1].app_password, 'apple-app-password');
+  assert.ok(store.secret(`draft:${draft.id}`).rows.every(row => !row.password));
+  assert.equal(manager.draft(draft.id).items[0].has_password, true);
   const publicData = JSON.stringify(manager.snapshot()); assert.ok(!publicData.includes('apple-app-password')); assert.ok(!publicData.includes('fixture-password'));
   const restored = new MailManager(manager.config, store, manager.runner);
   assert.equal(restored.snapshot().items.length, 2);

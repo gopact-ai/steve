@@ -137,7 +137,7 @@ export class MailManager {
     const draft = this.store.secret(`draft:${id}`);
     if (!draft || draft.expires < Date.now()) throw new SetupError('Import preview expired; choose the file again');
     return { id, skipped: draft.skipped, committed: !!draft.committed, imported: draft.imported || [], items: draft.rows.map(({ password, ...row }) => ({
-      ...row, has_password: !!password,
+      ...row, has_password: row.has_password ?? !!password,
       duplicate: this.accounts.some(a => !a.archived && a.provider === row.provider && a.address.toLowerCase() === row.address.toLowerCase()) })) };
   }
   commit(input) {
@@ -154,6 +154,8 @@ export class MailManager {
         const account = this.add({ ...row, credential_kind: input.icloud_app_passwords && row.provider === 'icloud' ? 'app_password' : row.credential_kind });
         if (!account.duplicate) imported.push(account.id);
       }
+      // A committed preview only needs metadata and its receipt, never a second credential copy.
+      for (const row of draft.rows) { row.has_password = !!row.password; delete row.password; }
       draft.committed = true; draft.imported = imported;
       this.store.secret(`draft:${input.draft_id}`, draft); this.store.db.exec('COMMIT');
     } catch (error) { this.store.db.exec('ROLLBACK'); this.accounts = before; throw error; }
