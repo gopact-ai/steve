@@ -23,6 +23,8 @@ jobs:
           cache-dependency-path: providers/mail/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: providers/mail
+      - run: npx playwright install --with-deps chromium
+        working-directory: providers/mail
       - run: npm test
         working-directory: providers/mail
         env:

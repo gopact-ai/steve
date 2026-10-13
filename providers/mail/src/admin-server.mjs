@@ -47,6 +47,7 @@ export async function adminServer(manager, token, port = 8787, worker) {
       else if (request.method === 'POST' && resource === 'exports' && !id) value = manager.export(body);
       else if (request.method === 'PUT' && resource === 'apps' && !id) value = manager.configureApps(body);
       else if (request.method === 'PUT' && resource === 'ai' && !id && worker) value = await worker.configure(body);
+      else if (request.method === 'POST' && resource === 'agent' && id === 'invoke' && !action && worker) value = await worker.invoke(body);
       else throw new SetupError('Unknown mail administration route');
       response.end(JSON.stringify(value));
     } catch (error) {
@@ -54,7 +55,7 @@ export async function adminServer(manager, token, port = 8787, worker) {
       response.end(JSON.stringify({ code: errorCode(error), error: error instanceof SetupError ? error.message : 'Mail operation failed; check the provider and retry' }));
     }
   });
-  server.requestTimeout = 35000; server.headersTimeout = 10000;
+  server.requestTimeout = 150000; server.headersTimeout = 10000;
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   return { url: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(resolve => { server.closeIdleConnections(); server.close(resolve); }) };
 }

@@ -91,13 +91,57 @@ try {
     const loginState = await invoke('mail-login-result', 'mail.login.status', { job_id: login.result.id }); assert.equal(loginState.state, 'done'); assert.ok(['waiting', 'authorized'].includes(loginState.result.state));
     assert.equal((await invoke('wrong-scope', 'mail.accounts', {}, 'console:other')).status, 403);
     const unauthorizedCapability = await invoke('no-export', 'mail.export', {}); assert.notEqual(unauthorizedCapability.state, 'done');
-    assert.deepEqual(mailCapabilities.map(cap => cap.name).sort(), ['mail.accounts', 'mail.import.preview', 'mail.import.commit', 'mail.login.start', 'mail.login.status'].sort());
+    assert.deepEqual(mailCapabilities.map(cap => cap.name).sort(), ['mail.accounts', 'mail.import.preview', 'mail.import.commit', 'mail.1password.status', 'mail.1password.preview', 'mail.login.start', 'mail.login.status'].sort());
     console.log('PASS mailbox management and AI import/login use real owner HTTP guards, scoped capabilities, durable receipts and encrypted local credentials');
     await page.getByRole('button', { name: 'Export', exact: true }).click();
     const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Download Export', exact: true }).click();
     const file = await download; const fs = await import('node:fs/promises'); const exported = await fs.readFile(await file.path(), 'utf8');
     assert.ok(exported.includes('owner@icloud.com')); assert.ok(!exported.includes('fixture-app-password')); assert.ok(!exported.includes('model-must-never-see-this'));
     await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    // An automatic job shows progress without asking the owner to start another browser flow.
+    const gmailID = mail.manager.accounts.find(account => account.address === 'owner@gmail.com').id;
+    const automatic = { id: 'fixture-automatic', account: gmailID, state: 'waiting', method: 'onepassword', stage: 'password', needs_owner: false,
+      url: 'https://accounts.google.com/o/oauth2/v2/auth?state=fixture', controller: new AbortController() };
+    mail.manager.jobs.jobs.set(automatic.id, automatic);
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await row('owner@gmail.com').getByText('Filling Password', { exact: true }).filter({ visible: true }).waitFor();
+    assert.equal(await row('owner@hotmail.com').getByText('Filling Password', { exact: true }).count(), 0);
+    await row('owner@gmail.com').getByRole('button', { name: 'View Progress', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Sign In', exact: true }).getByText('owner@gmail.com', { exact: true }).waitFor();
+    await page.getByText('Steve is signing in with 1Password. This page will show the verified authorization result.', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('link', { name: 'Open Official Sign-in Page', exact: true }).count(), 0);
+    automatic.stage = 'onepassword_approval'; automatic.needs_owner = true;
+    await page.getByText('Waiting for local 1Password approval. Steve will continue after you unlock or approve access.', { exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+    await row('owner@gmail.com').getByText('Waiting for 1Password', { exact: true }).filter({ visible: true }).waitFor();
+    automatic.stage = 'owner_action_required';
+    await row('owner@gmail.com').getByText('Waiting for Your Verification', { exact: true }).filter({ visible: true }).waitFor();
+    await row('owner@gmail.com').getByRole('button', { name: 'View Progress', exact: true }).click();
+    await page.getByText('Google requires your verification. Complete the current step in the login window opened by Steve; authorization checks will continue.', { exact: true }).waitFor();
+    automatic.state = 'authorized'; automatic.needs_owner = false;
+    await page.getByText('Authorization succeeded. This mailbox can now synchronize new messages.', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Return to Mailboxes', exact: true }).click();
+    automatic.state = 'error'; automatic.hint = 'Saved Google credentials were rejected';
+    await row('owner@gmail.com').getByText('Sign-in Failed', { exact: true }).filter({ visible: true }).waitFor();
+    await row('owner@gmail.com').getByText(automatic.hint, { exact: true }).waitFor();
+    await row('owner@gmail.com').getByRole('button', { name: 'Sign In Again', exact: true }).waitFor();
+    automatic.state = 'authorized'; delete automatic.hint;
+    mail.manager.jobs.jobs.delete(automatic.id);
+    // Starting an automatic login keeps the owner in the roster. Progress keeps
+    // updating there even when no drawer is open.
+    const gmailAccount = mail.manager.get(gmailID); const previousBrowser = mail.manager.loginBrowser;
+    let finishAutomatic;
+    mail.config.onepassword = { auto_login: true };
+    gmailAccount.credential_ref = { vault: 'fixture', vault_id: 'v'.repeat(26), item_id: 'i'.repeat(26) };
+    mail.manager.loginBrowser = { enqueue(operation) { return Promise.resolve().then(operation); },
+      async login(account, url, hooks) { hooks.progress('password'); await new Promise(resolve => { finishAutomatic = resolve; }); }, async close() { finishAutomatic?.(); } };
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await row('owner@gmail.com').getByRole('button', { name: 'Sign In', exact: true }).click();
+    await row('owner@gmail.com').getByText('Filling Password', { exact: true }).filter({ visible: true }).waitFor();
+    assert.equal(await page.getByRole('dialog').count(), 0);
+    finishAutomatic(); await mail.manager.jobs.jobs.get(mail.manager.jobs.forAccount(gmailID)).promise;
+    await row('owner@gmail.com').getByText('Authorized', { exact: true }).filter({ visible: true }).waitFor();
+    mail.manager.loginBrowser = previousBrowser; delete mail.config.onepassword; delete gmailAccount.credential_ref; mail.manager.save();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button', { name: 'Import', exact: true }).focus(); await page.keyboard.press('Enter');
     await page.getByRole('dialog', { name: 'Import', exact: true }).waitFor();
@@ -137,7 +181,7 @@ try {
     await page.getByRole('button', { name: /Category Group By/ }).click(); await page.getByRole('option', { name: 'Provider', exact: true }).click();
     await page.getByRole('region', { name: 'Gmail', exact: true }).waitFor();
     await page.getByRole('button', { name: /All States/ }).click(); await page.getByRole('option', { name: 'Authorized', exact: true }).click();
-    await page.getByText('3 of 50 mailboxes', { exact: true }).waitFor();
+    await page.getByText('4 of 50 mailboxes', { exact: true }).waitFor();
     await page.getByRole('button', { name: /Authorized Status/ }).click(); await page.getByRole('option', { name: 'All States', exact: true }).click();
     await page.setViewportSize({ width: 390, height: 844 }); await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

@@ -168,6 +168,11 @@ Microsoft 设备码可以在其他设备的官方登录页面完成。
 个邮箱。暂停保留登录与同步位置，恢复后继续检查；移除清除私有凭据并保留已发布
 事件及去重身份。
 
+每个账号行显示自己的登录阶段，包括排队、1Password 授权、填写账号/密码/验证码、
+本人验证、授权成功和登录失败。登录期间约每 1.5 秒更新，关闭进度抽屉后继续刷新。
+自动登录启动后留在列表，可以点击该账号的「查看进度」打开抽屉；抽屉顶部固定显示
+邮箱地址、服务商和当前阶段。登录失败与同步失败分别显示，不会把开始登录当作已授权。
+
 ### 导入与导出
 
 支持 [1Password CSV](https://support.1password.com/export/)、
@@ -190,27 +195,94 @@ Microsoft 设备码可以在其他设备的官方登录页面完成。
 ### AI 自动导入与登录
 
 在页面启用「AI 自动接入」，选择已有的私聊并按需要求逐次 Inbox 审批。该入口
-创建独立的、仅限指定会话的 `client` 连接，授权五个已有 clients.v1 能力：
+创建独立的、仅限指定会话的 `client` 连接，授权七个 clients.v1 能力：
 `mail.accounts`、`mail.import.preview`、`mail.import.commit`、`mail.login.start`、
-`mail.login.status`。关闭功能会撤销该连接。事件 provider 的授权保持独立。
+`mail.login.status`、`mail.1password.status`、`mail.1password.preview`。关闭功能会撤销该连接。事件 provider 的授权保持独立。
 
 先在页面上传文件并选择条目，再点击「通过 AI 导入并登录」。发给 AI 的指令
 只含 client ID、预览 ID 和所选行 ID；文件、密码、OAuth 密钥及授权 URL/设备码
 不会交给模型。AI 能读取脱敏元数据，提交已选择的账号，发起 SDK 登录任务并
 读取实际回执。任务不占用长时间 claim，重放完成回执不会重复启动登录。
-Google/Microsoft 的同意、双重验证等步骤仍由用户在官方页面完成；设备码和
+普通文件导入的 Google/Microsoft 同意、双重验证等步骤由用户在官方页面完成；设备码和
 授权地址只在 owner 的邮箱页面显示。导入密码不能替代 OAuth 同意流程。
 
 `serve` 内每个账号独立调度，慢账号不阻塞其他账号，手动同步与后台同步不会
 重叠。页面显示真实的登录、同步中、失败、暂停与待发布数量；AI 返回的登录开始
 回执不等于授权成功，以后续登录状态和同步结果为准。
 
+### Agent 通过 1Password MCP 自动连接 Gmail
+
+这条链路供 **Steve 的 agent** 使用，采用 MCP 官方 TypeScript SDK 提供 stdio
+工具，复用 1Password 官方 CLI、Google 官方 SDK 和 Microsoft Playwright。
+1Password 官方 [Environments MCP](https://www.1password.dev/environments/mcp-server)
+只管理 Environment 和变量名称，不提供普通保险库 Login 条目的读取或 Gmail
+登录工具，因此不能仅配置 `1password-mcp` 就把 Login 条目当作已登录邮箱。
+Steve 的桥接只暴露邮箱操作，不向模型提供 `op item get`、密码或 OTP。
+
+在安装 1Password 的主机上安装 [官方 CLI](https://www.1password.dev/cli/get-started)，
+在桌面应用启用 [CLI 集成](https://www.1password.dev/cli/app-integration)，并保留
+1Password 的解锁/系统认证提示。安装 Chrome。Provider 使用同一主机的本机
+浏览器和 loopback 回调，不能在一台远程 Linux 机器上假装访问 Mac 的保险库。
+`channel: "chromium"` 可改用经 `npx playwright install chromium` 安装的浏览器。
+
+以 [config.onepassword.example.json](config.onepassword.example.json) 为起点：
+`vaults` 是 owner 明确允许的保险库名称或 ID；多 1Password 账号时还可设置
+`account` 为 CLI 账号标识。`command` 是 `op` 或官方 CLI 的绝对路径，不是 shell
+片段。`auto_login: true` 开启本机自动填写；`approve_readonly_consent: true` 允许
+在本次 SDK 发起的 Gmail **只读** OAuth 流程中点击官方同意按钮。关闭后在该
+步骤等待本人。Provider 不创建 OAuth 应用、测试用户、密码或验证方式；Google
+Desktop OAuth 应用仍需要一次配置，可以在现有邮箱页面导入其 JSON。
+
+按上面的 `serve` 流程启动 Provider。再将
+[mcp.node.example.json](mcp.node.example.json) 的定义合并到 **执行节点** 的 MCP
+配置，替换 Node 24 和仓库的绝对路径。节点启动环境继承私有
+`STEVE_MAIL_ADMIN_TOKEN`；这里的 token 与 Provider 相同，不写进 system prompt、
+技能、项目文件或公开示例。标准 stdio 入口为：
+
+```sh
+node /absolute/path/to/steve/providers/mail/src/cli.mjs mcp
+```
+
+在需要使用该能力的 agent 上添加 `mcp_servers: ["mail_1password"]`，保留其已有
+MCP 项，并将 [mail-connect](skills/mail-connect/SKILL.md) 目录加入 `skills`。
+沿用 Steve 已有的节点 MCP 探测、broker 绑定和 agent 授权；无需修改核心 MCP
+协议或把 Vault 密码送到 hub。节点本机的管理 token 限定这个桥接的 Provider。
+通过 clients.v1 使用同样能力时，已有五项 grant 需关闭再启用 AI 接入，重新
+授权七项能力。
+
+之后可以直接对 Steve 说：**“把 vibe-coding 保险库里的 Gmail 导入并登录。”**
+Agent 调用 `mail_1password_status` → `mail_1password_preview` →
+`mail_import_commit` → 每个账号的 `mail_login_start` / `mail_login_status`。
+每次调用带一个新 UUID `request_id`；丢失响应时用原 UUID 和相同参数重试，状态
+轮询使用新 UUID。stdio MCP 和 clients.v1 只返回脱敏预览、账号 ID、阶段和真实
+回执，没有凭据值、OAuth 地址/设备码或导出工具。
+
+发现阶段只读取用户名；仅识别有 `accounts.google.com` 或 `mail.google.com`
+HTTPS 网站的有效 Login 条目，Apple 等条目不会因用户名是 Gmail 被误导入。
+提交保存加密的条目引用，不复制密码；登录时再次验证保险库、条目网站和邮箱
+身份，再读取当前密码与临时 OTP。旧 refresh token、备注和 passkeys 不被导入。
+邮箱导出也不包含 1Password 引用或运行时取得的密码。移除邮箱会清除引用。
+
+多个 Gmail 的完整 OAuth 流程串行排队，排队时不提前启动 OAuth 超时；每次使用
+独立的临时浏览器上下文，不使用用户 Chrome profile，不录制 trace/HAR/video。
+常见用户名、密码、TOTP 和已启用的只读同意步骤自动执行。密码被拒后停止，不
+反复尝试。Google 风控、验证码图片、硬件 passkey 或不支持的页面会报告
+`needs_owner`，并在现有登录窗口等待；不承诺绕过 Google 的自动化检测。
+队列、自动填写、等待本人和授权成功在邮箱页面分别提示。只有 Google SDK
+完成 PKCE/state、离线令牌和实际邮箱身份验证后才写入 `authorized`。
+
+此版 1Password 自动浏览器登录支持 Gmail。Outlook/Hotmail 和 iCloud 继续使用
+前述设备码与 Apple 应用专用密码流程，不能将 Apple 主密码当作 IMAP 凭据。
+
 ## 验证
 
 ```sh
+npx playwright install chromium
 npm test
 STEVE_MAIL_INTEGRATION=1 npm test
 ```
+
+也可设置 `BROWSER_CHANNEL=chrome`，使用已安装 Chrome 运行隔离浏览器测试。
 
 测试覆盖分页、过期游标恢复、跨账号去重、正文截断、缓存加密与身份绑定、发布
 回执丢失和容量回滚，并覆盖真实导出格式解析、分类往返、50 邮箱批量原子更新、
@@ -221,3 +293,8 @@ Go HTTP 服务检查预览刷新、登录任务、导出、分类/筛选、固�
 使用真实 HTTP、连接鉴权与 ledger 验证受理、重复提交、注册、心跳与撤销。
 这些测试使用隔离邮件与授权替身；真实邮箱登录和真实模型摘要需要配置账号后
 另行验收，不在自动测试中冒充完成。
+
+新增测试用真实 stdio MCP 客户端验证发现、提交、权限失败和持久重放；官方 CLI
+替身验证保险库限定、Apple/归档排除、密码仅在登录时读取、身份变化拒绝及错误
+脱敏。隔离 Chrome 对受控登录页验证用户名/密码/OTP 自动填写、跨源拒绝、PKCE
+loopback 回调和串行窗口。这些测试不访问用户的真实 1Password 或 Gmail。

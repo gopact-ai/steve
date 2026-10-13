@@ -22,7 +22,9 @@ export class LoginJobs {
     const job = this.jobs.get(id);
     if (!job) throw new SetupError('Login session expired; start login again');
     const { promise, controller, url, user_code, ...result } = job;
-    return publicOnly ? result : { ...result, url, user_code };
+    const account = this.manager.accounts.find(account => account.id === job.account);
+    const identity = account ? { address: account.address, title: account.title || account.address, provider: account.provider } : {};
+    return publicOnly ? { ...result, ...identity } : { ...result, ...identity, url, user_code };
   }
   start(id) {
     const account = this.manager.get(id);
@@ -39,16 +41,30 @@ export class LoginJobs {
     // One latest job per account keeps administration and polling bounded.
     for (const [key, old] of this.jobs) if (old.account === id) this.jobs.delete(key);
     this.jobs.set(job.id, job);
-    job.promise = this.factory(account, this.manager.store, { signal: controller.signal,
-      google: async url => { job.url = url; job.state = 'waiting'; },
-      microsoft: response => { job.url = response.verificationUri; job.user_code = response.userCode; job.state = 'waiting'; },
-    }).then(client => {
+    const automatic = account.provider === 'gmail' && account.credential_ref && this.manager.config.onepassword?.auto_login === true;
+    if (automatic) { job.method = 'onepassword'; job.state = 'waiting'; job.stage = 'queued'; job.needs_owner = false; }
+    const perform = () => {
+      if (controller.signal.aborted) throw new SetupError('Login cancelled');
+      return this.factory(account, this.manager.store, { signal: controller.signal,
+        google: async url => {
+          job.url = url; job.state = 'waiting';
+          if (automatic) {
+            await this.manager.loginBrowser.login(account, url, { signal: controller.signal, progress: (stage, hint) => {
+              job.stage = stage; job.needs_owner = stage === 'owner_action_required' || stage === 'onepassword_approval';
+              if (hint) job.hint = hint; else delete job.hint;
+            } });
+          } else { job.method = 'manual'; job.needs_owner = true; }
+        },
+        microsoft: response => { job.url = response.verificationUri; job.user_code = response.userCode; job.state = 'waiting'; job.method = 'manual'; job.needs_owner = true; },
+      });
+    };
+    job.promise = (automatic ? this.manager.loginBrowser.enqueue(perform) : perform()).then(client => {
       this.manager.store.set(`authorized:${id}`, '1');
       this.manager.runner?.adapters.set(id, client);
-      job.state = 'authorized'; delete job.url; delete job.user_code;
+      job.state = 'authorized'; job.needs_owner = false; delete job.url; delete job.user_code; delete job.hint;
     }).catch(error => { job.state = 'error'; job.code = errorCode(error); job.hint = error instanceof SetupError ? error.message : 'Authorization failed; start login again';
       delete job.url; delete job.user_code; });
     return this.status(job.id, true);
   }
-  async close() { for (const job of this.jobs.values()) job.controller.abort(); await Promise.all([...this.jobs.values()].map(job => job.promise)); }
+  async close() { for (const job of this.jobs.values()) job.controller.abort(); await this.manager.loginBrowser?.close(); await Promise.all([...this.jobs.values()].map(job => job.promise)); }
 }
