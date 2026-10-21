@@ -2,7 +2,24 @@
 
 [中文](README.md)
 
-Steve is a personal platform for agent work across machines. It takes the coding agents you already use and are already signed in to — Codex, Claude Code, Kimi Code, Grok — and turns them into a team that works across your computers. Its desktop app and Web console (with Feishu/Lark as an optional channel) manage projects, conversations and tasks, place and delegate work according to machine capabilities, and record progress, artifacts, approvals and recovery state.
+> *It's finally you and me… and your friend Steve.*
+
+You talk to your coding agent. Your agent brings a friend: **Steve**.
+
+Steve is a self-hosted platform that gives the coding agents you already use and are already signed in to — Codex, Claude Code, Kimi Code, Grok — somewhere to hand work off, follow it up and keep the record. It runs across your own machines: a desktop app and a Web console (Feishu/Lark optional) share projects, conversations and tasks; work is placed by machine capability; progress, artifacts, approvals and recovery state go into one ledger.
+
+- **Me** — you: intent, judgment, approval.
+- **You** — the agent you are talking to.
+- **Your friend Steve** — what the agent calls with `steve_delegate`, `steve_await` and the other platform tools to split the work, keep it going and record what landed.
+
+## Quick start
+
+```bash
+brew install gopact-ai/tap/steve
+steve init
+```
+
+`steve init` creates a private installation in your user application directory, registers the Codex / Claude Code / Kimi / Grok tools it finds on this machine with read-only permission, starts the local service and prints the console address. Prebuilt archives for macOS and Linux are on the [releases page](https://github.com/gopact-ai/steve/releases); the macOS app is attached to each release as `Steve_<version>_macos_arm64.zip`.
 
 Steve makes three structural commitments:
 
@@ -111,13 +128,13 @@ flowchart LR
 
 ## Start with the desktop app
 
-On macOS, run `make desktop` to build the native app. The script prints the path to `Steve.app`. First launch initializes this computer as the coordinator; no other machine is required. Register existing local agents when ready, and connect other machines through SSH discovery in Resources.
+Download `Steve_<version>_macos_arm64.zip` from the releases page, or build it from source with `make desktop` on macOS. First launch initializes this computer as the coordinator; no other machine is required. The app and `steve init` share the same installation. Register existing local agents when ready, and connect other machines through SSH discovery in Resources.
 
 Closing the window leaves the backend running. See the [desktop and multi-node guide (Chinese)](docs/desktop.md) for installation, storage authorization, handover, quorum requirements and recovery. Full replicas require Restricted data access or higher; shared-ledger deployments do not support sealed projects.
 
-## Standalone Web console
+## Standalone Web console from source
 
-The console can run independently without a Feishu/Lark application. Set `gateway.owner_id` for a standalone deployment. To add Feishu/Lark, configure both application credentials and its channel owner. Both entry points share projects, tasks and the ledger.
+Use this path to run a hub from a checkout with your own configuration file. The console can run independently without a Feishu/Lark application. Set `gateway.owner_id` for a standalone deployment. To add Feishu/Lark, configure both application credentials and its channel owner. Both entry points share projects, tasks and the ledger.
 
 Prepare Go 1.27+, Git, Node.js with npm, and an authenticated coding agent. Steve downloads and verifies pinned versions of the built-in `codex-acp` and `claude-agent-acp` adapters. The first download requires npm registry access; subsequent starts use the local cache.
 
@@ -210,7 +227,7 @@ The isolated lab requires Linux, a local Docker engine and a matching Go toolcha
 
 - [docs/architecture.md](docs/architecture.md): module dependencies, authority, commit and query boundaries.
 - [docs/plugins-local.md](docs/plugins-local.md): local capability package preview, pinned preparation and command reference (Chinese).
-- [docs/plugins.md](docs/plugins.md): plugin implementation plan (Chinese), covering capability packages, version and node binding, and acceptance stages.
+- [docs/plugins.md](docs/plugins.md): capability package model (Chinese): versions, node binding and session pinning.
 - [docs/operations.md](docs/operations.md): configuration keys, deployment, gates and troubleshooting.
 - Code: entry points in [cmd/](cmd/), core implementation in [internal/](internal/), console in [web/console/](web/console/), acceptance checks in [e2e/](e2e/).
 
