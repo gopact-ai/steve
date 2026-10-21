@@ -28,7 +28,8 @@ function FlowBoard({ pending, particles, finish, motion }: { pending: number; pa
         <div className="bus-flow-labels"><span>{t("assistant.busFlowPublish")}</span><span className="bus-flow-values">{t("assistant.busFlowQueue")} <strong>{number(pending, locale)}</strong>{scale > 1 ? <span className="bus-flow-scale" role="img" title={t("assistant.busFlowScale", { count: number(scale, locale) })} aria-label={t("assistant.busFlowScale", { count: number(scale, locale) })}>×{number(scale, locale)}</span> : null}</span><span>{t("assistant.busFlowTake")}</span></div>
         <div className="bus-flow-track" ref={stage} aria-hidden="true">
             <div className="bus-flow-rail bus-flow-rail-in" data-flow-entered={particles.filter((item) => item.direction === "in").length} />
-            <div className="bus-flow-buffer"><div className="bus-flow-dots" /></div>
+            <div className="bus-flow-buffer" />
+            <canvas className="bus-flow-canvas" />
             <div className="bus-flow-rail bus-flow-rail-out" data-flow-taken={particles.filter((item) => item.direction === "out").length} />
         </div>
     </div>;

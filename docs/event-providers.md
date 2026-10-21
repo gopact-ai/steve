@@ -239,7 +239,7 @@ Capacity and storage live in a disclosure; original events, frozen subscriptions
 and receipts open in the inspector. The instrument has no demo playback controls
 or explanatory legend.
 
-The **Event Flow** instrument uses a thin neon transfer channel with adaptive columns.
+The **Event Flow** instrument is a single canvas with adaptive columns.
 The light cores inside and outside the queue have the same size. Intakes move
 continuously across the entry boundary, then light successive slots toward the
 right-hand backlog. A claim glides out from the current head; the remaining
@@ -248,8 +248,9 @@ physical clearance, reserving room for the widest core a contracting grid can
 produce. This keeps outgoing lights separate during bursts and density changes.
 Appearance, handoff and departure fade are
 continuous, with browser-frame updates rather than stepped timers. Idle queues
-stop requesting animation frames. Layout is measured only at initialization and
-resize, and resize reconciles to the latest snapshot.
+stop requesting animation frames, and hidden tabs pause them. Layout is measured
+only at initialization and resize, and resize reconciles to the latest snapshot.
+The DOM node count is constant regardless of backlog.
 
 At rest, ordinary backlogs retain one light per waiting delivery. Columns grow
 with the observed backlog and light cores shrink smoothly, with extra room for
@@ -262,7 +263,9 @@ Only when individual lights would become narrower than a readable pixel does
 the display group deliveries. A small `×N` beside the exact pending count reveals
 the scale; the leading light retains its fractional width and consumer shifts
 use the same scale. The grid is bounded by available pixels and 1,024 columns.
-The positional gradient runs from red on the left to blue on the right. Counters
+Color carries state rather than position: waiting lights are indigo, arrivals
+blue and consumer departures green. Amber (unknown effect) and red (failed)
+remain reserved for the queue counters. Counters
 show the current snapshot immediately; lights replay observed activity with a
 short delay and reconcile to that snapshot. Fan-out, unmatched publications and
 omitted activity never determine the durable count.
