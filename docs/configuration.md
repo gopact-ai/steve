@@ -258,4 +258,3 @@ Unix 节点托管会话可提供 ACP terminal 创建、读取、等待、终止�
 | `port_file` | string | `""`（不持久化代理端口） | 保存 HTTP loopback 代理端口 | `"/home/me/.steve-mcp/proxy.port"` |
 | `launcher` | string | broker 自己的可执行文件 | agent 调用 `mcp-launch` 的 steve-node 路径 | `"/home/me/steve-bin/steve-node"` |
 | `socket_mode` | integer | `0` → `0600` | socket 权限位；JSON 用十进制，跨用户共享组的 `0660` 为 432 | `432` |
-
