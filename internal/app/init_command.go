@@ -20,12 +20,20 @@ var ReleaseVersion = ""
 
 // VersionCommand is `steve version`.
 func VersionCommand([]string) error {
-	build := nodewire.Version()
-	if ReleaseVersion != "" {
-		build = ReleaseVersion + " (" + build + ")"
-	}
-	_, err := fmt.Fprintf(os.Stdout, "steve %s %s/%s\n", build, runtime.GOOS, runtime.GOARCH)
+	_, err := fmt.Fprintf(os.Stdout, "steve %s %s/%s\n", versionLine(ReleaseVersion, nodewire.Version()), runtime.GOOS, runtime.GOARCH)
 	return err
+}
+
+// versionLine names the release once. A tagged build's module information
+// already reads "v<release> (<commit>)"; other builds show it in parentheses.
+func versionLine(release, build string) string {
+	if release == "" {
+		return build
+	}
+	if rest, ok := strings.CutPrefix(build, "v"+release+" "); ok {
+		return release + " " + rest
+	}
+	return release + " (" + build + ")"
 }
 
 // InitCommand is `steve init`, the first run: one local installation shared
