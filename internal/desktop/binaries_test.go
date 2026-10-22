@@ -40,3 +40,26 @@ func TestBundledNodeBinaryRejectsUnsupportedPlatformsAndPaths(t *testing.T) {
 		t.Fatal("missing package was advertised")
 	}
 }
+
+func TestReleaseLayoutServesOnlyTheSamePlatform(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"steve", "steve-node"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("test binary"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backend := filepath.Join(dir, "steve")
+	if got, ok := bundledPeerBinary(backend, hostPlatform); !ok || got != backend {
+		t.Fatalf("release peer binary not found: %q %v", got, ok)
+	}
+	if got, ok := bundledNodeBinary(backend, hostPlatform); !ok || got != filepath.Join(dir, "steve-node") {
+		t.Fatalf("release node binary not found: %q %v", got, ok)
+	}
+	other := "linux/amd64"
+	if hostPlatform == other {
+		other = "darwin/arm64"
+	}
+	if _, ok := bundledPeerBinary(backend, other); ok {
+		t.Fatal("a release archive offered its own binary for another platform")
+	}
+}

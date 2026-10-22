@@ -14,8 +14,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/console/package-lock.json
       - name: Embedded console matches source
-        run: test -z "$(git status --porcelain -- internal/readmodel/web/dist)"
+        run: |
+          make console
+          test -z "$(git status --porcelain -- internal/readmodel/web/dist)"
       - uses: anchore/sbom-action/download-syft@v0
       - uses: goreleaser/goreleaser-action@v6
         with:

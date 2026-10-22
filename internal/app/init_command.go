@@ -46,17 +46,12 @@ func InitCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	added, err := desktop.EnrollDiscovered(installed.Paths.Config, desktop.DiscoverAgents(desktop.DiscoveryOptions{}))
-	if err != nil {
-		return err
-	}
-	if len(added) == 0 {
-		fmt.Fprintln(os.Stdout, "No new coding agents were registered. Sign in to Codex or Claude Code, then add them from Resources.")
-	} else {
-		fmt.Fprintf(os.Stdout, "Registered %s with read-only permission. Widen it per agent in Settings when you need to.\n", strings.Join(added, ", "))
-	}
 	if *noStart {
-		fmt.Fprintf(os.Stdout, "Prepared %s. Start it with: steve desktop\n", installed.Paths.Root)
+		next := "steve init"
+		if *stateDir != "" {
+			next += " -state-dir " + shellQuote(*stateDir)
+		}
+		fmt.Fprintf(os.Stdout, "Prepared %s. Finish with: %s\n", installed.Paths.Root, next)
 		return nil
 	}
 	executable, err := os.Executable()
@@ -69,10 +64,30 @@ func InitCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Adapters may need a download; enrollment gets its own budget.
+	enrollCtx, cancelEnroll := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancelEnroll()
+	enrolled, err := desktop.EnrollRunning(enrollCtx, installed, result.URL)
+	if err != nil {
+		return fmt.Errorf("register coding agents: %w", err)
+	}
+	if len(enrolled.Added) > 0 {
+		fmt.Fprintf(os.Stdout, "Registered %s with read-only permission. Widen it per agent in Settings when you need to.\n", strings.Join(enrolled.Added, ", "))
+	} else {
+		fmt.Fprintln(os.Stdout, "No new coding agents were registered. Sign in to Codex or Claude Code, then add them from Resources.")
+	}
+	if len(enrolled.Pending) > 0 {
+		fmt.Fprintf(os.Stdout, "Found but not ready: %s.\n", strings.Join(enrolled.Pending, "; "))
+	}
 	address, err := installed.AuthenticatedURL(result.URL)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "\nYou, me, and your friend Steve are ready.\nOpen %s\n", address)
 	return nil
+}
+
+// shellQuote quotes a path for a POSIX shell.
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
