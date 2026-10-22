@@ -123,6 +123,7 @@ func (s *Server) Serve() error {
 	s.coordinationRoutes(mux)
 	s.assistantRoutes(mux)
 	s.mailRoutes(mux)
+	s.clientRoutes(mux)
 	mux.HandleFunc("GET /console/desktop", s.guard(s.consoleDesktop))
 	mux.HandleFunc("GET /console/desktop/agents", s.guard(s.consoleDesktopAgents))
 	mux.HandleFunc("POST /console/desktop/agents", s.guard(s.consoleDesktopAgents))

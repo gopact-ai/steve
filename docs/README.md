@@ -21,6 +21,7 @@ Steve 把你使用的 AI agent、项目和机器放在一个工作台中。首�
 | [项目迁移](project-migration.md) | 独立实例之间的离线迁移与恢复 |
 | [插件作者指南](plugins-local.md) | 包清单、本地命令、凭据与管理 API |
 | [事件与客户端协议](event-providers.md) | Provider、Work 和客户端能力的 HTTP 协议（English） |
+| [客户端协议](protocol.md) | `steve.client.v1`：终端、桌面与网页客户端共用的会话协议（English） |
 | [邮件 Provider](../providers/mail/README.md) | 邮箱授权、账号管理与同步 |
 | [GitHub Provider](../providers/github/README.md) | 仓库授权、事件类型与订阅 |
 
