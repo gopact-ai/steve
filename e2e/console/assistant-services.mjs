@@ -167,6 +167,12 @@ try {
     await page.waitForFunction(settledFill, {count:startFlow.queues.pending.pending+4,capacity:startFlow.capacity});
     assert.equal(await page.evaluate(()=>document.querySelector('.bus-flow-track').flowState().packets.length),0,"reduced motion retained moving packets");
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,"narrow neon board overflowed the page");
+    const litColor=()=>page.evaluate(()=>{const stage=document.querySelector('.bus-flow-track'),view=stage.flowState(),canvas=stage.querySelector('canvas'),ratio=canvas.width/view.length;
+        if(!view.lit.length)return null;const x=Math.round((view.lit[0]+view.width/2)*ratio),y=Math.round(canvas.height/2);return Array.from(canvas.getContext('2d').getImageData(x,y,1,1).data).join(',');});
+    await page.emulateMedia({colorScheme:"light"});const lightLit=await litColor();
+    await page.emulateMedia({colorScheme:"dark"});
+    await page.waitForFunction(async(before)=>{const stage=document.querySelector('.bus-flow-track'),view=stage.flowState(),canvas=stage.querySelector('canvas'),ratio=canvas.width/view.length;const x=Math.round((view.lit[0]+view.width/2)*ratio),y=Math.round(canvas.height/2);return Array.from(canvas.getContext('2d').getImageData(x,y,1,1).data).join(',')!==before;},lightLit);
+    assert.notEqual(lightLit,null,"the idle queue painted no waiting lights");
     await page.emulateMedia({reducedMotion:"no-preference"});
     let flowFailure=true;await page.route("**/console/event-flow",(route)=>flowFailure?route.fulfill({status:503,json:{error:"Flow unavailable for acceptance"}}):route.continue());
     await page.getByText("Flow unavailable for acceptance",{exact:false}).waitFor();

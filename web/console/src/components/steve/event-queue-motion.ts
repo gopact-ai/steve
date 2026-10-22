@@ -160,11 +160,15 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
     const observer = new ResizeObserver(measure);
     observer.observe(stage);
     document.addEventListener("visibilitychange", visibility);
+    // Theme and appearance changes repaint in place; packets keep moving.
+    const recolor = () => { readPalette(); paint(performance.now()); };
+    const theme = new MutationObserver(recolor), scheme = window.matchMedia("(prefers-color-scheme: dark)");
+    theme.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
+    scheme.addEventListener("change", recolor);
     measure();
     return {
         sync(pending: number, particles: FlowParticle[]) {
             target = pending;
-            readPalette();
             if (!motion || document.hidden || !span) { reset(); particles.forEach((item) => finish(item.id)); return; }
             const now = performance.now(), retained = new Set(particles.map((item) => item.id));
             // Bound renderer activity along with the hook's 192 marks.
@@ -179,7 +183,8 @@ export function createEventQueueMotion(stage: HTMLDivElement, motion: boolean, f
             paint(now); wake();
         },
         destroy() {
-            destroyed = true; cancelAnimationFrame(frame); observer.disconnect();
+            destroyed = true; cancelAnimationFrame(frame); observer.disconnect(); theme.disconnect();
+            scheme.removeEventListener("change", recolor);
             document.removeEventListener("visibilitychange", visibility);
             delete (stage as Partial<{ flowState: unknown }>).flowState;
         },
