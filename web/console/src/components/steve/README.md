@@ -1,7 +1,8 @@
-# components/steve
+# Steve 工作台组件
 
-Steve 自己的组件，组合 Untitled UI（`components/base`、`components/application`）的控件与交互能力；尺寸与状态修正集中在对应基础组件，不在页面另建一套实现。
-页面（`pages/`）只做拼装：取数据、管状态、把这些组件摆到位；`lib/` 只放非视觉的东西（api、类型、文案、hook、文本整理）。
+该目录组合 React Aria 与 Untitled UI 基础组件，提供工作台的页面结构、会话阅读和文件审阅。页面负责请求与业务状态，组件负责呈现；非视觉逻辑放在 `lib/`。
+
+## 组件索引
 
 | 文件 | 组件 | 用在 |
 |---|---|---|
@@ -23,15 +24,14 @@ Steve 自己的组件，组合 Untitled UI（`components/base`、`components/app
 | `call-graph.tsx` | `CallGraph` | 关系页签、看板抽屉 |
 | `settings-editor.tsx` | `SettingsEditor` `ListEditor` | 机器抽屉里的配置编辑 |
 
-约定：
+## 使用约定
 
-- 表单控件一律用 Untitled UI 的 `Input` `Select` `TextArea` `Dropdown` `Button`，不写原生 `<select>` / `<input>`。
-- `Panel` 用 `variant="card"` / `"section"` 区分卡片和分区，用 `padding="flush"` 容纳自带间距的列表，通过 `toolbar` / `footer` 拼装筛选和分页；页面不可复制其内部 class 或通过祖先 CSS 改写外观。
-- `Drawer` 的普通标题使用字符串，徽标放 `badges`，仅内联编辑使用 `titleEditor`；不要在调用点重复标题排版。
-- 共享展示组件的 `className` 只用于父布局定位，外观差异由显式变体表达；Settings 字段文案使用专属标记，不能用后代 `label` / `p` 选择器污染嵌套控件。
-- 文字、表面和布局复用共享组件及 `styles/workbench.css` 的统一规则；正文 `text-sm`，辅助 `text-xs`；颜色只用语义 token（`text-primary/secondary/tertiary/quaternary`）。
-- 折叠一律用 `<details>` + 旋转的 `ChevronDown`，摘要行是 `text-xs`。
-- 对话内代码与输出经 `CodeBlock`；产物工作区的完整源码经 `SourceView`，差异经 `DiffView`。均由专门组件处理阅读布局。
-- 组件不发请求（`SettingsEditor` 例外，它就是一张表单）；数据由页面取好再传进来。
+表单复用基础 Input、Select、TextArea、Dropdown 和 Button。尺寸、状态及交互修正在基础组件维护，页面不复制其内部样式。
 
-“代码”页提供会话级文件入口，默认选择最近可用的结果；已完成但没有文件改动的执行也可以成为默认版本。版本与变更列表默认折叠，可在同一个查看器中切换历史快照。文件范围包括会话的历史任务及其委派，内容仍以所选执行的只读快照为准。
+Panel 通过 card/section 变体、flush 间距及 toolbar/footer 表达布局。Drawer 的标题、徽标和内联编辑使用各自的属性；普通展示组件的 className 用于父布局定位，外观差异使用显式变体。
+
+文字与表面颜色使用语义 token，正文和辅助信息遵循共享字号。折叠使用 details 与 ChevronDown。消息代码使用 CodeBlock，文件源码使用 SourceView，差异使用 DiffView。
+
+展示组件不发请求；SettingsEditor 作为完整表单管理自己的提交。代码工作区可切换会话及委派的执行快照，内容只读。没有文件变更的完成执行也可作为默认版本。
+
+UI 修改规则见 [AGENTS.md](../../../AGENTS.md)。

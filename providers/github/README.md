@@ -1,26 +1,10 @@
-# Steve GitHub provider
+# GitHub Provider
 
-独立运行的 GitHub 事件 Provider。它轮询所关注仓库的 PR、评审、检查和默认分支工作流，
-按 Steve 的[事件协议](../../docs/event-providers.md)发布事件。订阅、Work 入口和 Inbox
-沿用 Steve 已有的机制；Provider 不评论、不合并，也不改动仓库。
+把关注仓库的 PR、评审和检查变化送入 Steve。你可以在 Inbox 查看，也可以通过 Work 订阅交给项目中的 agent。Provider 只读 GitHub，不评论、不推送、不合并仓库。
 
-## 事件
+## 安装与连接
 
-| 类型 | 何时发布 | 去重键 |
-| --- | --- | --- |
-| `github.pull_request.opened` | 新开 PR | PR 编号 |
-| `github.pull_request.updated` | 打开中的 PR 推送了新提交 | 新的 head 提交 |
-| `github.pull_request.closed` | 合并或关闭；`merged` 区分两者 | PR 编号 |
-| `github.review.submitted` | 提交了一条评审，正文属于外部资料 | 评审 ID |
-| `github.checks.succeeded` / `github.checks.failed` | PR 当前提交的检查全部结束 | head 提交 |
-| `github.workflow.failed` | 默认分支上的工作流运行未成功 | 运行 ID 与重跑次数 |
-
-首次连接仓库只记录现状：所有打开 PR 的当前提交，以及已有评审、检查结果和失败运行都记为
-已送达，不重放历史。之后每次轮询读取上次时间点以来的全部变化（自动翻页）；轮询失败时不推进，
-下一次重复读取，由去重键吸收重叠。默认分支的运行按创建时间多回看一天，耗时长的运行和重跑
-（按 `run_attempt` 区分）也会被发现。发布前事件先写入本地 outbox，响应丢失后重试会得到原来的事件。
-
-## 配置
+使用 Node.js 24+：
 
 ```sh
 cd providers/github
@@ -28,32 +12,39 @@ npm ci
 cp config.example.json config.json
 ```
 
-在 `config.json` 的 `repositories` 中列出 `owner/name`。在 Steve 的「连接与事件 → 连接」
-创建一个 `provider` 连接，允许事件 `github.*`，把一次性返回的凭据放入
-`STEVE_GITHUB_CONNECTION_TOKEN`。
+在 `repositories` 填写 `owner/name`，设置 `steve_url` 和私有 `state_dir`。GitHub Enterprise 使用 `api_url`。配置字段见[示例](config.example.json)。
 
-GitHub 凭据放入 `STEVE_GITHUB_TOKEN`。建议使用只授权这些仓库的 fine-grained token，
-只读权限即可：Pull requests、Checks、Actions、Metadata。GitHub Enterprise 设置 `api_url`。
+在 Steve 的连接页建立专用 `provider` 连接，允许 `github.*`，将返回的凭据保存为 `STEVE_GITHUB_CONNECTION_TOKEN`。GitHub 凭据使用 `STEVE_GITHUB_TOKEN`，可选择仅授权目标仓库的 fine-grained token，读取 Pull requests、Checks、Actions、Metadata。
 
 ```sh
-node src/cli.mjs once --config config.json   # 轮询一次，失败时退出码非零
-node src/cli.mjs run --config config.json    # 常驻，每 poll_seconds 秒轮询一次
-node src/cli.mjs status --config config.json # 各仓库的时间点和待发布数量
+node src/cli.mjs once --config config.json
+node src/cli.mjs run --config config.json
+node src/cli.mjs status --config config.json
 ```
 
-一个状态目录只能由一个 `run`/`once` 进程持有，`status` 可随时读取。默认每 60 秒轮询，
-最小 30 秒；每个仓库每次的请求数约为 3 + 被更新 PR 数 + 尚无检查结果的打开 PR 数，
-注意 GitHub 的速率限制。
+`once` 检查一轮，`run` 常驻，`status` 查看各仓库同步位置与待发布数量。一个状态目录只允许一个同步进程，状态查询可同时运行。默认间隔 60 秒，最小 30 秒；仓库规模和检查数量会影响 GitHub API 用量。
 
-## 订阅示例
+## 事件类型
 
-把 CI 失败交给 Agent 处理：在「连接与事件 → 订阅」新建规则，事件 `github.checks.failed`，
-模式 `work`，选择会话和项目，指令写明要做的事，例如"读取失败的检查日志，判断原因；
-属于本 PR 的问题就在该分支修复并推送，否则在会话里说明"。只想看到通知时使用 `inbox` 模式。
+| 类型 | 内容与去重身份 |
+| --- | --- |
+| `github.pull_request.opened` | 新 PR；PR 编号 |
+| `github.pull_request.updated` | 打开中的 PR 推送新提交；head 提交 |
+| `github.pull_request.closed` | 关闭或合并，`merged` 区分；PR 编号 |
+| `github.review.submitted` | 一条评审；评审 ID |
+| `github.checks.succeeded` / `github.checks.failed` | PR 当前提交的检查结束；head 提交 |
+| `github.workflow.failed` | 默认分支未成功的运行；运行 ID 与重跑次数 |
 
-## 测试
+首次同步记录当前基线，不重放已有评审、检查和失败运行。后续轮询自动翻页；失败时保留原位置。默认分支运行多回看一天，并区分重跑次数。
 
-```sh
-npm test
-STEVE_GITHUB_INTEGRATION=1 npm test   # 另外构建并连接真实的 Steve 测试服务
-```
+事件发布前进入本地 outbox，响应丢失时使用原 key 重试。保留状态目录，避免把已有仓库重新当作首次接入。评审正文与其他仓库内容均是外部资料。
+
+## 交给 agent 处理
+
+创建 `github.checks.failed` 的 Work 订阅，选择已绑定项目的会话，并写明处理范围，例如：
+
+> 阅读这个 PR 当前提交的失败检查，说明原因和修复建议。
+
+希望自动修改时，明确授权分支和动作，并在执行机器准备仓库凭据。Provider 的只读 token 不会自动成为 agent 的写权限。仅接收通知使用 Inbox 模式。
+
+[事件订阅](../../docs/events.md)介绍控制台操作，[协议参考](../../docs/event-providers.md)说明回执、重试和授权。开发验证使用 `npm test`；设置 `STEVE_GITHUB_INTEGRATION=1` 可包含真实 Steve 测试服务的接口检查。

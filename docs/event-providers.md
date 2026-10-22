@@ -1,28 +1,16 @@
-# Event providers and client capabilities (v1)
+# Event providers and client capabilities
 
-Steve exposes three server modules: `events.v1`, `work.v1` and `clients.v1` in
-`/state`'s `hub.services`. This protocol connects externally managed providers
-and clients to the existing server. It does not install a mail service, replace
-ACP, manage harness versions, or add a second model executor.
+Steve exposes `events.v1`, `work.v1` and `clients.v1` through authenticated HTTP services. Availability is reported in `/state` under `hub.services`. Providers run outside Steve; Work uses the project's existing agent execution and permissions.
 
-The independently runnable [mail provider](../providers/mail/README.md) connects
-Gmail through Google's SDK, Outlook/Hotmail through Graph and MSAL, and iCloud
-Mail through ImapFlow. It publishes `mail.received` using this existing contract;
-account authorization, SDK dependencies and private synchronization state remain
-with the provider process. Work subscriptions continue to use the server's
-existing conversation/project admission.
+The [mail](../providers/mail/README.md) and [GitHub](../providers/github/README.md) providers implement this protocol. For console usage, see [event subscriptions](events.md).
 
-The [GitHub provider](../providers/github/README.md) polls watched repositories and
-publishes pull request, review, check and default-branch workflow events the same way.
+## Connections
 
-## Authority and enrollment
-
-The owner uses **Connections & Events → Connections** or
-`POST /console/connections` to create a connection:
+An owner creates a scoped connection with `POST /console/connections`:
 
 ```json
 {
-  "idempotency_key": "install-mail-2026-10",
+  "idempotency_key": "mail-connection-1",
   "name": "Mail provider",
   "kind": "provider",
   "event_types": ["mail.received"],
@@ -30,41 +18,19 @@ The owner uses **Connections & Events → Connections** or
 }
 ```
 
-The response contains `grant` and a bearer `token`. Only a credential digest is
-stored; the credential is returned once. Repeating enrollment with the same
-key and declaration returns the existing grant with an empty token. A changed
-enrollment declaration conflicts. The connection's ID and principal remain its
-logical identity when credentials or scopes change; do not reinstall a provider
-to recover a lost secret. Do not pass an owner token to a provider/client. Connections
-cannot use `/console/*`; owner tokens cannot substitute for connection credentials
-on `/services/*`. Revocation applies to new requests and is reread inside protected
-transactions and Work admission.
+The response contains a `grant` and a bearer `token`, returned once. An identical retry returns the grant with an empty token; changed declarations conflict. Only credential digests are stored. The grant ID and principal remain stable across rotation and scope edits.
 
-Use `Authorization: Bearer <connection-token>` for every `/services/*` request.
-Native project grants and existing channel actor IDs retain their old meanings.
-Connection IDs are separate principals; matching a native actor's string confers
-no authority. Work is explicitly delegated owner intelligence within a named
-conversation/project pair, not a new external user's identity.
+Use `Authorization: Bearer <connection-token>` on `/services/*`. Connection credentials cannot access `/console/*`, and owner tokens cannot replace connection credentials. A Work grant delegates access to the named conversation/project; it does not create a native user account.
 
-Owners rotate a lost or compromised credential with
-`POST /console/connections/{id}/credential`:
+Rotate a credential with `POST /console/connections/{id}/credential`:
 
 ```json
-{"revision":1,"idempotency_key":"recover-mail-credential-1"}
+{"revision":1,"idempotency_key":"mail-rotation-1"}
 ```
 
-Use the grant's `credential_revision` as `revision`. The response contains the
-same `grant` identity and a replacement `token`, returned once. The old token and
-requests authenticated with its old generation lose authority inside protected
-transactions. An identical rotation retry returns an empty token without
-rotating again. If that response was lost, read the grant's current revision and
-rotate again with a new operation key. Existing event IDs, subscriptions, claims,
-Work and client registrations retain their identities. Accepted background
-records recheck their live grant scope rather than inheriting a bearer secret.
-Legacy connections and their string credential receipts remain valid at
-revision zero until explicitly rotated.
+Use the current `credential_revision`. The replacement token is returned once; the old generation loses authority. An identical retry does not rotate again. If the token response was lost, read the current revision and explicitly rotate with a new key.
 
-`PUT /console/connections/{id}/scope` edits a stable connection's complete scope:
+Replace the complete scope with `PUT /console/connections/{id}/scope`:
 
 ```json
 {
@@ -76,19 +42,11 @@ revision zero until explicitly rotated.
 }
 ```
 
-Use `scope_revision`, which is independent of credential revisions. Omitted
-scope collections remove those delegations. The connection kind, ID and principal
-stay fixed. An identical lost-response save is idempotent; a stale changed save
-returns 409. Native client grants can advertise only their own client ID (empty
-`client` is filled with that ID). Enrollment retries keep their original request
-receipt and return the current grant. Scope edits, enrollment, rotation and
-retirement have secret-free audit records at `GET /console/connection-audit`.
-Revocation retires a connection; rotation or scope editing cannot reactivate it.
+Use `scope_revision`, independently of credential revision. Omitted collections remove their grants. Identical retries are idempotent; stale changed writes return 409. Connection kind and identity stay fixed. Retirement revokes the connection; rotation cannot reactivate it. Owner audit records are available at `/console/connection-audit`.
 
-## Provider discovery and health
+## Provider registration
 
-An externally managed provider can register its plugin metadata and versioned
-event contracts with `POST /services/provider/register`:
+`POST /services/provider/register` declares metadata and event contracts:
 
 ```json
 {
@@ -99,256 +57,97 @@ event contracts with `POST /services/provider/register`:
     "type":"mail.received",
     "version":"1",
     "name":"Email received",
-    "description":"A newly received mailbox message",
-    "i18n":{
-      "zh-CN":{"name":"收到邮件","description":"邮件插件报告收到一封新邮件。"}
-    },
+    "description":"A new inbox message",
+    "i18n":{"zh-CN":{"name":"收到邮件","description":"收到一封新邮件。"}},
     "schema":{"type":"object","properties":{"subject":{"type":"string"}}}
   }]
 }
 ```
 
-Registration stays attached to the existing grant ID and cannot expand its event
-scope. It describes at most 64 unique event types, each with a bounded JSON Schema
-object. The server canonicalizes schema JSON and computes each contract's digest;
-the same provider/type/version cannot later describe different content, even
-after removal and reintroduction. Bump the contract version for an incompatible
-change. Schemas are discovery metadata; publishers and consumers perform their
-own payload validation. Registration does not install or start plugin code.
+Registration cannot expand the connection grant. Each provider/type/version has an immutable canonical contract digest. Change the version when changing the schema or presentation metadata. Schemas describe the contract; publishers and consumers validate payloads themselves.
 
-`type` is the stable routing identifier. `name`, `description` and `i18n` are
-optional display metadata and may be omitted or empty. `i18n` maps BCP 47 language
-tags to optional `name` and `description` strings. Each field resolves separately:
-the console tries its current language tag, the base language and its regional
-variants, the default field, English (including regional variants), then another
-available translation. The current Chinese console asks
-for `zh-CN`; a `zh` entry can serve the base-language fallback. Nonempty names and
-explanations appear in event history, activity, original-event/Inbox inspection,
-provider declarations and matching subscription editor hints. Empty text adds no
-placeholder; the technical `type` remains visible. Text renders as plain text.
+Reconnect using the last observed generation. Identical retries return that registration. Send `POST /services/provider/heartbeat` with `{"generation":1}` every 15 seconds; availability expires after 45 seconds. A stale generation cannot refresh another process's health. Credential rotation preserves registration generation.
 
-Names are bounded to 256 bytes and descriptions to 2,048 bytes per language.
-A contract supports at most 16 translations and 16 KiB of name/translation
-metadata; combined presentation per registration is bounded to 256 KiB. Language
-tags are canonicalized and duplicate equivalent nonempty tags are rejected.
-Display metadata is part of the immutable contract: bump the event version when
-changing its meaning or translations. Omitted metadata preserves legacy digests.
+`GET /services/provider` reads the caller's declaration. Owners list `/console/event-providers?cursor=...`. Providers without registration are labelled unregistered, not inferred offline.
 
-Reconnect using the last observed registration generation. An identical
-lost-response retry returns that registration. Heartbeat every 15 seconds with
-`POST /services/provider/heartbeat` and `{"generation":1}`; availability expires
-after 45 seconds. Credential rotation retains this generation. A stale generation
-cannot refresh another provider process's health. `GET /services/provider` returns
-the caller's declaration; owners inspect keyset pages at
-`GET /console/event-providers?cursor=...`, including current online/offline/retired
-state. Existing providers without a registration keep their unversioned protocol
-and are reported as unregistered rather than guessed to be offline.
+| Registration limit | Value |
+| --- | --- |
+| Unique event types | 64 |
+| Name / description | 256 / 2,048 bytes per language |
+| Translations | 16 per contract |
+| Presentation metadata | 16 KiB per contract; 256 KiB per registration |
 
-## Publish, subscribe and handle
+Language tags are canonical BCP 47. Each display field resolves by console locale, base/regional alternatives, default text, English, then another translation. Event type remains the routing identity. Empty display metadata is allowed.
 
-`POST /services/events` accepts a stable producer key, declared event type and
-JSON data (maximum 256 KiB):
+## Publishing events
+
+`POST /services/events` accepts an immutable request with a stable producer key:
 
 ```json
 {
-  "key": "mailbox/message-123",
-  "type": "mail.received",
-  "subject": "message-123",
-  "payload": {"from": "sender@example.invalid", "subject": "Meeting"}
+  "key":"mailbox/message-123",
+  "type":"mail.received",
+  "subject":"message-123",
+  "schema_version":"1",
+  "payload":{"from":"sender@example.invalid","subject":"Meeting"}
 }
 ```
 
-Registered providers may include `"schema_version":"1"` to select the advertised
-contract explicitly; omission selects the current declaration. First acceptance
-freezes its version, name, description, translations, schema and digest on the
-event's `contract`. Later declarations do not rewrite historical explanations.
-An unregistered legacy provider may omit the version. A withdrawn or incompatible
-explicit version cannot create a new event. Retrying the same immutable source/key
-request returns its original contract, even after a newer provider registration;
-the server-selected digest is not part of the publisher's request fingerprint.
-Changing an explicitly supplied version under an accepted key returns 409.
+JSON data is limited to 256 KiB. The server fixes the authenticated source and commits the event with its outbox. Reusing a key with identical content returns the original event; changed content or authority returns 409.
 
-The authenticated source is fixed by the server. Reusing the key with changed
-content or authority returns 409; the same immutable request returns its original
-event. Publishing commits the event and its outbox together. Acceptance does not
-prove that a consumer ran, a model completed, or an external reply was delivered.
+Registered providers can select `schema_version`; omission selects the current declaration. Acceptance freezes the contract, translations and digest. Later registration does not change historical events or identical retry results. Unregistered providers may omit a version. Withdrawn or incompatible explicit versions cannot create new events.
 
-Owners create subscriptions in the console or
-`PUT /console/subscriptions/{id}`. Supply `revision: 0` to create; later writes
-use the last observed revision. An identical retry of a lost save response returns
-the saved revision. Event matching supports exact types or namespace patterns
-such as `mail.*`, with an optional exact connection principal as `source`.
+Acceptance confirms persistence, not consumer execution, model completion or external delivery.
 
-- `mode: "inbox"`: leave the event for the owner.
-- `mode: "work"`: supply `conversation`, `project` and `instruction`. The
-  conversation must already be bound to that project. Server automation submits
-  the frozen rule through the same controlled Work port.
-- `mode: "provider"`: supply an enrolled provider's grant ID as `handler`.
+## Subscriptions and delivery
 
-A delivery freezes the rule revision, instruction and destination. Disabling a
-rule prevents pending claims/admission; it does not undo an already accepted
-effect. Editing a rule applies to future deliveries. `include_derived` defaults
-to false. Completion facts opt in explicitly and causal chains stop at eight
-levels with an Inbox entry instead of starting more effects.
+Owners use `PUT /console/subscriptions/{id}` with `revision: 0` to create, and the last observed revision to edit. Exact types and namespace patterns such as `mail.*` are supported, with optional exact connection principal `source`.
 
-`POST /services/events/claim` returns `{found, delivery, event}`. When `found`
-is true, deduplicate downstream effects by `delivery.id`; its `claim_token` is
-evidence for that particular claim. A claim lasts one minute. A consumer returns:
+| Mode | Required destination |
+| --- | --- |
+| `inbox` | Owner Inbox |
+| `work` | `conversation`, `project`, `instruction`; the conversation is already bound to the project |
+| `provider` | Enrolled grant ID in `handler` |
+
+Each delivery freezes the rule revision and destination. Disabling prevents pending claims/admission, without undoing accepted effects. `include_derived` defaults to false; effect chains stop at eight causal levels and leave an Inbox entry.
+
+Consumers call `POST /services/events/claim`, which returns `{found, delivery, event}`. Deduplicate effects by `delivery.id` and retain the original claim token. Claims last one minute. Acknowledge at `POST /services/events/deliveries/{id}/ack`:
 
 ```json
-{"claim_token":"<original token>","state":"done","receipt":"<consumer receipt>"}
+{"claim_token":"<original token>","state":"done","receipt":"<durable consumer receipt>"}
 ```
 
-to `POST /services/events/deliveries/{id}/ack`. `done` requires a nonempty receipt;
-`failed` and `unknown` may include a bounded `detail`. Acknowledgements are scoped
-to the assigned provider. Repeating the exact terminal receipt is idempotent;
-conflicting proof is rejected. After claim timeout or server restart, an uncertain
-external effect becomes unknown. The original claim can still supply late proof.
-Automatic retry is permitted only when the owner explicitly declares
-`replay_safe` and the consumer durably deduplicates and retains receipts.
+`done` requires a nonempty receipt. `failed` and `unknown` may include `detail`. Exact terminal acknowledgements are idempotent; conflicting evidence is rejected. A timed-out or interrupted uncertain effect becomes unknown; the original claim can still submit late proof. Automatic retry requires explicit `replay_safe` and durable consumer deduplication.
 
-Unmatched external events, failed Work and unknown consumption appear in the
-Inbox. Owners can inspect `/console/business-events/{id}`, resolve an Inbox item,
-or explicitly reprocess an event after adding a subscription with
-`POST /console/business-events/{id}/reprocess`. Reprocessing preserves deliveries
-under existing revisions; a new revision creates a new delivery. Retrying a failed
-or unknown delivery is an explicit operator action and replaces its claim token.
-Do not retry an uncertain external effect without reconciling the original action.
+Owners inspect `/console/business-events/{id}` and `/console/event-deliveries/{id}`. Unmatched events, failed Work and unknown consumption appear in Inbox. `POST /console/business-events/{id}/reprocess` preserves existing-revision deliveries; a new revision creates a new delivery. Explicit retry replaces the claim token, so reconcile uncertain effects first.
 
-## Observe event flow in the console
+## Work requests
 
-**Connections & Events → Message Bus** shows routing backlog, deliveries awaiting
-claim, claimed/accepted processing, unknown effects and open Inbox entries. These
-counts have different units: one event may create several deliveries and attention
-entries. External intake limits and service hot/compressed storage are shown
-separately. A failed read does not display healthy zero counts. Queue/activity
-reads refresh every two seconds; Inbox, limits and storage refresh every ten
-seconds while the page is visible. Hidden pages do not continue polling.
-
-The dashboard uses compact queue metrics, a live flow instrument, plugin health,
-and a four-row activity digest. Recent events come from the latest 32 immutable
-intake receipts, with consecutive equal source/type/subject/routing states
-grouped together. Each group inspects its latest original event; the repeat count
-describes that bounded sample, not total throughput. Needs Attention reads up to
-four unresolved failed/unknown deliveries from the complete open Inbox index,
-including older compressed failures outside the recent window. A fifth match
-sets the "more" indicator. Resolving an Inbox entry removes it from this digest.
-
-The owner-only `GET /console/event-activity` reads both projections in one
-snapshot and omits payloads, receipts and claim credentials. It refreshes every
-ten seconds while visible. View All opens the complete paginated React Aria /
-Untitled UI event/delivery tables; dashboard polling stops in this records view.
-Capacity and storage live in a disclosure; original events, frozen subscriptions
-and receipts open in the inspector. The instrument has no demo playback controls
-or explanatory legend.
-
-The **Event Flow** instrument is a single canvas with adaptive columns.
-The light cores inside and outside the queue have the same size. Intakes move
-continuously across the entry boundary, then light successive slots toward the
-right-hand backlog. A claim glides out from the current head; the remaining
-lights shift right after it clears. Departures share a rail speed and wait for
-physical clearance, reserving room for the widest core a contracting grid can
-produce. This keeps outgoing lights separate during bursts and density changes.
-Appearance, handoff and departure fade are
-continuous, with browser-frame updates rather than stepped timers. Idle queues
-stop requesting animation frames, and hidden tabs pause them. Layout is measured
-only at initialization and resize, and resize reconciles to the latest snapshot.
-The DOM node count is constant regardless of backlog.
-
-At rest, ordinary backlogs retain one light per waiting delivery. Columns grow
-with the observed backlog and light cores shrink smoothly, with extra room for
-incoming events. The queue occupies 86% of the track. Density changes preserve
-in-flight packets; an eight-second low-water delay prevents repeated zooming
-as producers and consumers overlap. Dense grids retain the same browser-frame
-updates and a bounded traversal time.
-
-Only when individual lights would become narrower than a readable pixel does
-the display group deliveries. A small `×N` beside the exact pending count reveals
-the scale; the leading light retains its fractional width and consumer shifts
-use the same scale. The grid is bounded by available pixels and 1,024 columns.
-Color carries state rather than position: waiting lights are indigo, arrivals
-blue and consumer departures green. Amber (unknown effect) and red (failed)
-remain reserved for the queue counters. Counters
-show the current snapshot immediately; lights replay observed activity with a
-short delay and reconcile to that snapshot. Fan-out, unmatched publications and
-omitted activity never determine the durable count.
-
-This is a view of the waiting backlog, not a capacity progress bar. Capacity and
-storage remain in the provider disclosure. The flow snapshot also returns the
-global unfinished-delivery limit as `capacity`; claimed, accepted and unknown
-deliveries share that limit. Source limits and unfinished-event admission remain
-separate server checks.
-Unknown effects retain a separate amber count. Its owner-only `GET /console/event-flow` reads queue counts,
-the latest 64 immutable event intake receipts and 64 claim fingerprints in one
-ledger snapshot every two seconds. It never fetches payloads or claim credentials.
-Read indexes bound recent-record lookup without decompressing archived events.
-Queue counters share this snapshot with the graph.
-
-Particles retain their occurrence timing within each sample, so independent
-input/output can overlap rather than playing exclusive batches. This is bounded
-observability with a short delay, not a lossless transport or rate measurement:
-activity exceeding a sample window may be omitted. First load, reconnect and
-return from a hidden tab establish a baseline rather than replaying old activity.
-Acknowledgment updates do not create a second claim particle. Reduced-motion preferences keep a static queue while reads continue.
-The opt-in `STEVE_FIXTURE_BUS_MOTION=1` disposable acceptance fixture runs a real
-producer and consumer concurrently with different rates; production never injects
-preview events.
-
-The **Events** journal includes routed and unrouted envelopes, including compressed
-history. Its owner-only `GET /console/business-events?cursor=...` pages contain at
-most 32 envelopes and omit payloads and contract schemas; they include the original
-contract's display metadata. Activity groups do not merge different contract
-digests. **Deliveries** includes successful, pending,
-failed and unknown records. Inspection uses owner-only
-`GET /console/event-deliveries/{id}` and `GET /console/business-events/{id}` to show
-the original event, frozen subscription version, destination, claim evidence and
-receipt. Drawer links and page cursors survive reload. The journal is a stable
-ID-keyset browse, not a live chronological log. Viewing never claims, acknowledges,
-reprocesses or retries a delivery; those decisions remain in Inbox/subscriptions.
-
-"Routed" means subscription fanout committed. "Intelligent Work Accepted" means
-the Work service admitted a task; its receipt alone does not prove completion.
-An Inbox subscription is labelled "Sent to Inbox", not consumer completion. Plugin
-discovery includes enrolled producers/consumers without health registration and
-labels their health unregistered rather than offline.
-
-## Call the user's intelligence
-
-An authorized provider submits `POST /services/work`:
+An authorized connection calls `POST /services/work`:
 
 ```json
 {
   "key":"summarize/message-123",
   "conversation":"console:mail",
   "project":"scratch",
-  "instruction":"Summarize the received message for the owner.",
+  "instruction":"Summarize the message for the owner.",
   "context":{"message_id":"message-123","body":"External content"},
-  "causation":"<delivery id, when processing a claimed delivery>"
+  "causation":"<delivery id>"
 }
 ```
 
-Instructions are limited to 16 KiB and context to 256 KiB. Context is encoded as
-untrusted data. Providers cannot submit platform controls such as `/clear`.
-The server checks the existing project binding and scoped grant, and rereads the
-grant and causal authority in the queue-admission transaction. A provider can
-reference only its own claimed/done delivery. An independent provider job may
-omit `causation`; it still requires an explicit Work grant.
+Instructions are limited to 16 KiB, context to 256 KiB. Context is untrusted data. Platform controls are not accepted. Admission rechecks the scoped grant, project binding and causal authority. A connection may reference only its own claimed/done delivery; independent jobs may omit causation but still require a Work grant.
 
-`GET /services/work/{id}` returns `{work, result}` for that connection. Pending,
-accepted and failed admission are distinct from execution's queued/running/done
-result. The Work record and original Console Exchange ID commit with queue
-admission. The final original reply is retained on the Work record. Stable-key
-retries resume that identity; they do not reset failed work or start another ACP
-turn to conceal uncertainty. A changed request conflicts.
+`GET /services/work/{id}` returns `{work, result}` for the connection. Admission states and queued/running/done execution results are separate. Work retains the original input receipt and final reply. Stable-key retries return or resume that identity, never reset failure or conceal uncertainty by starting a new turn.
 
-## Advertise and use client capabilities
+## Client capabilities
 
-Enroll with `kind: "client"` and explicit capability grants:
+Enroll a client with explicit conversation-scoped capabilities:
 
 ```json
 {
-  "idempotency_key":"connect-mac-2026-10",
-  "name":"Owner Mac",
+  "idempotency_key":"desktop-client-1",
+  "name":"Owner desktop",
   "kind":"client",
   "capabilities":[{
     "client":"",
@@ -359,60 +158,31 @@ Enroll with `kind: "client"` and explicit capability grants:
 }
 ```
 
-The server fills the client ID. The client registers with
-`POST /services/client/register`, supplying `generation: 0` initially and its
-capabilities (`name`, `description`, `input_schema` with `type: "object"`). Reconnect
-using the last registration generation. An identical lost-response retry returns
-the existing generation. Registration is limited to 32 granted capabilities and
-does not expand authority. Heartbeat every 15 seconds with
-`POST /services/client/heartbeat` and the current generation; availability expires
-after 45 seconds.
+The server fills the client ID. `POST /services/client/register` accepts initial `generation: 0` and up to 32 granted capabilities, each with `name`, `description` and object `input_schema`. Reconnect with the last generation; heartbeat through `/services/client/heartbeat` every 15 seconds. Availability expires after 45 seconds.
 
-Capability invocations are created through `/services/client/invoke` with `key`,
-`client`, `capability`, `conversation`, and object `arguments`; external callers
-need their own explicit capability delegation as well as the client's permission.
-Private Console ACP executions use `steve_client_capabilities`,
-`steve_client_invoke` and `steve_client_result`. The bridge fixes the original
-task/attempt/epoch/process generation itself. Standalone hub executions also
-pin the opaque native session and the current hub activation. Restarting a hub
-invalidates the old activation's tool calls and pending client dispatch; a new
-turn can retain conversation history only after the original execution settled.
-Node executions retain their authenticated node/session identity and execution
-epoch. Shared-channel and delegated
-sessions cannot use these private capabilities. Dispatch rereads the original
-execution and live lease, so an ended attempt cannot cause a later native effect.
+`POST /services/client/invoke` accepts `key`, `client`, `capability`, `conversation` and object `arguments`. External callers need their own delegation as well as the client's permission. Private owner ACP sessions use `steve_client_capabilities`, `steve_client_invoke` and `steve_client_result`; shared and delegated sessions cannot inherit these private capabilities.
 
-When required, an owner approval is shown in Inbox before dispatch. The client
-polls `POST /services/client/claim` with its generation and receives
-`{found, invocation}`. Validate arguments against the advertised schema locally;
-the server bounds the envelope and enforces its object shape, scopes and fences,
-but does not execute a general JSON Schema validator or native capability code.
+Dispatch checks the original task, attempt, epoch, process generation and live lease. Standalone executions also bind native session and Hub activation. Ended executions and stale activations cannot dispatch later native effects.
 
-Complete with `POST /services/client/invocations/{id}/complete`:
+Required approval appears in Inbox. The client polls `POST /services/client/claim` with its generation, receives `{found, invocation}`, validates arguments locally, and completes at `POST /services/client/invocations/{id}/complete`:
 
 ```json
-{"claim_token":"<original token>","state":"done","receipt":"<client receipt>","result":{"shown":true}}
+{"claim_token":"<original token>","state":"done","receipt":"<durable client receipt>","result":{"shown":true}}
 ```
 
-Use the invocation ID for local effect deduplication and persist the result before
-acknowledging. Claims last one minute. A missing receipt becomes unknown and is
-never automatically reissued. The original token can settle that invocation after
-restart; registering a new generation is not evidence that an old effect stopped.
-Client approvals and unknown results have their own actionable Inbox projection;
-they are also durable business facts, without duplicate fallback rows by default.
+Persist deduplication by invocation ID before acknowledging. Claims last one minute. Missing proof becomes unknown and is not automatically reissued. The original token can settle after restart; a new client generation does not prove the old action stopped. The server checks object shape, bounds and authority, not general JSON Schema semantics or native execution.
 
-## Operational boundaries
+## Observation and storage
 
-All service records use the existing ledger transaction and replication path.
-There is no second message store. Management lists use 100-item keyset pages with
-`next` cursors. Worker passes rotate bounded pages so early unresolved work cannot
-starve later records. Claims require live credentials, and native clients are
-responsible for their own local effect validation, deduplication and evidence.
+Owner APIs provide read-only views:
 
-These connection grants and in-flight records are hub-owned service state, not
-project packages. Exporting a project does not copy connection credentials or
-implicitly authorize providers on another hub. Create destination connections
-explicitly and reconcile any original unfinished work before removal/migration.
-Existing Skills/MCP runtime bundles remain fixed per harness session. No native
-provider, iOS application, A2A adapter, automatic deployment or model version
-management is installed by these APIs.
+| Endpoint | Contents |
+| --- | --- |
+| `/console/business-events?cursor=...` | Up to 32 event summaries per keyset page |
+| `/console/event-activity` | Recent grouped activity and unresolved attention |
+| `/console/event-flow` | Queue counts and bounded recent intake/claim samples |
+| `/console/service-backlog` | Intake limits, pending age and storage |
+
+Flow animation reflects sampled activity, not lossless transport or measured throughput. Inspection never claims or retries work. Count units differ: one event can have multiple deliveries and attention entries.
+
+Management lists use keyset pagination; follow returned cursors. Recovery uses bounded rotating passes. Records share the existing ledger and replication path. Project migration does not copy connection credentials or authorize destination providers. Consumers remain responsible for local validation, effect receipts and reconciliation.

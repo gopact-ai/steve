@@ -1,16 +1,12 @@
 # Capability package examples
 
-These examples exercise the same `steve.plugins.v1` manifest with different
-Skills, MCP definitions and Agent presets. See [local preparation](../../docs/plugins-local.md)
-for commands and the current implementation boundary.
+These packages demonstrate the `steve.plugins.v1` manifest. Preview with `steve plugins preview -source <directory>`, then import and configure through the console's Plugins page. See the [author guide](../../docs/plugins-local.md).
 
-- `github`: a review skill, GitHub's hosted MCP endpoint and a preset referencing
-  the existing `codex` harness. Service access requires a suitable node-local
-  GitHub credential; preview and preparation never contact the service.
-- `team-tools`: a triage skill, a configurable team MCP endpoint and a preset
-  referencing the existing `claude-code` harness. Supply your own service later;
-  this example does not assume an internal network or a particular vendor.
+| Package | Included capabilities | Requirements |
+| --- | --- | --- |
+| [github](github/plugin.json) | Review skill, hosted GitHub MCP endpoint, Codex preset | Existing Codex harness and a suitable node-local GitHub credential |
+| [team-tools](team-tools/plugin.json) | Triage skill, configurable MCP endpoint, Claude Code preset | Existing Claude Code harness and your team service |
 
-Neither package contains credentials, installs a harness, starts tools or enables
-an Agent during preparation. Project activation and node configuration are the
-next implementation stages.
+Preparation saves fixed content without contacting the service, installing a harness or enabling an agent. Configure target nodes and credential references, prepare the installation, then enable it for new project sessions. Agent presets are previewed and applied separately.
+
+For developing Steve itself, use the included [steve-dev package](../../plugins/steve-dev/plugin.json).
