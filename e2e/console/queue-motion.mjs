@@ -17,26 +17,24 @@ export function queueGrowthSnapshots(snapshot) {
     return {before,after};
 }
 
+// Browser-only probes read the renderer's drawn state, not its internals.
 export function queueGrowthProbe() {
     let started=0,smallest=Infinity,largest=0,maximumSizeError=0,overlap=false;
     const arrivals=new Set(),departures=new Set();
     const sample=(now)=>{
         const stage=document.querySelector('.bus-flow-track');
-        if(stage){
-            const packets=Array.from(stage.querySelectorAll('.bus-flow-particle'));
-            if(packets.length&&!started) started=now;
+        const view=stage?.flowState?.();
+        if(view){
+            if(view.packets.length&&!started) started=now;
             if(started){
-                const cells=Array.from(stage.querySelectorAll('.bus-flow-cell'));
-                smallest=Math.min(smallest,cells.length);largest=Math.max(largest,cells.length);
-                const first=cells[0].getBoundingClientRect();
-                for(const el of packets){
-                    (el.classList.contains('is-in')?arrivals:departures).add(el.dataset.activity);
-                    const rect=el.getBoundingClientRect();
-                    maximumSizeError=Math.max(maximumSizeError,Math.abs(rect.width-first.width),Math.abs(rect.height-first.height));
+                smallest=Math.min(smallest,view.slots);largest=Math.max(largest,view.slots);
+                for(const item of view.packets){
+                    (item.direction==='in'?arrivals:departures).add(item.id);
+                    maximumSizeError=Math.max(maximumSizeError,Math.abs(item.width-view.width),Math.abs(item.height-view.height));
                 }
-                overlap ||= packets.some(el=>el.classList.contains('is-in'))&&packets.some(el=>el.classList.contains('is-out'));
+                overlap ||= view.packets.some(item=>item.direction==='in')&&view.packets.some(item=>item.direction==='out');
                 if(now-started>=5200){
-                    document.body.dataset.queueGrowth=JSON.stringify({arrivals:arrivals.size,departures:departures.size,smallest,largest,maximumSizeError,overlap,fill:cells.reduce((sum,cell)=>sum+Number(cell.style.getPropertyValue('--bus-fill')),0),units:Number(stage.dataset.unitScale),packets:packets.length,overflow:document.documentElement.scrollWidth>innerWidth});
+                    document.body.dataset.queueGrowth=JSON.stringify({arrivals:arrivals.size,departures:departures.size,smallest,largest,maximumSizeError,overlap,fill:view.fill,units:view.units,packets:view.packets.length,overflow:document.documentElement.scrollWidth>innerWidth});
                     return;
                 }
             }
@@ -58,37 +56,26 @@ export function assertQueueGrowth(value) {
     assert.equal(value.overflow,false,"density growth overflowed the page");
 }
 
-// Browser-only acceptance probe: observe visible lights, not renderer internals.
 export function queueBurstProbe() {
     let started = 0, minimumVisible = Infinity, minimumExit = Infinity, maximumSizeError = 0, minimumGap = Infinity;
     const departures = new Set();
     const sample = (now) => {
         const stage = document.querySelector(".bus-flow-track");
-        if (stage) {
-            const outgoing = Array.from(stage.querySelectorAll(".bus-flow-particle.is-out"));
+        const view = stage?.flowState?.();
+        if (view) {
+            const outgoing = view.packets.filter((item) => item.direction === "out");
             if (outgoing.length && !started) started = now;
             if (started) {
-                const track = stage.getBoundingClientRect();
-                const queue = stage.querySelector(".bus-flow-buffer").getBoundingClientRect();
-                const cells = Array.from(stage.querySelectorAll(".bus-flow-cell"));
-                const first = cells[0].getBoundingClientRect();
-                let visible = 0;
-                for (const cell of cells) {
-                    const style = getComputedStyle(cell, "::after"), rect = cell.getBoundingClientRect();
-                    const shift = style.transform === "none" ? 0 : new DOMMatrixReadOnly(style.transform).m41;
-                    if (Number(style.opacity) >= .99 && rect.right + shift > queue.left + .5 && rect.left + shift < queue.right - .5) visible++;
+                minimumVisible = Math.min(minimumVisible, view.lit.length);
+                for (const item of outgoing) {
+                    departures.add(item.id);
+                    minimumExit = Math.min(minimumExit, item.left / view.length);
+                    maximumSizeError = Math.max(maximumSizeError, Math.abs(item.width - view.width), Math.abs(item.height - view.height));
                 }
-                minimumVisible = Math.min(minimumVisible, visible);
-                for (const el of outgoing) {
-                    departures.add(el);
-                    const rect = el.getBoundingClientRect();
-                    minimumExit = Math.min(minimumExit, (rect.left - track.left) / track.width);
-                    maximumSizeError = Math.max(maximumSizeError, Math.abs(rect.width - first.width), Math.abs(rect.height - first.height));
-                }
-                const visibleExits=outgoing.map(el=>({rect:el.getBoundingClientRect(),opacity:Number(getComputedStyle(el).opacity)})).filter(item=>item.opacity>=.2&&item.rect.left<track.right).sort((a,b)=>a.rect.left-b.rect.left);
-                for(let i=1;i<visibleExits.length;i++) minimumGap=Math.min(minimumGap,visibleExits[i].rect.left-visibleExits[i-1].rect.right);
-                if (now - started >= 5200 && stage.querySelectorAll(".bus-flow-particle").length === 0 && Number(stage.querySelector("[data-flow-taken]").dataset.flowTaken) === 0) {
-                    document.body.dataset.queueBurst = JSON.stringify({ minimumVisible, minimumExit, maximumSizeError, minimumGap, departures: departures.size, slots: cells.length, units: Number(stage.dataset.unitScale), settled: cells.filter((cell) => cell.dataset.filled === "true").length, fill: cells.reduce((sum,cell)=>sum+Number(cell.style.getPropertyValue('--bus-fill')),0), packets: stage.querySelectorAll(".bus-flow-particle").length, queueRatio: queue.width / track.width, pending: Number(document.querySelector(".bus-flow-values strong").textContent.replace(/[^0-9]/g,"")), overflow: document.documentElement.scrollWidth > innerWidth });
+                const visible = outgoing.filter((item) => item.opacity >= .2 && item.left < view.length).sort((a, b) => a.left - b.left);
+                for (let i = 1; i < visible.length; i++) minimumGap = Math.min(minimumGap, visible[i].left - visible[i - 1].left - visible[i - 1].width);
+                if (now - started >= 5200 && view.packets.length === 0 && Number(stage.querySelector("[data-flow-taken]").dataset.flowTaken) === 0) {
+                    document.body.dataset.queueBurst = JSON.stringify({ minimumVisible, minimumExit, maximumSizeError, minimumGap, departures: departures.size, slots: view.slots, units: view.units, settled: view.lit.length, fill: view.fill, packets: view.packets.length, queueRatio: view.span / view.length, pending: Number(document.querySelector(".bus-flow-values strong").textContent.replace(/[^0-9]/g,"")), overflow: document.documentElement.scrollWidth > innerWidth });
                     return;
                 }
             }
@@ -151,14 +138,12 @@ export async function checkQueueBurst(page, snapshot) {
             await page.route("**/console/event-flow", (route) => route.fulfill({ json: value }));
             await page.reload();
             await page.waitForFunction((pending) => {
-                const stage=document.querySelector('.bus-flow-track');
-                const cells=Array.from(document.querySelectorAll('.bus-flow-cell'));
-                return stage && Math.abs(cells.reduce((sum,cell)=>sum+Number(cell.style.getPropertyValue('--bus-fill')),0) * Number(stage.dataset.unitScale) - pending) < .001;
+                const view=document.querySelector('.bus-flow-track')?.flowState?.();
+                return view && Math.abs(view.fill * view.units - pending) < .001;
             }, pending);
             const view = await page.evaluate(() => {
-                const stage=document.querySelector('.bus-flow-track'), cells=Array.from(stage.querySelectorAll('.bus-flow-cell'));
-                const queue=stage.querySelector('.bus-flow-buffer').getBoundingClientRect();
-                return {slots:cells.length, units:Number(stage.dataset.unitScale), lit:cells.filter(cell=>cell.dataset.filled==='true').length, width:cells[0].getBoundingClientRect().width, fill:cells.reduce((sum,cell)=>sum+Number(cell.style.getPropertyValue('--bus-fill')),0), marker:document.querySelector('.bus-flow-scale')?.textContent, queueRatio:queue.width/stage.getBoundingClientRect().width, overflow:document.documentElement.scrollWidth>innerWidth};
+                const state=document.querySelector('.bus-flow-track').flowState();
+                return {slots:state.slots, units:state.units, lit:state.lit.length, width:state.width, fill:state.fill, marker:document.querySelector('.bus-flow-scale')?.textContent, queueRatio:state.span/state.length, overflow:document.documentElement.scrollWidth>innerWidth};
             });
             assert.ok(view.slots>=previousSlots, "more backlog produced fewer display columns");
             previousSlots=view.slots;
