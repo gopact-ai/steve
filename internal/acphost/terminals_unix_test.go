@@ -519,6 +519,46 @@ func TestHostTerminalKillAfterStoppedSlotPrunedNeverRepeatsCallback(t *testing.T
 	}
 }
 
+// Kimi Code CLI 2.1.1 asks for outputByteLimit = 4 MiB on every Bash call.
+const kimiTerminalOutputLimit = 4 << 20
+
+func TestHostTerminalOversizedLimitIsClampedNotRejected(t *testing.T) {
+	h, ch, _, _, col := terminalHostFixture(t, "auto")
+	limit := uint64(kimiTerminalOutputLimit)
+	id := terminalCreate(t, ch, `echo hi`, &limit)
+	terminalAwait(t, ch, id)
+	result, err := ch.TerminalOutput(t.Context(), &acp.TerminalOutputRequest{SessionID: "session", TerminalID: id})
+	if err != nil || result.Output != "hi\n" || result.Truncated {
+		t.Fatalf("output=%+v err=%v", result, err)
+	}
+	h.mu.Lock()
+	reserved := h.terminalOutputBytes[col]
+	h.mu.Unlock()
+	if reserved != maxTerminalOutputBytes {
+		t.Fatalf("oversized request reserved %d, want host cap %d", reserved, maxTerminalOutputBytes)
+	}
+}
+
+func TestHostTerminalOversizedLimitTruncatesFromBeginning(t *testing.T) {
+	_, ch, _, _, _ := terminalHostFixture(t, "auto")
+	limit := uint64(kimiTerminalOutputLimit)
+	// 1.5 MiB of filler between markers exceeds the 1 MiB host cap.
+	id := terminalCreate(t, ch, `printf head; head -c 1572864 /dev/zero | tr '\0' x; printf tail`, &limit)
+	if status := terminalAwait(t, ch, id); status.ExitCode == nil || *status.ExitCode != 0 {
+		t.Fatalf("status=%+v", status)
+	}
+	result, err := ch.TerminalOutput(t.Context(), &acp.TerminalOutputRequest{SessionID: "session", TerminalID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Truncated || len(result.Output) > maxTerminalOutputBytes || len(result.Output) < maxTerminalOutputBytes/2 {
+		t.Fatalf("truncated=%v bytes=%d", result.Truncated, len(result.Output))
+	}
+	if strings.Contains(result.Output, "head") || !strings.HasSuffix(result.Output, "tail") || strings.Trim(strings.TrimSuffix(result.Output, "tail"), "x") != "" {
+		t.Fatalf("output was not a tail: prefix=%q suffix=%q", result.Output[:16], result.Output[len(result.Output)-16:])
+	}
+}
+
 func TestHostTerminalAggregateOutputBudgetAndReleasedReuse(t *testing.T) {
 	h, ch, _, _, col := terminalHostFixture(t, "auto")
 	full := uint64(maxTerminalOutputBytes)

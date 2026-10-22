@@ -117,10 +117,10 @@ func terminalRequest(req *acp.CreateTerminalRequest) (int, error) {
 	}
 	limit := defaultTerminalOutputBytes
 	if req.OutputByteLimit != nil {
-		if *req.OutputByteLimit > maxTerminalOutputBytes {
-			return 0, fileError(acp.ErrorCodeInvalidParams, "Terminal output limit exceeds its byte budget")
-		}
-		limit = int(*req.OutputByteLimit)
+		// ACP's outputByteLimit is the most the client wants retained; a
+		// larger request gets the host cap, and the per-session budget clamps
+		// it further at registration. Truncation is reported in the output.
+		limit = int(min(*req.OutputByteLimit, maxTerminalOutputBytes))
 	}
 	return limit, nil
 }
