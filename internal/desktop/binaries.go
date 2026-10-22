@@ -3,6 +3,7 @@ package desktop
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -36,7 +37,7 @@ func bundledPeerBinary(backend, platform string) (string, bool) {
 	}
 	path := filepath.Join(filepath.Dir(backend), "peer-binaries", strings.ReplaceAll(platform, "/", "-"), "steve")
 	if !executable(path) {
-		return "", false
+		return sameRelease(backend, platform, "steve")
 	}
 	return path, true
 }
@@ -48,6 +49,22 @@ func bundledNodeBinary(backend, platform string) (string, bool) {
 		return "", false
 	}
 	path := filepath.Join(filepath.Dir(backend), "node-binaries", strings.ReplaceAll(platform, "/", "-"), "steve-node")
+	if !executable(path) {
+		return sameRelease(backend, platform, "steve-node")
+	}
+	return path, true
+}
+
+// sameRelease covers release archives and Homebrew installs, which ship one
+// platform's steve and steve-node side by side instead of the app's package
+// directories. They can serve only a machine of the same platform.
+var hostPlatform = runtime.GOOS + "/" + runtime.GOARCH
+
+func sameRelease(backend, platform, name string) (string, bool) {
+	if platform != hostPlatform {
+		return "", false
+	}
+	path := filepath.Join(filepath.Dir(backend), name)
 	if !executable(path) {
 		return "", false
 	}

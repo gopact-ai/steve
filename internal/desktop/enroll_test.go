@@ -1,78 +1,78 @@
 package desktop
 
 import (
-	"os"
-	"path/filepath"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"testing"
-
-	"github.com/gopact-ai/steve/internal/config"
 )
 
-func enrollState(t *testing.T) *Installation {
-	t.Helper()
-	dir := filepath.Join(t.TempDir(), "steve")
-	if err := os.Mkdir(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	installed, err := Bootstrap(Options{StateDir: dir})
+type enrollServer struct {
+	agents   int
+	enrolled []map[string]any
+}
+
+func (s *enrollServer) handler(t *testing.T, token string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/console/desktop":
+			json.NewEncoder(w).Encode(map[string]int{"agent_count": s.agents})
+		case r.Method == http.MethodGet && r.URL.Path == "/console/desktop/agents":
+			json.NewEncoder(w).Encode(map[string]any{"agents": []map[string]any{
+				{"id": "codex", "name": "Codex", "installed": true},
+				{"id": "claude", "name": "Claude Code", "installed": true},
+				{"id": "gemini", "name": "Gemini CLI", "installed": true, "requires": []string{"node"}},
+				{"id": "opencode", "name": "OpenCode", "installed": false},
+			}})
+		case r.Method == http.MethodPost && r.URL.Path == "/console/desktop/agents":
+			var body struct {
+				Agents []map[string]any `json:"agents"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			s.enrolled = body.Agents
+			s.agents += len(body.Agents)
+			json.NewEncoder(w).Encode(map[string]int{"agent_count": s.agents})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+}
+
+func TestEnrollRunningUsesTheServiceEnrollment(t *testing.T) {
+	installed := &Installation{Token: "owner-token"}
+	state := &enrollServer{}
+	server := httptest.NewServer(state.handler(t, installed.Token))
+	defer server.Close()
+	got, err := EnrollRunning(context.Background(), installed, server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return installed
-}
-
-func fakeTools(t *testing.T, names ...string) string {
-	t.Helper()
-	dir := t.TempDir()
-	for _, name := range names {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+	if !reflect.DeepEqual(got.Added, []string{"Codex", "Claude Code"}) {
+		t.Fatalf("added %v", got.Added)
 	}
-	return dir
-}
-
-func TestEnrollDiscoveredRegistersRunnableAgentsOnce(t *testing.T) {
-	installed := enrollState(t)
-	candidates := DiscoverAgents(DiscoveryOptions{Path: fakeTools(t, "codex", "claude", "node", "npm")})
-	added, err := EnrollDiscovered(installed.Paths.Config, candidates)
-	if err != nil {
-		t.Fatal(err)
+	if len(got.Pending) != 1 {
+		t.Fatalf("pending %v, want the tool missing node", got.Pending)
 	}
-	if len(added) != 2 {
-		t.Fatalf("added %v, want Codex and Claude Code", added)
+	want := []map[string]any{{"candidate_id": "codex", "default": true}, {"candidate_id": "claude"}}
+	if !reflect.DeepEqual(state.enrolled, want) {
+		t.Fatalf("enrolled %v, want %v", state.enrolled, want)
 	}
-	cfg, err := config.Load(installed.Paths.Config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defaults := 0
-	for id, a := range cfg.Agents {
-		if a.Default {
-			defaults++
-		}
-		if got := cfg.Harnesses[a.Harness].Permission; got != config.PermissionRead {
-			t.Fatalf("%s starts with %q, want read", id, got)
-		}
-	}
-	if defaults != 1 {
-		t.Fatalf("%d default agents, want one", defaults)
-	}
-	again, err := EnrollDiscovered(installed.Paths.Config, candidates)
-	if err != nil || len(again) != 0 {
-		t.Fatalf("second run added %v (%v); an owner's agents must be left alone", again, err)
+	again, err := EnrollRunning(context.Background(), installed, server.URL)
+	if err != nil || len(again.Added) != 0 {
+		t.Fatalf("second run added %v (%v); an owner's agents must be left alone", again.Added, err)
 	}
 }
 
-func TestEnrollDiscoveredSkipsToolsMissingRequirements(t *testing.T) {
-	installed := enrollState(t)
-	// node and npm are absent, so the Codex adapter cannot run.
-	added, err := EnrollDiscovered(installed.Paths.Config, DiscoverAgents(DiscoveryOptions{Path: fakeTools(t, "codex")}))
-	if err != nil || len(added) != 0 {
-		t.Fatalf("added %v (%v), want nothing", added, err)
-	}
-	cfg, err := config.Load(installed.Paths.Config)
-	if err != nil || len(cfg.Agents) != 0 {
-		t.Fatalf("configuration changed: %v (%v)", cfg.Agents, err)
+func TestEnrollRunningRejectsNonLocalAddresses(t *testing.T) {
+	if _, err := EnrollRunning(context.Background(), &Installation{Token: "x"}, "http://example.com:80"); err == nil {
+		t.Fatal("enrolled against a remote address")
 	}
 }
