@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Octokit } from '@octokit/rest';
 import { loadConfig, requiredEnv } from './config.mjs';
-import { Store } from './store.mjs';
+import { Store, lockState } from './store.mjs';
 import { Steve } from './steve.mjs';
 import { Poller } from './poller.mjs';
 import { SetupError, errorCode } from './errors.mjs';
@@ -19,6 +19,7 @@ async function main() {
     try { console.log(JSON.stringify(store.status(), null, 2)); } finally { store.close(); }
     return;
   }
+  const release = await lockState(config.state_dir);
   const store = new Store(config.state_dir);
   const github = new Octokit({ auth: requiredEnv(config.github_token_env), baseUrl: config.api_url, userAgent: 'steve-github-provider/0.1.0', request: { timeout: 30000 } });
   const steve = new Steve(config, store);
@@ -45,6 +46,7 @@ async function main() {
     clearInterval(timer);
     if (heartbeat) await heartbeat;
     store.close();
+    await release();
   }
 }
 

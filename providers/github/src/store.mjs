@@ -1,19 +1,27 @@
 import { mkdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import lockfile from 'proper-lockfile';
 import { SetupError } from './errors.mjs';
 
-// One process owns a state directory: the database is opened in exclusive
-// locking mode, so a second provider fails instead of publishing twice.
+export async function lockState(dir) {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try { return await lockfile.lock(dir, { stale: 30000, update: 10000, retries: 0 }); }
+  catch (error) {
+    if (error.code === 'ELOCKED') throw new SetupError('Another provider process owns this state directory');
+    throw error;
+  }
+}
+
+// The CLI holds a lock on the state directory while polling, so a second
+// provider fails instead of publishing twice; status reads stay available.
 export class Store {
   constructor(dir, { readOnly = false } = {}) {
     if (!readOnly) { mkdirSync(dir, { recursive: true, mode: 0o700 }); chmodSync(dir, 0o700); }
     this.db = new DatabaseSync(join(dir, 'github.sqlite'), { readOnly });
     if (readOnly) return;
     chmodSync(join(dir, 'github.sqlite'), 0o600);
-    try { this.db.exec('PRAGMA busy_timeout=0; PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT'); }
-    catch { this.db.close(); throw new SetupError('Another provider process owns this state directory'); }
-    this.db.exec(`PRAGMA journal_mode=DELETE;
+    this.db.exec(`PRAGMA journal_mode=DELETE; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS repositories (name TEXT PRIMARY KEY, since TEXT);
       CREATE TABLE IF NOT EXISTS pulls (repository TEXT, number INTEGER, head TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY (repository, number));
       CREATE TABLE IF NOT EXISTS outbox (key TEXT PRIMARY KEY, repository TEXT NOT NULL, envelope TEXT, receipt TEXT);

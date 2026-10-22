@@ -13,11 +13,12 @@
 | `github.pull_request.closed` | 合并或关闭；`merged` 区分两者 | PR 编号 |
 | `github.review.submitted` | 提交了一条评审，正文属于外部资料 | 评审 ID |
 | `github.checks.succeeded` / `github.checks.failed` | PR 当前提交的检查全部结束 | head 提交 |
-| `github.workflow.failed` | 默认分支上的工作流运行未成功 | 运行 ID |
+| `github.workflow.failed` | 默认分支上的工作流运行未成功 | 运行 ID 与重跑次数 |
 
-首次连接仓库只记录现状，不重放历史。之后每次轮询从上次的时间点继续；轮询失败时不推进，
-下一次重复读取，由去重键吸收重叠。发布前事件先写入本地 outbox，响应丢失后重试会得到
-原来的事件。
+首次连接仓库只记录现状：所有打开 PR 的当前提交，以及已有评审、检查结果和失败运行都记为
+已送达，不重放历史。之后每次轮询读取上次时间点以来的全部变化（自动翻页）；轮询失败时不推进，
+下一次重复读取，由去重键吸收重叠。默认分支的运行按创建时间多回看一天，耗时长的运行和重跑
+（按 `run_attempt` 区分）也会被发现。发布前事件先写入本地 outbox，响应丢失后重试会得到原来的事件。
 
 ## 配置
 
@@ -40,8 +41,9 @@ node src/cli.mjs run --config config.json    # 常驻，每 poll_seconds 秒轮�
 node src/cli.mjs status --config config.json # 各仓库的时间点和待发布数量
 ```
 
-一个状态目录只能被一个进程打开。默认每 60 秒轮询，最小 30 秒；每个仓库每次约
-4 + 被更新 PR 数 + 打开 PR 数 个 API 请求，注意 GitHub 的速率限制。
+一个状态目录只能由一个 `run`/`once` 进程持有，`status` 可随时读取。默认每 60 秒轮询，
+最小 30 秒；每个仓库每次的请求数约为 3 + 被更新 PR 数 + 尚无检查结果的打开 PR 数，
+注意 GitHub 的速率限制。
 
 ## 订阅示例
 

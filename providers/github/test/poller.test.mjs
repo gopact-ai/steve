@@ -3,30 +3,40 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Store } from '../src/store.mjs';
+import { Store, lockState } from '../src/store.mjs';
 import { Poller } from '../src/poller.mjs';
 import { Steve } from '../src/steve.mjs';
 import { checksEvent, workflowEvent } from '../src/events.mjs';
 
 const REPO = 'acme/widget';
 
-// A GitHub stand-in with just the endpoints the poller uses.
-function fakeGitHub() {
-  const state = { pulls: [], reviews: {}, checks: {}, runs: [] };
-  const page = (items, { per_page = 30, page = 1 } = {}) => items.slice((page - 1) * per_page, page * per_page);
+// A GitHub stand-in with the endpoints the poller uses. paginate follows
+// pages of `size` items and honors the early-stop callback like Octokit's.
+function fakeGitHub(size = 2) {
+  const state = { pulls: [], reviews: {}, checks: {}, runs: [], calls: 0 };
+  const list = (items, page, per) => items.slice((page - 1) * per, page * per);
   const rest = {
     pulls: {
-      list: async (args) => {
-        const items = state.pulls.filter((pull) => args.state === 'all' || pull.state === args.state).sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-        return { data: page(items, args) };
-      },
-      listReviews: async ({ pull_number }) => ({ data: state.reviews[pull_number] || [] }),
+      list: (args) => state.pulls.filter((pull) => args.state === 'all' || pull.state === args.state).sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+      listReviews: ({ pull_number }) => state.reviews[pull_number] || [],
     },
-    checks: { listForRef: async ({ ref }) => ({ data: { check_runs: state.checks[ref] || [] } }) },
+    checks: { listForRef: ({ ref }) => state.checks[ref] || [] },
     repos: { get: async () => ({ data: { default_branch: 'main' } }) },
-    actions: { listWorkflowRunsForRepo: async () => ({ data: { workflow_runs: state.runs } }) },
+    actions: { listWorkflowRunsForRepo: ({ created }) => state.runs.filter((run) => run.created_at >= created.slice(2)) },
   };
-  return { state, github: { rest } };
+  const paginate = async (method, args, map = (response) => response.data) => {
+    const all = method(args), out = [];
+    let stopped = false;
+    for (let page = 1; !stopped; page++) {
+      state.calls++;
+      const data = list(all, page, size);
+      if (!data.length) break;
+      out.push(...map({ data }, () => { stopped = true; }));
+      if (data.length < size) break;
+    }
+    return out;
+  };
+  return { state, github: { rest, paginate } };
 }
 
 const iso = (offsetMinutes) => new Date(Date.now() + offsetMinutes * 60000).toISOString().replace(/\.\d+Z$/, 'Z');
@@ -56,7 +66,8 @@ test('connecting a repository records a baseline without replaying its history',
   const { published, state, poller, reports } = fixture(t);
   state.pulls.push(pull(1), pull(2, { state: 'closed', merged_at: iso(-500) }));
   state.checks['sha-1-a'] = [{ name: 'test', status: 'completed', conclusion: 'success' }];
-  state.runs.push({ id: 7, name: 'test', status: 'completed', conclusion: 'failure', head_branch: 'main', updated_at: iso(-30) });
+  state.reviews[1] = [{ id: 5, state: 'COMMENTED', body: 'just before connecting', submitted_at: iso(-1) }];
+  state.runs.push({ id: 7, name: 'test', status: 'completed', conclusion: 'failure', head_branch: 'main', created_at: iso(-30), updated_at: iso(-30) });
   assert.equal(await poller.cycle(), true);
   assert.deepEqual(published, []);
   assert.equal(reports.at(-1).state, 'baseline');
@@ -73,7 +84,7 @@ test('new pull requests, pushes, reviews, checks and default-branch failures are
   state.reviews[1] = [{ id: 11, state: 'CHANGES_REQUESTED', body: 'Please add a test', user: { login: 'reviewer' }, submitted_at: iso(1) }];
   state.checks['sha-1-b'] = [{ name: 'test', status: 'completed', conclusion: 'failure', html_url: 'u' }, { name: 'lint', status: 'completed', conclusion: 'success' }];
   state.checks['sha-3-a'] = [{ name: 'test', status: 'in_progress', conclusion: null }];
-  state.runs.push({ id: 8, name: 'release', status: 'completed', conclusion: 'failure', head_branch: 'main', updated_at: iso(1), html_url: 'r' });
+  state.runs.push({ id: 8, name: 'release', status: 'completed', conclusion: 'failure', head_branch: 'main', created_at: iso(1), updated_at: iso(1), html_url: 'r' });
   await poller.cycle();
   const types = published.map((item) => `${item.type} ${item.subject}`).sort();
   assert.deepEqual(types, [
@@ -119,7 +130,7 @@ test('a GitHub failure leaves the cursor for the next poll', async (t) => {
   const before = store.since(REPO);
   state.pulls.push(pull(4, { created_at: iso(1), updated_at: iso(1) }));
   const list = poller.github.rest.pulls.listReviews;
-  poller.github.rest.pulls.listReviews = async () => { const error = new Error('rate limited'); error.status = 403; throw error; };
+  poller.github.rest.pulls.listReviews = () => { const error = new Error('rate limited'); error.status = 403; throw error; };
   assert.equal(await poller.cycle(), false);
   assert.equal(reports.at(-1).code, '403');
   assert.equal(store.since(REPO), before);
@@ -138,7 +149,69 @@ test('checks are reported only after every run completes', () => {
   assert.equal(workflowEvent(REPO, { status: 'completed', conclusion: 'success' }), null);
 });
 
-test('a second process cannot open the same state', (t) => {
+test('a second process cannot poll the same state, but status can read it', async (t) => {
   const { dir } = fixture(t);
-  assert.throws(() => new Store(dir), /owns this state directory/);
+  const release = await lockState(dir);
+  try {
+    await assert.rejects(lockState(dir), /owns this state directory/);
+    const reader = new Store(dir, { readOnly: true });
+    assert.deepEqual(reader.status(), []);
+    reader.close();
+  } finally { await release(); }
+});
+
+test('catch-up reads every page since the cursor', async (t) => {
+  const { published, state, poller } = fixture(t);
+  state.pulls.push(pull(1));
+  await poller.cycle();
+  for (let n = 100; n < 113; n++) state.pulls.push(pull(n, { created_at: iso(1), updated_at: iso(1 + n / 1000) }));
+  await poller.cycle();
+  assert.equal(published.filter((item) => item.type === 'github.pull_request.opened').length, 13);
+});
+
+test('every open head is seeded at baseline, so a first push on an old pull request is announced', async (t) => {
+  const { published, state, poller } = fixture(t);
+  for (let n = 1; n <= 7; n++) state.pulls.push(pull(n));
+  await poller.cycle();
+  Object.assign(state.pulls.find((item) => item.number === 1), { head: { sha: 'sha-1-b' }, updated_at: iso(1) });
+  await poller.cycle();
+  assert.deepEqual(published.map((item) => `${item.type} ${item.payload.number}`), ['github.pull_request.updated 1']);
+});
+
+test('a review submitted just before connecting is not published by later polls', async (t) => {
+  const { published, state, poller } = fixture(t);
+  state.pulls.push(pull(1, { updated_at: iso(-1) }));
+  state.reviews[1] = [{ id: 21, state: 'APPROVED', submitted_at: iso(-1) }];
+  await poller.cycle();
+  await poller.cycle();
+  await poller.cycle();
+  assert.deepEqual(published, []);
+});
+
+test('reviews and check runs on later pages count', async (t) => {
+  const { published, state, poller } = fixture(t);
+  state.pulls.push(pull(1));
+  state.reviews[1] = [1, 2, 3].map((id) => ({ id, state: 'COMMENTED', submitted_at: iso(-200) }));
+  await poller.cycle();
+  state.reviews[1].push({ id: 4, state: 'COMMENTED', body: 'page two', submitted_at: iso(1) });
+  state.pulls[0].updated_at = iso(1);
+  // Two passing runs on page one, a running one on page two: not finished yet.
+  state.checks['sha-1-a'] = [{ name: 'a', status: 'completed', conclusion: 'success' }, { name: 'b', status: 'completed', conclusion: 'success' }, { name: 'c', status: 'in_progress' }];
+  await poller.cycle();
+  assert.deepEqual(published.map((item) => item.type), ['github.review.submitted']);
+  state.checks['sha-1-a'][2] = { name: 'c', status: 'completed', conclusion: 'failure' };
+  await poller.cycle();
+  assert.equal(published.at(-1).type, 'github.checks.failed');
+});
+
+test('a long workflow that finishes late and a rerun are both reported', async (t) => {
+  const { published, state, poller } = fixture(t);
+  state.pulls.push(pull(1));
+  await poller.cycle();
+  // Created three hours ago, finished now; then rerun and failed again.
+  state.runs.push({ id: 30, run_attempt: 1, name: 'nightly', status: 'completed', conclusion: 'failure', head_branch: 'main', created_at: iso(-180), updated_at: iso(1) });
+  await poller.cycle();
+  Object.assign(state.runs[0], { run_attempt: 2, updated_at: iso(5) });
+  await poller.cycle();
+  assert.deepEqual(published.map((item) => item.key), [`github/${REPO}/run/30/1`, `github/${REPO}/run/30/2`]);
 });

@@ -69,7 +69,7 @@ export function checksEvent(repository, pull, runs) {
 
 export function workflowEvent(repository, run) {
   if (run.status !== 'completed' || SUCCESS.has(run.conclusion)) return null;
-  return envelope(`github/${repository}/run/${run.id}`, 'github.workflow.failed', `${repository} ${bounded(run.name, 128)}`, {
+  return envelope(`github/${repository}/run/${run.id}/${run.run_attempt || 1}`, 'github.workflow.failed', `${repository} ${bounded(run.name, 128)}`, {
     repository, run_id: run.id, workflow: bounded(run.name, 256), branch: bounded(run.head_branch, 256), head_sha: run.head_sha, conclusion: run.conclusion || 'unknown', url: run.html_url,
   });
 }
