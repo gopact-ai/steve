@@ -125,6 +125,15 @@ func SkillsDigest(ctx context.Context, dir string) (string, error) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// Harnesses keep their own hidden state beside the skills they are
+		// given (Codex writes .system/ there on start). It is not Steve's
+		// content and never entered the recorded digest.
+		if name != "." && strings.HasPrefix(path.Base(name), ".") {
+			if entry.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		if entry.IsDir() {
 			return nil
 		}
