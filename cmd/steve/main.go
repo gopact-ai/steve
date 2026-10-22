@@ -45,6 +45,7 @@ func main() {
 // commands are the subcommands by name; anything else is `steve run`. A table
 // rather than a switch: it gives back the 10 lines the ledger verb split cost.
 var commands = map[string]func(args []string) error{
+	"init": app.InitCommand, "version": app.VersionCommand, "--version": app.VersionCommand,
 	"setup": setup, "doctor": doctor, "top": consoleclient.Top, "dash": consoleclient.Dash, "desktop": desktopCmd, "peer": peerCmd, "peer-stop": app.PeerStopCommand, "--peer-stop-protocol": app.PeerStopProtocolCommand, "peer-import": peerImportCmd, "peer-init": app.InitClusterCommand, "link": app.LinkCommand,
 	"ledger": ledgerCmd, "migrate": migrateCmd, "say": consoleclient.Say, "plugins": app.PluginsCommand, "mcp-launch": app.MCPLaunchCommand,
 }

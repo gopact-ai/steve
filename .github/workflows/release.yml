@@ -1,0 +1,43 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Embedded console matches source
+        run: test -z "$(git status --porcelain -- internal/readmodel/web/dist)"
+      - uses: anchore/sbom-action/download-syft@v0
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  desktop:
+    needs: binaries
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build Steve.app
+        run: STEVE_DESKTOP_SKIP_UPX=1 ./scripts/build-desktop.sh "$RUNNER_TEMP/desktop"
+      - name: Attach to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd "$RUNNER_TEMP/desktop"
+          ditto -c -k --keepParent Steve.app "Steve_${GITHUB_REF_NAME#v}_macos_arm64.zip"
+          gh release upload "$GITHUB_REF_NAME" "Steve_${GITHUB_REF_NAME#v}_macos_arm64.zip" --repo "$GITHUB_REPOSITORY" --clobber

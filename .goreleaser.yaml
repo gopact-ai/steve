@@ -1,0 +1,51 @@
+version: 2
+project_name: steve
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: steve
+    main: ./cmd/steve
+    binary: steve
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/gopact-ai/steve/internal/app.ReleaseVersion={{ .Version }}
+  - id: steve-node
+    main: ./cmd/steve-node
+    binary: steve-node
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s -w]
+
+archives:
+  - id: steve
+    ids: [steve, steve-node]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, README.md, README.en.md]
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude: ["^Merge branch"]
+
+release:
+  github:
+    owner: gopact-ai
+    name: steve
+  draft: true
+  prerelease: auto

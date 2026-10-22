@@ -1,8 +1,8 @@
-# Service boundary migration
+# Service boundaries
 
-Steve remains a modular Go server shared by its clients. ACP invokes an existing,
-user-managed harness; service boundary work does not introduce a new harness or
-microservices.
+Steve is a modular Go server shared by its clients. ACP invokes an existing,
+user-managed harness; the boundaries below are ports inside one server, not
+separate microservices.
 
 ## Schedule handoff
 
@@ -217,27 +217,18 @@ attempt, process generation and live lease. Delegated/shared sessions do
 not inherit the private client's authority. No arbitrary code-execution capability
 is implicitly registered.
 
-## Remaining product extensions
+## Extension points
 
-This is a modular server foundation, with existing Console/Gateway execution
-adapters behind the service ports. Native mail/calendar/IM providers and macOS/iOS
-capability implementations can use the versioned HTTP contract in
-[event-providers](event-providers.md). They are not installed by this change.
-Existing Skills/MCP immutable runtime bundles and user-managed harness versions
-continue unchanged. Newly prepared Codex runtime homes explicitly disable native Apps, plugins,
-and remote plugin discovery, so shared model authentication does not import the
-operator's ChatGPT account tools. Steve supplies admitted MCP servers through ACP
-and materializes selected skills in the runtime home. A2A adapters remain a product extension. Account/grant migration is part of the
-foundation above, with explicit bindings and original execution evidence.
-
-## Validation cadence
-
-Finish a coherent architecture batch before running the full suites and real-model
-fleet gate. New tests must name a behavioral requirement or a concrete regression,
-and assert an observable failure; call-count and coverage increases alone do not
-establish effectiveness. Reuse existing authorization, recovery and queue tests.
-After a failure or a later change, rerun the affected checks; final CI and required
-fleet evidence refer to the final runtime commit.
+Console and Gateway execution adapters sit behind the service ports. Native
+mail/calendar/IM providers and macOS/iOS capability implementations use the
+versioned HTTP contract in [event-providers](event-providers.md); the mail
+provider in [providers/mail](../providers/mail/README.md) is one implementation.
+Skills/MCP runtime bundles are immutable, and harness versions are user-managed.
+Prepared Codex runtime homes disable native Apps, plugins and remote plugin
+discovery, so shared model authentication does not import the operator's account
+tools. Steve supplies admitted MCP servers through ACP and materializes selected
+skills in the runtime home. Account grants use explicit bindings and keep the
+original execution evidence.
 
 ## Control authority and conversation history
 

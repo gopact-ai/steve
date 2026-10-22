@@ -2,7 +2,24 @@
 
 [English](README.en.md)
 
-Steve 是面向个人的多机 agent 工作平台：把你已经在用、已经登录好的 coding agent（Codex、Claude Code、Kimi Code、Grok……）接成一支能跨机器协作的队伍。通过桌面 App 或 Web 控制台（飞书是可选通道）管理项目、会话与任务，按机器能力执行和委派工作，记录过程、产物、审批与恢复状态。
+> *It's finally you and me… and your friend Steve.*
+
+你在和你的 coding agent 对话；agent 带来一位朋友：**Steve**。
+
+Steve 是自托管的 agent 协作平台：让你已经在用、已经登录好的 coding agent（Codex、Claude Code、Kimi Code、Grok……）有地方交出工作、持续跟进并留下记录。它运行在你自己的机器上：桌面 App 与 Web 控制台（飞书可选）共享项目、会话与任务，按机器能力执行和委派工作，过程、产物、审批与恢复状态进入同一个账本。
+
+- **Me**：你，人。提出意图、做判断、批准。
+- **You**：你正在对话的 agent。
+- **Your friend Steve**：agent 通过 `steve_delegate`、`steve_await` 等平台工具叫上的朋友，负责拆分、跟进和记录落地结果。
+
+## 快速开始
+
+```bash
+brew install gopact-ai/tap/steve
+steve init
+```
+
+`steve init` 在用户应用目录创建私有安装，登记本机找到的 Codex / Claude Code / Kimi / Grok（初始为只读权限），启动本地服务并打印控制台地址。macOS 与 Linux 的预编译包见 [Releases](https://github.com/gopact-ai/steve/releases)；每个版本都附带 macOS App：`Steve_<version>_macos_arm64.zip`。
 
 Steve 提供三条结构性承诺：
 
@@ -111,13 +128,13 @@ flowchart LR
 
 ## 从桌面 App 开始
 
-macOS 上运行 `make desktop` 构建原生 App，构建脚本会输出 `Steve.app` 的位置。首次启动本机即为协调节点，无需其他机器；可以先打开工作台，再选择登记已有 Agent。资源页支持从本机 SSH config 选择并接入机器。
+从 Releases 下载 `Steve_<version>_macos_arm64.zip`，或在 macOS 上用 `make desktop` 从源码构建。首次启动本机即为协调节点，无需其他机器；App 与 `steve init` 共用同一份安装；可以先打开工作台，再选择登记已有 Agent。资源页支持从本机 SSH config 选择并接入机器。
 
 关闭窗口保留后台任务。协调职责可以交接，原执行按实际状态续接或进入恢复问答。安装、数据授权、节点规模与故障处理见 [桌面 App 与多机协作](docs/desktop.md)。
 
-## 独立 Web 控制台
+## 从源码运行独立 Web 控制台
 
-控制台可以独立运行，无需飞书应用。独立部署配置 `gateway.owner_id`；需要飞书/Lark 时，再配置成对的应用凭据及该通道的 owner。两种启动方式共享项目、任务和账本。
+用于从源码目录、以自己的配置文件运行 Hub。控制台可以独立运行，无需飞书应用。独立部署配置 `gateway.owner_id`；需要飞书/Lark 时，再配置成对的应用凭据及该通道的 owner。两种启动方式共享项目、任务和账本。
 
 准备 Go 1.27+、Git、Node.js 与 npm，以及一个已完成认证的 coding agent。内置适配器 `codex-acp`、`claude-agent-acp` 由 Steve 按固定版本下载和校验；首次取用需要 npm registry，之后使用本机缓存。
 
@@ -211,7 +228,7 @@ agent 用 `steve_delegate` 交出一件有界工作；调用短暂等待后返�
 - [docs/desktop.md](docs/desktop.md)：桌面安装、SSH 接入、协调交接与恢复。
 - [docs/architecture.md](docs/architecture.md)：模块依赖、状态权威、提交与读取边界。
 - [docs/plugins-local.md](docs/plugins-local.md)：插件页面操作、作者清单、节点凭据与固定版本参考。
-- [docs/plugins.md](docs/plugins.md)：插件系统契约：能力包、版本与节点绑定、分阶段验收。
+- [docs/plugins.md](docs/plugins.md)：能力包模型：版本、节点绑定与会话固定。
 - [providers/mail/README.md](providers/mail/README.md)：Gmail、Outlook、Hotmail 和 iCloud Mail 事件 Provider，官方 SDK、授权与持久同步。
 - [docs/operations.md](docs/operations.md)：逐键配置参考、部署、门禁与排障。
 - 代码入口：[cmd/](cmd/)、核心实现 [internal/](internal/)、控制台 [web/console/](web/console/)、验收 [e2e/](e2e/)。
