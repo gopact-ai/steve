@@ -42,7 +42,7 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	}
 	var target *queuedExchange
 	for _, e := range s.exchanges[control.Conversation] {
-		if e.ID == control.ID || (bound != nil && e.ID != bound.ExchangeID) || (bound == nil && !s.recoveryStopCandidateLocked(control.Conversation, control.ID, e)) {
+		if e.ID == control.ID || (bound != nil && e.ID != bound.ExchangeID) || (bound == nil && !s.recoveryStopCandidateLocked(control.Conversation, control.ID, e)) || (control.StopTarget != "" && e.ID != control.StopTarget) {
 			continue
 		}
 		if target != nil {

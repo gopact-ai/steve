@@ -27,15 +27,43 @@ type turnEntry struct {
 	cancel  context.CancelFunc
 	done    chan struct{}
 	stopped bool
+	// exchange is the console exchange the turn runs, when it has one, so
+	// a stop bound to that exchange reaches this turn and no other.
+	exchange string
 }
 
 // cancelTurn stops the turn running for this agent in this conversation.
 // It is the turn half of a stop; cancel, which the /cancel command runs,
 // also reaches the children the turn's task delegated.
-func (c *Coordinator) cancelTurn(ctx context.Context, conversationID string, selected agent.Agent) (Result, error) {
+//
+// target, when set, names the exchange the stop is for: the turn is stopped
+// only while it still runs that exchange, and nothing is armed for another.
+func (c *Coordinator) cancelTurn(ctx context.Context, conversationID string, selected agent.Agent, target string) (Result, error) {
+	result, _, err := c.cancelTargetTurn(ctx, conversationID, selected, target)
+	return result, err
+}
+
+// cancelTargetTurn is cancelTurn reporting whether a turn bound to target
+// was found; without a target it reports true.
+func (c *Coordinator) cancelTargetTurn(ctx context.Context, conversationID string, selected agent.Agent, target string) (Result, bool, error) {
+	result, err := c.stopSlot(ctx, conversationID, selected, target)
+	if errors.Is(err, errTargetNotRunning) {
+		return Result{AgentID: selected.ID, Text: c.text.T(i18n.NoRunningTurn)}, false, nil
+	}
+	return result, true, err
+}
+
+var errTargetNotRunning = errors.New("the targeted turn is not running")
+
+func (c *Coordinator) stopSlot(ctx context.Context, conversationID string, selected agent.Agent, target string) (Result, error) {
 	key := sessionKey(conversationID, selected.ID)
 	c.mu.Lock()
 	runner, entry := c.active[key], c.cancels[key]
+	if target != "" && (entry == nil || entry.exchange != target) {
+		c.armExchangeCancelLocked(target)
+		c.mu.Unlock()
+		return Result{}, errTargetNotRunning
+	}
 	if entry == nil {
 		// A turn may be starting right now (the worker already dequeued the
 		// message); arm a short-lived flag so a turn that begins within the
@@ -94,7 +122,7 @@ const interruptGrace = 20 * time.Second
 // make room loses real progress. Interrupting stays one gesture away — a
 // "!" prefix (or the card's stop button) cancels the running turn and puts
 // the new instruction in its place, which is what steering needs.
-func (c *Coordinator) takeTurn(ctx context.Context, conversationID, agentID string, cancel context.CancelFunc, queue bool) bool {
+func (c *Coordinator) takeTurn(ctx context.Context, conversationID, agentID, exchange string, cancel context.CancelFunc, queue bool) bool {
 	key := sessionKey(conversationID, agentID)
 	for {
 		c.mu.Lock()
@@ -106,7 +134,7 @@ func (c *Coordinator) takeTurn(ctx context.Context, conversationID, agentID stri
 		}
 		entry := c.cancels[key]
 		if entry == nil {
-			c.cancels[key] = &turnEntry{cancel: cancel, done: make(chan struct{})}
+			c.cancels[key] = &turnEntry{cancel: cancel, done: make(chan struct{}), exchange: exchange}
 			c.mu.Unlock()
 			return true
 		}
@@ -189,9 +217,49 @@ func (c *Coordinator) clearPendingCancel(key string) {
 	delete(c.cancelPending, key)
 }
 
-func (c *Coordinator) consumePendingCancel(key string) bool {
+// armExchangeCancelLocked stops the turn for exchange should it begin
+// within the window: a stop bound to an exchange the worker has dequeued
+// but not yet handed to a turn. No other exchange's turn reads it.
+func (c *Coordinator) armExchangeCancelLocked(exchange string) {
+	now := time.Now()
+	for key, deadline := range c.cancelPending {
+		if strings.HasPrefix(key, exchangeCancelPrefix) && now.After(deadline) {
+			delete(c.cancelPending, key)
+		}
+	}
+	c.cancelPending[exchangeCancelKey(exchange)] = now.Add(pendingCancelWindow)
+}
+
+// exchangeCancelPrefix keeps exchange stops apart from session keys, which
+// always hold keySeparator.
+const exchangeCancelPrefix = "exchange" + keySeparator + keySeparator
+
+func exchangeCancelKey(exchange string) string { return exchangeCancelPrefix + exchange }
+
+// runningExchange names the agent whose turn in this conversation runs
+// exchange.
+func (c *Coordinator) runningExchange(conversationID, exchange string) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for key, entry := range c.cancels {
+		if entry.exchange == exchange && conversationOfKey(key) == conversationID {
+			_, agentID, _ := strings.Cut(key, keySeparator)
+			return agentID, true
+		}
+	}
+	c.armExchangeCancelLocked(exchange)
+	return "", false
+}
+
+func (c *Coordinator) consumePendingCancel(key, exchange string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if deadline, ok := c.cancelPending[exchangeCancelKey(exchange)]; ok && exchange != "" {
+		delete(c.cancelPending, exchangeCancelKey(exchange))
+		if time.Now().Before(deadline) {
+			return true
+		}
+	}
 	deadline, ok := c.cancelPending[key]
 	if !ok {
 		return false

@@ -42,9 +42,14 @@ func (s *Service) SetMaterials(resolver MaterialResolver, authorize func(context
 // back to it, which is the one part that must happen before anything is
 // queued: the agent's session is closed out here, outside the lock.
 func (s *Service) submissionOptions(ctx context.Context, req conversationapi.Submission) (enqueueOptions, error) {
-	options := enqueueOptions{Key: clientKey(req.CommandID), Refs: req.Refs, Locale: req.Locale, ExpectedProject: req.ExpectedProject}
+	options := enqueueOptions{Key: clientKey(req.CommandID), Refs: req.Refs, Locale: req.Locale, ExpectedProject: req.ExpectedProject, StopTarget: req.StopTarget}
 	if req.RewindTo == "" {
 		return options, nil
+	}
+	// A rewind resets the conversation's sessions, so a submission for
+	// another project is refused before it.
+	if _, err := s.confirmExpectedProject(ctx, ConversationID(req.Conversation), options.Key, options.ExpectedProject, ""); err != nil {
+		return enqueueOptions{}, err
 	}
 	target, err := s.beginRewind(ctx, req.Conversation, req.RewindTo, options.Key, req.Locale)
 	if err != nil {
@@ -110,6 +115,12 @@ func extendedSubmissionHash(textHash string, refs []material.Ref, locale string)
 		Refs   []material.Ref
 		Locale string
 	}{textHash, refs, locale})
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func stopTargetHash(hash, target string) string {
+	raw, _ := json.Marshal(struct{ Submission, StopTarget string }{hash, target})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }

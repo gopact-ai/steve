@@ -1,0 +1,1031 @@
+{
+  "$defs": {
+    "Agent": {
+      "properties": {
+        "about": {
+          "type": "string"
+        },
+        "busy": {
+          "type": "integer"
+        },
+        "default": {
+          "type": "boolean"
+        },
+        "harness": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "why": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "harness",
+        "ready"
+      ],
+      "type": "object"
+    },
+    "AgentList": {
+      "properties": {
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/Agent"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "agents"
+      ],
+      "type": "object"
+    },
+    "AnswerResult": {
+      "properties": {
+        "question": {
+          "$ref": "#/$defs/Question"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "type": "object"
+    },
+    "AttemptDiff": {
+      "properties": {
+        "attempt": {
+          "type": "string"
+        },
+        "diff": {
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/ChangedFile"
+          },
+          "type": "array"
+        },
+        "note": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "attempt"
+      ],
+      "type": "object"
+    },
+    "ChangedFile": {
+      "properties": {
+        "added": {
+          "type": "integer"
+        },
+        "binary": {
+          "type": "boolean"
+        },
+        "deleted": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "status",
+        "added",
+        "deleted"
+      ],
+      "type": "object"
+    },
+    "CreateThread": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "type": "object"
+    },
+    "Error": {
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorDetail"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    },
+    "ErrorDetail": {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "Event": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "item": {
+          "type": "string"
+        },
+        "progress": {
+          "$ref": "#/$defs/Progress"
+        },
+        "question": {
+          "type": "string"
+        },
+        "silent": {
+          "type": "boolean"
+        },
+        "source_kind": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "turn": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/EventType"
+        }
+      },
+      "required": [
+        "cursor",
+        "type",
+        "source_kind"
+      ],
+      "type": "object"
+    },
+    "EventType": {
+      "enum": [
+        "thread.updated",
+        "thread.deleted",
+        "turn.updated",
+        "turn.progress",
+        "item.completed",
+        "item.removed",
+        "question.updated",
+        "task.updated",
+        "server.event"
+      ],
+      "type": "string"
+    },
+    "FileChange": {
+      "properties": {
+        "added": {
+          "type": "integer"
+        },
+        "attempt": {
+          "type": "string"
+        },
+        "deleted": {
+          "type": "integer"
+        },
+        "files": {
+          "type": "integer"
+        },
+        "note": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "attempt",
+        "files"
+      ],
+      "type": "object"
+    },
+    "Initialize": {
+      "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "locale": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "server_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "server_version",
+        "capabilities",
+        "locale"
+      ],
+      "type": "object"
+    },
+    "Interrupt": {
+      "properties": {
+        "command_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id"
+      ],
+      "type": "object"
+    },
+    "InterruptResult": {
+      "properties": {
+        "control": {
+          "$ref": "#/$defs/Turn"
+        },
+        "turn": {
+          "$ref": "#/$defs/Turn"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "type": "object"
+    },
+    "Item": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "attempt": {
+          "type": "string"
+        },
+        "change": {
+          "$ref": "#/$defs/FileChange"
+        },
+        "error": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ItemKind"
+        },
+        "question": {
+          "$ref": "#/$defs/Question"
+        },
+        "relayed": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolCall"
+        },
+        "turn": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "thread",
+        "at"
+      ],
+      "type": "object"
+    },
+    "ItemKind": {
+      "enum": [
+        "message",
+        "reasoning",
+        "tool_call",
+        "file_change",
+        "question",
+        "milestone",
+        "notice"
+      ],
+      "type": "string"
+    },
+    "MaterialRect": {
+      "properties": {
+        "height": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number"
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "MaterialRef": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "selector": {
+          "$ref": "#/$defs/MaterialSelector"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "MaterialSelector": {
+      "properties": {
+        "end": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string"
+        },
+        "rect": {
+          "$ref": "#/$defs/MaterialRect"
+        },
+        "start": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "PlanLine": {
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "status"
+      ],
+      "type": "object"
+    },
+    "Progress": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "plan": {
+          "items": {
+            "$ref": "#/$defs/PlanLine"
+          },
+          "type": "array"
+        },
+        "reasoning": {
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/ToolCall"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Project": {
+      "properties": {
+        "agents": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "default": {
+          "type": "boolean"
+        },
+        "home": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "level": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "node",
+        "path",
+        "level",
+        "agents"
+      ],
+      "type": "object"
+    },
+    "ProjectList": {
+      "properties": {
+        "projects": {
+          "items": {
+            "$ref": "#/$defs/Project"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "projects"
+      ],
+      "type": "object"
+    },
+    "Question": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "allow_free_text": {
+          "type": "boolean"
+        },
+        "answer": {
+          "$ref": "#/$defs/QuestionAnswer"
+        },
+        "attempt": {
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "deadline": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          },
+          "type": "array"
+        },
+        "project": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "state": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "turn": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "thread",
+        "turn",
+        "kind",
+        "message",
+        "options",
+        "allow_free_text",
+        "required",
+        "state",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "QuestionAnswer": {
+      "properties": {
+        "choice": {
+          "type": "string"
+        },
+        "command_id": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "decision"
+      ],
+      "type": "object"
+    },
+    "QuestionOption": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
+    "Quote": {
+      "properties": {
+        "item": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread",
+        "item"
+      ],
+      "type": "object"
+    },
+    "StartTurn": {
+      "properties": {
+        "command_id": {
+          "type": "string"
+        },
+        "expected_project": {
+          "type": "string"
+        },
+        "input": {
+          "type": "string"
+        },
+        "locale": {
+          "type": "string"
+        },
+        "quotes": {
+          "items": {
+            "$ref": "#/$defs/Quote"
+          },
+          "type": "array"
+        },
+        "refs": {
+          "items": {
+            "$ref": "#/$defs/MaterialRef"
+          },
+          "type": "array"
+        },
+        "rewind_to": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread",
+        "input",
+        "command_id"
+      ],
+      "type": "object"
+    },
+    "Task": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "children": {
+          "type": "integer"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "parent": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "transport": {
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "goal",
+        "state",
+        "children",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "TaskPage": {
+      "properties": {
+        "next_cursor": {
+          "type": "string"
+        },
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/Task"
+          },
+          "type": "array"
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tasks",
+        "total"
+      ],
+      "type": "object"
+    },
+    "Thread": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "archived": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "lines": {
+          "type": "integer"
+        },
+        "pending_questions": {
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "read_only": {
+          "type": "boolean"
+        },
+        "running": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "transport": {
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "transport",
+        "read_only",
+        "running",
+        "archived",
+        "pending_questions",
+        "lines",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "ThreadDetail": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": "string"
+        },
+        "thread": {
+          "$ref": "#/$defs/Thread"
+        },
+        "turns": {
+          "items": {
+            "$ref": "#/$defs/Turn"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "thread",
+        "turns",
+        "items"
+      ],
+      "type": "object"
+    },
+    "ThreadList": {
+      "properties": {
+        "threads": {
+          "items": {
+            "$ref": "#/$defs/Thread"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "threads"
+      ],
+      "type": "object"
+    },
+    "ToolCall": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "input": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    },
+    "Turn": {
+      "properties": {
+        "command_id": {
+          "type": "string"
+        },
+        "expected_project": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "input": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "queued_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "reply_item": {
+          "type": "string"
+        },
+        "started_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/TurnState"
+        },
+        "thread": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "thread",
+        "state",
+        "input",
+        "queued_at"
+      ],
+      "type": "object"
+    },
+    "TurnState": {
+      "enum": [
+        "queued",
+        "running",
+        "done",
+        "failed",
+        "cancelled"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "https://github.com/gopact-ai/steve/docs/protocol/steve.client.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/AgentList"
+    },
+    {
+      "$ref": "#/$defs/AnswerResult"
+    },
+    {
+      "$ref": "#/$defs/AttemptDiff"
+    },
+    {
+      "$ref": "#/$defs/CreateThread"
+    },
+    {
+      "$ref": "#/$defs/Error"
+    },
+    {
+      "$ref": "#/$defs/Event"
+    },
+    {
+      "$ref": "#/$defs/Initialize"
+    },
+    {
+      "$ref": "#/$defs/Interrupt"
+    },
+    {
+      "$ref": "#/$defs/InterruptResult"
+    },
+    {
+      "$ref": "#/$defs/ProjectList"
+    },
+    {
+      "$ref": "#/$defs/QuestionAnswer"
+    },
+    {
+      "$ref": "#/$defs/StartTurn"
+    },
+    {
+      "$ref": "#/$defs/TaskPage"
+    },
+    {
+      "$ref": "#/$defs/ThreadDetail"
+    },
+    {
+      "$ref": "#/$defs/ThreadList"
+    },
+    {
+      "$ref": "#/$defs/Turn"
+    }
+  ],
+  "description": "Messages of the Steve client protocol. Fields are additive only; clients ignore fields and enum values they do not know.",
+  "title": "steve.client.v1"
+}

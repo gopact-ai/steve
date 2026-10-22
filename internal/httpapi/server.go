@@ -123,6 +123,7 @@ func (s *Server) Serve() error {
 	s.coordinationRoutes(mux)
 	s.assistantRoutes(mux)
 	s.mailRoutes(mux)
+	s.clientRoutes(mux)
 	mux.HandleFunc("GET /console/desktop", s.guard(s.consoleDesktop))
 	mux.HandleFunc("GET /console/desktop/agents", s.guard(s.consoleDesktopAgents))
 	mux.HandleFunc("POST /console/desktop/agents", s.guard(s.consoleDesktopAgents))
@@ -277,6 +278,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // guard checks the token. A server without one refuses every request.
 func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
+	return s.guardWith(next, func(w http.ResponseWriter, message string) {
+		serviceError(w, &consoleapi.ServiceError{Code: "busy", Message: message})
+	})
+}
+
+// guardWith is guard answering a mutation refused during maintenance
+// with busy, so each protocol keeps its own error body.
+func (s *Server) guardWith(next http.HandlerFunc, busy func(http.ResponseWriter, string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.authorized(r) {
 			http.Error(w, "unauthorized: open the address `steve dash -config <config>` prints", http.StatusUnauthorized)
@@ -286,7 +295,7 @@ func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 			s.mutationMu.RLock()
 			defer s.mutationMu.RUnlock()
 			if s.maintenance {
-				serviceError(w, &consoleapi.ServiceError{Code: "busy", Message: "The Hub is preparing a service restart"})
+				busy(w, "The Hub is preparing a service restart")
 				return
 			}
 		}

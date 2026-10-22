@@ -135,6 +135,9 @@ type enqueueOptions struct {
 	Origin, Requester, ExpectedProject, ExpectedTask string
 	Refs                                             []material.Ref
 	Locale                                           string
+	// StopTarget binds a /cancel control to one exchange; see
+	// conversationapi.Submission.
+	StopTarget string
 }
 
 func (s *Service) enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef, options enqueueOptions) (*queuedExchange, Exchange, error) {
@@ -186,6 +189,9 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	if options.ExpectedProject != "" && strings.HasPrefix(key, "client:") {
 		hash = projectSubmissionHash(hash, options.ExpectedProject)
 	}
+	if options.StopTarget != "" {
+		hash = stopTargetHash(hash, options.StopTarget)
+	}
 	s.mu.Lock()
 	existing, err := s.submittedLocked(conversation, key, hash)
 	s.mu.Unlock()
@@ -197,10 +203,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		defer s.mu.Unlock()
 		return s.resumeLocked(existing)
 	}
-	if strings.TrimSpace(input) == "" && len(options.Refs) == 0 {
-		return nil, Exchange{}, errors.New("input is required")
-	}
-	if _, err := s.quoteBlock(ctx, conversation, quotes); err != nil {
+	if err := s.checkSubmission(ctx, conversation, input, quotes, options); err != nil {
 		return nil, Exchange{}, err
 	}
 	frozen, project, err := s.freezeMaterials(ctx, conversation, options.Refs)
@@ -209,11 +212,6 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	}
 	if project, err = s.confirmExpectedProject(ctx, conversation, key, options.ExpectedProject, project); err != nil {
 		return nil, Exchange{}, err
-	}
-	if len(options.Refs) > 0 {
-		if _, parsed := s.parseInput(input); parsed.Control() {
-			return nil, Exchange{}, errors.New("materials cannot be attached to a control command")
-		}
 	}
 	if options.ExpectedProject == "" {
 		options.ExpectedProject = project
@@ -229,12 +227,19 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		}
 		return s.resumeLocked(other)
 	}
+	if options.StopTarget != "" {
+		// Checked under the lock that finishes exchanges: a target that has
+		// ended refuses a new stop, so it cannot reach a later turn.
+		if err := s.checkStopTargetLocked(conversation, options.StopTarget); err != nil {
+			return nil, Exchange{}, err
+		}
+	}
 	e := &queuedExchange{
 		acceptGuard: options.AcceptGuard,
 		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
 			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject, ExpectedTask: options.ExpectedTask,
-			ResumeAdmission: options.ResumeAdmission,
-			Refs:            copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
+			ResumeAdmission: options.ResumeAdmission, StopTarget: options.StopTarget,
+			Refs: copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
 			Quotes: append([]QuoteRef(nil), quotes...), State: conversationapi.ExchangeQueued, EnqueuedAt: time.Now().UTC()},
 		PayloadHash: hash, ctx: s.exchangeContext(ctx), done: make(chan struct{}),
 		RecoveryPending: options.Deferred && options.ResumeAdmission == (task.ResumeAdmission{}),
@@ -290,9 +295,47 @@ func (s *Service) confirmExpectedProject(ctx context.Context, conversation, key,
 		}
 	}
 	if strings.HasPrefix(key, "client:") && expected != project {
-		return "", fmt.Errorf("expected project %s, but conversation is bound to %s", expected, project)
+		return "", conversationapi.ProjectConflictError{Expected: expected, Bound: project}
 	}
 	return project, nil
+}
+
+// checkSubmission refuses what a new submission cannot be, before its
+// materials are frozen. The expected project comes first, so a submission
+// meant for another project is refused as that whatever else is wrong with
+// it; materials are checked against the project again once frozen.
+func (s *Service) checkSubmission(ctx context.Context, conversation, input string, quotes []QuoteRef, options enqueueOptions) error {
+	if strings.TrimSpace(input) == "" && len(options.Refs) == 0 {
+		return errors.New("input is required")
+	}
+	if _, err := s.confirmExpectedProject(ctx, conversation, options.Key, options.ExpectedProject, ""); err != nil {
+		return err
+	}
+	if _, err := s.quoteBlock(ctx, conversation, quotes); err != nil {
+		return err
+	}
+	_, parsed := s.parseInput(input)
+	if len(options.Refs) > 0 && parsed.Control() {
+		return errors.New("materials cannot be attached to a control command")
+	}
+	if options.StopTarget != "" && (parsed.Command != protocol.CommandCancel || options.Key == "") {
+		return errors.New("a stop target needs a keyed /cancel control")
+	}
+	return nil
+}
+
+// checkStopTargetLocked admits a stop for target: an exchange of this
+// conversation that has not ended.
+func (s *Service) checkStopTargetLocked(conversation, target string) error {
+	for _, e := range s.exchanges[conversation] {
+		if e.ID == target {
+			if e.State.Terminal() {
+				return fmt.Errorf("%w: %s is %s", conversationapi.ErrStopTargetEnded, target, e.State)
+			}
+			return nil
+		}
+	}
+	return conversationapi.ErrExchangeNotFound
 }
 
 // resumeLocked replays a submission this conversation has already

@@ -646,6 +646,8 @@ var (
 	ErrExchangeNotQueued = conversationapi.ErrExchangeNotQueued
 	ErrCommandConflict   = conversationapi.ErrCommandConflict
 	ErrRewindTargetGone  = conversationapi.ErrRewindTargetGone
+	ErrStopTargetEnded   = conversationapi.ErrStopTargetEnded
+	ErrProjectConflict   = conversationapi.ErrProjectConflict
 )
 
 type TaskMetaPatch struct {

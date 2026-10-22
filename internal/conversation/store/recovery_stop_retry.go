@@ -130,7 +130,7 @@ func (s *Service) bindRecoveryStopTargetLocked(control *queuedExchange) {
 	}
 	var target *queuedExchange
 	for _, e := range s.exchanges[control.Conversation] {
-		if !s.recoveryStopCandidateLocked(control.Conversation, control.ID, e) {
+		if !s.recoveryStopCandidateLocked(control.Conversation, control.ID, e) || (control.StopTarget != "" && e.ID != control.StopTarget) {
 			continue
 		}
 		if target != nil {
