@@ -12,8 +12,6 @@ Steve 是一个自托管的 AI agent 工作台。你可以在自己的机器上�
 
 它复用你已有的 agent 工具和登录，不要求换一个模型服务。一台机器就能开始；接入更多机器后，工作可以交给具备相应工具、算力或访问权限的 agent。
 
-![Steve 工作台](docs/images/workbench-zh.png)
-
 ## 一起把事情做完
 
 给 agent 一个目标，和它讨论、补充材料、查看结果。需要其他 agent 帮忙时，它可以委派独立任务；Steve 保存子任务结果并送回原对话。你可以离开窗口，之后回来继续查看工作。
@@ -52,17 +50,6 @@ macOS App、macOS 和 Linux 二进制包见 [Releases](https://github.com/gopact
 Steve 区分负责协调的节点和执行任务的节点。Agent 使用目标机器上的工具与登录，项目的数据等级限制可用机器。网络中断后，Steve 根据原执行的回执尝试续接；无法确认的执行会保留恢复状态，等待核实。
 
 完整节点可以保存协作账本副本并交接协调职责。自动容灾需要至少三个独立物理故障域中的完整节点，以及明确的接任授权。[桌面与多机协作](docs/desktop.md)。
-
-<details>
-<summary>查看更多界面</summary>
-
-![资源与 agent](docs/images/fleet-zh.png)
-
-![任务看板](docs/images/board-zh.png)
-
-![文件审阅](docs/images/review-zh.png)
-
-</details>
 
 ## 文档与贡献
 

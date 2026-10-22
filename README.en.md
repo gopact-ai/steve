@@ -12,8 +12,6 @@ Steve is a self-hosted workspace for AI agents. Use Codex, Claude Code, Kimi Cod
 
 It works with the agent tools and sign-ins you already have. Start on one computer, then connect other machines so agents can use the tools, compute and access available there.
 
-![Steve workbench](docs/images/workbench-en.png)
-
 ## Work together, with a record of the result
 
 Give an agent a goal, discuss the work, add references and review its output. When it needs help, it can delegate a task to another agent. Steve saves the result and brings it back to the original conversation. You can close the window and return to the work later.
@@ -52,17 +50,6 @@ Mail supports Gmail, Outlook, Hotmail and iCloud Mail. Providers run separately 
 Steve separates coordination from execution. Agents use tools and authentication on their execution machine, and project data levels constrain placement. After a connection drops, Steve uses original execution receipts to attempt reattachment. Work whose state cannot be confirmed remains visible for recovery.
 
 Full nodes hold copies of the collaboration ledger and can hand over coordination. Automatic failover requires at least three full nodes in separate physical failure domains and explicit takeover authorization. [Desktop and multi-machine guide](docs/desktop.md).
-
-<details>
-<summary>More screenshots</summary>
-
-![Resources and agents](docs/images/fleet-en.png)
-
-![Task board](docs/images/board-en.png)
-
-![File review](docs/images/review-en.png)
-
-</details>
 
 ## Documentation and contributions
 
