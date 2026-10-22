@@ -21,7 +21,10 @@ function appearanceBoot(): Plugin {
               write: false,
               minify: true,
               lib: {
-                entry: path.resolve(__dirname, "src/lib/appearance-boot.ts"),
+                entry: path.resolve(
+                  import.meta.dirname,
+                  "src/lib/appearance-boot.ts",
+                ),
                 name: "SteveAppearanceBoot",
                 formats: ["iife"],
               },
@@ -49,7 +52,7 @@ function appearanceBoot(): Plugin {
 export default defineConfig({
   plugins: [appearanceBoot(), react(), tailwindcss()],
   base: "./",
-  resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
+  resolve: { alias: { "@": path.resolve(import.meta.dirname, "./src") } },
   build: {
     outDir: "../../internal/readmodel/web/dist",
     emptyOutDir: true,
