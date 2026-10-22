@@ -73,11 +73,14 @@ func InitCommand(args []string) error {
 	}
 	if len(enrolled.Added) > 0 {
 		fmt.Fprintf(os.Stdout, "Registered %s with read-only permission. Widen it per agent in Settings when you need to.\n", strings.Join(enrolled.Added, ", "))
-	} else {
+	} else if len(enrolled.Failed) == 0 {
 		fmt.Fprintln(os.Stdout, "No new coding agents were registered. Sign in to Codex or Claude Code, then add them from Resources.")
 	}
 	if len(enrolled.Pending) > 0 {
 		fmt.Fprintf(os.Stdout, "Found but not ready: %s.\n", strings.Join(enrolled.Pending, "; "))
+	}
+	if len(enrolled.Failed) > 0 {
+		fmt.Fprintf(os.Stdout, "Could not register: %s. Run steve init again to retry them.\n", strings.Join(enrolled.Failed, "; "))
 	}
 	address, err := installed.AuthenticatedURL(result.URL)
 	if err != nil {
