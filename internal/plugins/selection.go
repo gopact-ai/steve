@@ -90,7 +90,7 @@ func (s *Store) Selection(selection Selection) ([]DeploymentReceipt, error) {
 	}
 	for id := range selection.Filters {
 		if !seen[id] {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: runtime selection filters installation %s that it does not deploy", ErrInvalid, id)
 		}
 	}
 	return receipts, nil
@@ -98,7 +98,7 @@ func (s *Store) Selection(selection Selection) ([]DeploymentReceipt, error) {
 
 func (ref RuntimeRef) Validate() error {
 	if !digestShape.MatchString(ref.ID) {
-		return ErrInvalid
+		return fmt.Errorf("%w: runtime identity %q", ErrInvalid, ref.ID)
 	}
 	_, err := ref.Selection.Hash()
 	return err

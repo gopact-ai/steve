@@ -41,7 +41,7 @@ type RuntimeInfo struct {
 
 func (s *Store) BeginRuntimeUse(ctx context.Context, ref RuntimeRef, id, kind string) error {
 	if id == "" || len(id) > 512 || !nameShape.MatchString(kind) {
-		return ErrInvalid
+		return fmt.Errorf("%w: runtime use needs an ID and a kind", ErrInvalid)
 	}
 	unlock, err := s.lock(ctx)
 	if err != nil {
@@ -67,8 +67,11 @@ func (s *Store) BeginRuntimeUse(ctx context.Context, ref RuntimeRef, id, kind st
 }
 
 func (s *Store) EndRuntimeUse(ctx context.Context, ref RuntimeRef, id string) error {
-	if ref.Validate() != nil || id == "" || len(id) > 512 {
-		return ErrInvalid
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	if id == "" || len(id) > 512 {
+		return fmt.Errorf("%w: runtime use ID", ErrInvalid)
 	}
 	unlock, err := s.lock(ctx)
 	if err != nil {
@@ -102,8 +105,8 @@ func (s *Store) EndRuntimeUse(ctx context.Context, ref RuntimeRef, id string) er
 }
 
 func (s *Store) CheckRuntimeActive(ref RuntimeRef) error {
-	if ref.Validate() != nil {
-		return ErrInvalid
+	if err := ref.Validate(); err != nil {
+		return err
 	}
 	if _, err := os.Lstat(filepath.Join(s.Dir, "removed-runtimes", ref.ID)); err == nil {
 		return ErrRuntimeRetired
@@ -218,8 +221,8 @@ func (s *Store) RuntimeInfos() ([]RuntimeInfo, error) {
 // RetireRuntime closes admission before checking stop evidence. It never kills
 // a process: a caller with outstanding use must finish that use explicitly.
 func (s *Store) RetireRuntime(ctx context.Context, ref RuntimeRef) error {
-	if ref.Validate() != nil {
-		return ErrInvalid
+	if err := ref.Validate(); err != nil {
+		return err
 	}
 	unlock, err := s.lock(ctx)
 	if err != nil {
@@ -249,8 +252,8 @@ func (s *Store) RetireRuntime(ctx context.Context, ref RuntimeRef) error {
 }
 
 func (s *Store) RemoveRuntime(ctx context.Context, ref RuntimeRef) error {
-	if ref.Validate() != nil {
-		return ErrInvalid
+	if err := ref.Validate(); err != nil {
+		return err
 	}
 	unlock, err := s.lock(ctx)
 	if err != nil {
@@ -309,8 +312,8 @@ func (s *Store) RuntimeInfo(id string) (RuntimeInfo, error) {
 }
 
 func (s *Store) CheckRuntimeRemovable(ref RuntimeRef) error {
-	if ref.Validate() != nil {
-		return ErrInvalid
+	if err := ref.Validate(); err != nil {
+		return err
 	}
 	info, err := s.RuntimeInfo(ref.ID)
 	if err != nil {

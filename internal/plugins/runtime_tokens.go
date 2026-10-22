@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -12,7 +13,7 @@ import (
 // Its stable identity lets a reattached session keep its original MCP route.
 func (s *Store) RuntimeMCPToken(ctx context.Context, ref RuntimeRef, name string) (string, error) {
 	if !nameShape.MatchString(name) {
-		return "", ErrInvalid
+		return "", fmt.Errorf("%w: runtime MCP name %q", ErrInvalid, name)
 	}
 	if _, err := s.Runtime(ref); err != nil {
 		return "", err

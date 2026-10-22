@@ -37,7 +37,7 @@ type RuntimeMaterializer func(ctx context.Context, dir string, record RuntimeRec
 
 func (s *Store) PrepareRuntime(ctx context.Context, id string, selection Selection, cfg RuntimeConfig, materialize RuntimeMaterializer) (RuntimeRecord, error) {
 	if !nameShape.MatchString(id) || cfg.Command == "" || materialize == nil {
-		return RuntimeRecord{}, ErrInvalid
+		return RuntimeRecord{}, fmt.Errorf("%w: runtime preparation needs a command ID, a harness command and a materializer", ErrInvalid)
 	}
 	selection = selection.Clone()
 	slices.Sort(selection.Deployments)
@@ -146,7 +146,7 @@ func (s *Store) materializeRuntime(ctx context.Context, record RuntimeRecord, ma
 
 func (s *Store) ResumeRuntimePreparation(ctx context.Context, id string, selection Selection, materialize RuntimeMaterializer) (RuntimeRecord, bool, error) {
 	if !nameShape.MatchString(id) {
-		return RuntimeRecord{}, false, ErrInvalid
+		return RuntimeRecord{}, false, fmt.Errorf("%w: runtime command ID %q", ErrInvalid, id)
 	}
 	record, found, err := s.readRuntimeCommand(id)
 	if err != nil || !found {
@@ -197,7 +197,7 @@ func (s *Store) Runtime(ref RuntimeRef) (RuntimeRecord, error) {
 	}
 	actual, err := record.Ref.Selection.Hash()
 	if err != nil || actual != want || record.Ref.ID != ref.ID || record.Config.Command == "" || !digestShape.MatchString(record.SkillsHash) || record.CreatedAt.IsZero() {
-		return record, ErrIntegrity
+		return record, fmt.Errorf("%w: runtime %s record differs from its reference", ErrIntegrity, ref.ID)
 	}
 	if _, err := s.Selection(ref.Selection); err != nil {
 		return record, err

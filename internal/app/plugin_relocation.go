@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -11,7 +12,7 @@ import (
 
 func (p *applicationPlugins) PlanPluginRelocation(ctx context.Context, req harness.PluginPreparation) (*plugins.Relocation, error) {
 	if req.Prior == nil || req.Prior.Selection.Project != req.Project || req.At.Node == "" {
-		return nil, plugins.ErrInvalid
+		return nil, fmt.Errorf("%w: plugin relocation needs the session runtime of project %q and a target node", plugins.ErrInvalid, req.Project)
 	}
 	items := p.pluginInstallations()
 	return p.library.PlanRelocation(ctx, items, *req.Prior, req.At.Node, req.At.Harness)
@@ -35,7 +36,7 @@ func (p *applicationPlugins) PreparePluginRelocation(ctx context.Context, plan, 
 		return nil, err
 	}
 	if frozen.Selection.Node == "" || plan == "" || attemptID == "" {
-		return nil, plugins.ErrInvalid
+		return nil, fmt.Errorf("%w: plugin relocation needs a target node, a plan and an attempt", plugins.ErrInvalid)
 	}
 	for _, d := range frozen.Deployments {
 		bundle, err := p.library.Get(ctx, frozen.Selection.Project, d.Digest)

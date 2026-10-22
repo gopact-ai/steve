@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
@@ -99,5 +100,11 @@ func pluginReplyError(reply nodewire.PluginReply) error {
 	case "incompatible":
 		kind = plugins.ErrIncompatible
 	}
-	return fmt.Errorf("%w: %s", kind, reply.Error)
+	// The node's message already starts with the kind it classified; keep
+	// the kind for errors.Is without repeating it to the reader.
+	detail := strings.TrimPrefix(strings.TrimPrefix(reply.Error, kind.Error()), ": ")
+	if detail == "" {
+		return kind
+	}
+	return fmt.Errorf("%w: %s", kind, detail)
 }

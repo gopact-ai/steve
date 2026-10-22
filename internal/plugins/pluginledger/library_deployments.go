@@ -22,7 +22,7 @@ func (l *Library) RecordDeployment(ctx context.Context, receipt plugins.Deployme
 func (l *Library) Deployment(ctx context.Context, hash string) (plugins.DeploymentReceipt, error) {
 	var receipt plugins.DeploymentReceipt
 	if !plugins.ValidDigest(hash) {
-		return receipt, plugins.ErrInvalid
+		return receipt, fmt.Errorf("%w: deployment identity %q", plugins.ErrInvalid, hash)
 	}
 	found, err := l.Ledger.GetBinding(ctx, deploymentRecordKind, hash, &receipt)
 	if err != nil {

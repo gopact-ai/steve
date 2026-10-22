@@ -1,6 +1,8 @@
 package node
 
 import (
+	"fmt"
+
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
 )
@@ -11,12 +13,15 @@ func validatePluginSessionOpen(req nodewire.SessionRequest) error {
 	}
 	if req.Plugin == nil {
 		if req.Binding.PluginRuntimeID != "" {
-			return plugins.ErrInvalid
+			return fmt.Errorf("%w: session binding names plugin runtime %s but the request carries none", plugins.ErrInvalid, req.Binding.PluginRuntimeID)
 		}
 		return nil
 	}
-	if req.Plugin.Validate() != nil || req.Plugin.ID != req.Binding.PluginRuntimeID || req.Plugin.Selection.Project != req.Binding.ProjectID || req.Plugin.Selection.Node != req.Binding.NodeID || req.Plugin.Selection.Harness != req.Harness {
-		return plugins.ErrInvalid
+	if err := req.Plugin.Validate(); err != nil {
+		return err
+	}
+	if req.Plugin.ID != req.Binding.PluginRuntimeID || req.Plugin.Selection.Project != req.Binding.ProjectID || req.Plugin.Selection.Node != req.Binding.NodeID || req.Plugin.Selection.Harness != req.Harness {
+		return fmt.Errorf("%w: plugin runtime %s differs from the committed session binding", plugins.ErrInvalid, req.Plugin.ID)
 	}
 	return nil
 }

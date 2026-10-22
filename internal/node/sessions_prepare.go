@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -30,7 +31,7 @@ func (s *SessionService) prepareSessionHost(ctx context.Context, id, resumeRunti
 	}
 	if req.Plugin != nil {
 		if req.Plugin.ID != req.Binding.PluginRuntimeID || req.Plugin.Selection.Project != req.Binding.ProjectID || req.Plugin.Selection.Harness != req.Harness || req.Plugin.Selection.Node != req.Binding.NodeID {
-			return cfg, "", plugins.ErrInvalid
+			return cfg, "", fmt.Errorf("%w: plugin runtime %s differs from the committed session binding", plugins.ErrInvalid, req.Plugin.ID)
 		}
 		prepared, err := s.server.pluginRuntimePool().Load(ctx, *req.Plugin)
 		if err != nil {
@@ -40,7 +41,7 @@ func (s *SessionService) prepareSessionHost(ctx context.Context, id, resumeRunti
 		cfg = acphost.Config{WorkspaceFiles: true, NoRestart: true, Command: prepared.Config.Command, Args: prepared.Config.Args, Env: prepared.Config.Env, ProcessDir: prepared.Config.ProcessDir, Permission: broker}
 		req.MCPServers = append(append([]acp.MCPServer(nil), req.MCPServers...), prepared.Servers...)
 	} else if req.Binding.PluginRuntimeID != "" {
-		return cfg, "", plugins.ErrInvalid
+		return cfg, "", fmt.Errorf("%w: session binding names plugin runtime %s but the request carries none", plugins.ErrInvalid, req.Binding.PluginRuntimeID)
 	}
 	if req.NativeImport != nil {
 		prepare := steveruntime.PrepareNativeHistory

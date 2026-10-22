@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -70,7 +71,7 @@ func (p PluginProfiles) Config(record plugins.RuntimeRecord) (harness.Config, er
 		return harness.Config{}, err
 	}
 	if digest != loaded.SkillsHash {
-		return harness.Config{}, plugins.ErrIntegrity
+		return harness.Config{}, fmt.Errorf("%w: plugin runtime %s skills changed since it was prepared", plugins.ErrIntegrity, record.Ref.ID)
 	}
 	native := loaded.Config.Clone()
 	key, _ := p.nativeHome(record.Ref.Selection.Harness, native.Env)

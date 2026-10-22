@@ -20,8 +20,13 @@ func (e *Execution) preparePluginRuntime(ctx context.Context) (*plugins.RuntimeR
 	if err != nil {
 		return nil, err
 	}
-	if ref != nil && (ref.Validate() != nil || ref.Selection.Project != e.Record.Project || ref.Selection.Node != e.o.At.Node || ref.Selection.Harness != e.o.At.Harness) {
-		return nil, plugins.ErrInvalid
+	if ref != nil {
+		if err := ref.Validate(); err != nil {
+			return nil, err
+		}
+		if ref.Selection.Project != e.Record.Project || ref.Selection.Node != e.o.At.Node || ref.Selection.Harness != e.o.At.Harness {
+			return nil, fmt.Errorf("%w: prepared plugin runtime %s is for project %q on %q/%s, not this attempt's project %q on %q/%s", plugins.ErrInvalid, ref.ID, ref.Selection.Project, ref.Selection.Node, ref.Selection.Harness, e.Record.Project, e.o.At.Node, e.o.At.Harness)
+		}
 	}
 	return ref, nil
 }

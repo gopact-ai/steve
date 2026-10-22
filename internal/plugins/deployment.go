@@ -91,7 +91,7 @@ func (s *Store) PrepareDeployment(ctx context.Context, d Deployment, environment
 
 func (s *Store) Deployment(hash string) (DeploymentReceipt, error) {
 	if !digestShape.MatchString(hash) {
-		return DeploymentReceipt{}, ErrInvalid
+		return DeploymentReceipt{}, fmt.Errorf("%w: deployment identity %q", ErrInvalid, hash)
 	}
 	root, err := os.OpenRoot(s.Dir)
 	if err != nil {
@@ -205,7 +205,7 @@ func (s *Store) resolveServer(bundle Bundle, c Configuration, mcp MCPServer, e E
 			return server, err
 		}
 		if strings.ContainsRune(value, '\x00') {
-			return server, ErrInvalid
+			return server, fmt.Errorf("%w: NUL in resolved MCP argument", ErrInvalid)
 		}
 		server.Args = append(server.Args, value)
 	}
@@ -215,7 +215,7 @@ func (s *Store) resolveServer(bundle Bundle, c Configuration, mcp MCPServer, e E
 			return server, err
 		}
 		if strings.ContainsRune(value, '\x00') {
-			return server, ErrInvalid
+			return server, fmt.Errorf("%w: NUL in resolved MCP environment %s", ErrInvalid, name)
 		}
 		server.Env[name] = value
 	}

@@ -52,7 +52,7 @@ func (p *applicationPlugins) PreparePluginSession(ctx context.Context, req harne
 		defer p.gate.RUnlock()
 	}
 	if req.AttemptID == "" || req.Project == "" {
-		return nil, plugins.ErrInvalid
+		return nil, fmt.Errorf("%w: plugin session preparation needs an attempt and a project", plugins.ErrInvalid)
 	}
 	if req.Prior != nil {
 		ref := req.Prior
@@ -61,10 +61,10 @@ func (p *applicationPlugins) PreparePluginSession(ctx context.Context, req harne
 			return nil, err
 		}
 		if ref.Selection.Project != req.Project || ref.Selection.Node != req.At.Node || ref.Selection.Harness != req.At.Harness {
-			return nil, plugins.ErrInvalid
+			return nil, fmt.Errorf("%w: session plugin runtime %s belongs to project %q on %s/%s, not project %q on %s/%s", plugins.ErrInvalid, ref.ID, ref.Selection.Project, placementLabel(ref.Selection.Node), ref.Selection.Harness, req.Project, placementLabel(req.At.Node), req.At.Harness)
 		}
 		if _, _, err := p.PluginRuntime(ctx, req.At, *ref); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reopen session plugin runtime %s: %w", ref.ID, err)
 		}
 		return ref.Clone(), nil
 	}
@@ -175,8 +175,11 @@ func (p *applicationPlugins) prepareDeployment(ctx context.Context, d plugins.De
 }
 
 func (p *applicationPlugins) PluginRuntime(ctx context.Context, at harness.Placement, ref plugins.RuntimeRef) (harness.Config, []acp.MCPServer, error) {
-	if ref.Validate() != nil || ref.Selection.Node != at.Node || ref.Selection.Harness != at.Harness {
-		return harness.Config{}, nil, plugins.ErrInvalid
+	if err := ref.Validate(); err != nil {
+		return harness.Config{}, nil, err
+	}
+	if ref.Selection.Node != at.Node || ref.Selection.Harness != at.Harness {
+		return harness.Config{}, nil, fmt.Errorf("%w: plugin runtime %s runs on %s/%s, not %s/%s", plugins.ErrInvalid, ref.ID, placementLabel(ref.Selection.Node), ref.Selection.Harness, placementLabel(at.Node), at.Harness)
 	}
 	items := p.pluginInstallations()
 	if err := p.library.CheckRuntimeScope(ctx, items, ref); err != nil {
@@ -200,6 +203,14 @@ func (p *applicationPlugins) PluginRuntime(ctx context.Context, at harness.Place
 func (p *applicationPlugins) pluginInstallations() (items map[string]plugins.Installation) {
 	p.config.Read(func(cfg *config.Config) { items = config.ClonePluginInstallations(cfg.Plugins) })
 	return items
+}
+
+// placementLabel names the hub's own machine, whose node ID is empty.
+func placementLabel(node string) string {
+	if node == "" {
+		return "hub"
+	}
+	return node
 }
 
 func pluginRuntimeCommand(attemptID string) string {

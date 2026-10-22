@@ -11,8 +11,11 @@ import (
 )
 
 func (s *Server) pluginRuntimeOperation(ctx context.Context, req nodewire.PluginRequest) (nodewire.PluginReply, error) {
-	if req.Selection == nil || req.Selection.Node != s.conf().Name {
-		return nodewire.PluginReply{}, plugins.ErrInvalid
+	if req.Selection == nil {
+		return nodewire.PluginReply{}, fmt.Errorf("%w: plugin runtime request has no selection", plugins.ErrInvalid)
+	}
+	if req.Selection.Node != s.conf().Name {
+		return nodewire.PluginReply{}, fmt.Errorf("%w: plugin runtime selection is for node %q, not %q", plugins.ErrInvalid, req.Selection.Node, s.conf().Name)
 	}
 	if _, err := req.Selection.Hash(); err != nil {
 		return nodewire.PluginReply{}, err
@@ -36,16 +39,19 @@ func (s *Server) pluginRuntimeOperation(ctx context.Context, req nodewire.Plugin
 		runtime, err = pool.Prepare(ctx, req.CommandID, *req.Selection, harness.Config{Command: spec.Command, Args: spec.Args, Env: spec.Env, ProcessDir: s.processDir(spec), Permission: policy})
 	case nodewire.PluginRuntimeInspect:
 		if req.Runtime == nil {
-			return nodewire.PluginReply{}, plugins.ErrInvalid
+			return nodewire.PluginReply{}, fmt.Errorf("%w: runtime inspection names no runtime", plugins.ErrInvalid)
 		}
 		want, _ := req.Selection.Hash()
 		actual, e := req.Runtime.Selection.Hash()
-		if e != nil || want != actual {
-			return nodewire.PluginReply{}, plugins.ErrInvalid
+		if e != nil {
+			return nodewire.PluginReply{}, e
+		}
+		if want != actual {
+			return nodewire.PluginReply{}, fmt.Errorf("%w: runtime %s selection differs from the inspected selection", plugins.ErrInvalid, req.Runtime.ID)
 		}
 		runtime, err = pool.Load(ctx, *req.Runtime)
 	default:
-		return nodewire.PluginReply{}, plugins.ErrInvalid
+		return nodewire.PluginReply{}, fmt.Errorf("%w: unknown plugin runtime action %q", plugins.ErrInvalid, req.Action)
 	}
 	if err != nil {
 		return nodewire.PluginReply{}, err
