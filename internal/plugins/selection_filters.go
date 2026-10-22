@@ -1,6 +1,9 @@
 package plugins
 
-import "slices"
+import (
+	"fmt"
+	"slices"
+)
 
 type CapabilityFilter struct {
 	Skills []string `json:"skills"`
@@ -35,20 +38,20 @@ func (selection Selection) Includes(installation, kind, name string) bool {
 
 func (selection Selection) validateFilters() error {
 	if len(selection.ExcludedSkills) > 64 || duplicate(selection.ExcludedSkills) {
-		return ErrInvalid
+		return fmt.Errorf("%w: runtime selection excludes too many or repeated skills", ErrInvalid)
 	}
 	for _, name := range selection.ExcludedSkills {
 		if !nameShape.MatchString(name) {
-			return ErrInvalid
+			return fmt.Errorf("%w: excluded skill name %q", ErrInvalid, name)
 		}
 	}
 	for id, filter := range selection.Filters {
 		if !nameShape.MatchString(id) || duplicate(filter.Skills) || duplicate(filter.MCP) {
-			return ErrInvalid
+			return fmt.Errorf("%w: capability filter for installation %q", ErrInvalid, id)
 		}
 		for _, name := range append(append([]string{}, filter.Skills...), filter.MCP...) {
 			if !nameShape.MatchString(name) {
-				return ErrInvalid
+				return fmt.Errorf("%w: capability name %q in filter for %s", ErrInvalid, name, id)
 			}
 		}
 	}

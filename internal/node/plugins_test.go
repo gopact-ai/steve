@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,5 +121,26 @@ func TestPluginPrepareFailureDoesNotReportReady(t *testing.T) {
 	// node whatever its advert lists, and fails there for the same reason.
 	if _, err := registry.Plugins(t.Context(), "worker", nodewire.PluginRequest{Action: nodewire.PluginPrepare, Deployment: d, Bundle: bundle.Data}); !errors.Is(err, plugins.ErrUnavailable) {
 		t.Fatalf("prepare without advertised features = %v, want the node's own refusal", err)
+	}
+}
+
+// A node's refusal reaches the hub's reply as one sentence that says what
+// failed, still classified for errors.Is.
+func TestPluginReplyErrorKeepsNodeDetailOnce(t *testing.T) {
+	cause := fmt.Errorf("%w: runtime skills entry %q is not a package path", plugins.ErrInvalid, "a:b/SKILL.md")
+	err := pluginReplyError(nodewire.PluginReply{ErrorCode: pluginErrorCode(cause), Error: cause.Error()})
+	if !errors.Is(err, plugins.ErrInvalid) {
+		t.Fatalf("classification lost: %v", err)
+	}
+	if err.Error() != cause.Error() {
+		t.Fatalf("reply %q, want %q", err, cause)
+	}
+	bare := pluginReplyError(nodewire.PluginReply{ErrorCode: "invalid", Error: plugins.ErrInvalid.Error()})
+	if bare.Error() != plugins.ErrInvalid.Error() {
+		t.Fatalf("bare refusal repeated: %q", bare)
+	}
+	other := pluginReplyError(nodewire.PluginReply{ErrorCode: "unavailable", Error: "secret token is missing"})
+	if !errors.Is(other, plugins.ErrUnavailable) || !strings.Contains(other.Error(), "secret token is missing") {
+		t.Fatalf("unprefixed node detail lost: %v", other)
 	}
 }

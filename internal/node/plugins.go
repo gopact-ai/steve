@@ -52,7 +52,7 @@ func (s *Server) pluginStore() *plugins.Store {
 func (s *Server) pluginOperation(ctx context.Context, principal string, req nodewire.PluginRequest) (nodewire.PluginReply, error) {
 	cfg := s.conf()
 	if cfg.StateDir == "" || req.Node != cfg.Name || req.Authority.ClusterID == "" {
-		return nodewire.PluginReply{}, plugins.ErrInvalid
+		return nodewire.PluginReply{}, fmt.Errorf("%w: plugin request for node %q reached %q without state or cluster authority", plugins.ErrInvalid, req.Node, cfg.Name)
 	}
 	authorize := cfg.PluginAuthorizer
 	if authorize != nil {
@@ -73,7 +73,7 @@ func (s *Server) pluginOperation(ctx context.Context, principal string, req node
 		return nodewire.PluginReply{Runtimes: infos}, err
 	case nodewire.PluginRuntimeRetire, nodewire.PluginRuntimeRemove:
 		if req.Runtime == nil || req.Runtime.Selection.Node != cfg.Name {
-			return nodewire.PluginReply{}, plugins.ErrInvalid
+			return nodewire.PluginReply{}, fmt.Errorf("%w: runtime %s request names no runtime of node %q", plugins.ErrInvalid, req.Action, cfg.Name)
 		}
 		if req.Action == nodewire.PluginRuntimeRetire {
 			return nodewire.PluginReply{Runtime: req.Runtime}, store.RetireRuntime(ctx, *req.Runtime)
@@ -96,7 +96,7 @@ func (s *Server) pluginOperation(ctx context.Context, principal string, req node
 			return nodewire.PluginReply{}, err
 		}
 		if req.Deployment.Node != cfg.Name {
-			return nodewire.PluginReply{}, plugins.ErrInvalid
+			return nodewire.PluginReply{}, fmt.Errorf("%w: deployment is for node %q, not %q", plugins.ErrInvalid, req.Deployment.Node, cfg.Name)
 		}
 		receipt, err := store.Deployment(hash)
 		if err != nil {
@@ -115,8 +115,11 @@ func (s *Server) pluginOperation(ctx context.Context, principal string, req node
 
 func (s *Server) preparePlugin(ctx context.Context, principal string, req nodewire.PluginRequest, store *plugins.Store) (nodewire.PluginReply, error) {
 	hash, err := req.Deployment.Hash()
-	if err != nil || req.Deployment.Node != req.Node {
-		return nodewire.PluginReply{}, plugins.ErrInvalid
+	if err != nil {
+		return nodewire.PluginReply{}, err
+	}
+	if req.Deployment.Node != req.Node {
+		return nodewire.PluginReply{}, fmt.Errorf("%w: deployment is for node %q, not %q", plugins.ErrInvalid, req.Deployment.Node, req.Node)
 	}
 	bundle, err := plugins.DecodeBundle(req.Bundle)
 	if err != nil {
@@ -159,7 +162,7 @@ func (s *Server) pluginStream(parent context.Context, principal string, stream *
 	err := readPluginMessage(stream, &req)
 	reply := nodewire.PluginReply{}
 	if err == nil && stream.Request().Command != "" && stream.Request().Command != string(req.Action) {
-		err = plugins.ErrInvalid
+		err = fmt.Errorf("%w: plugin stream opened for %q carried %q", plugins.ErrInvalid, stream.Request().Command, req.Action)
 	}
 	if err == nil {
 		reply, err = s.pluginOperation(ctx, principal, req)
@@ -207,7 +210,7 @@ func writePluginMessage(w io.Writer, value any) error {
 		return err
 	}
 	if len(raw) > nodewire.PluginMaxBytes {
-		return plugins.ErrInvalid
+		return fmt.Errorf("%w: plugin message too large", plugins.ErrInvalid)
 	}
 	if err := nodewire.WriteSize(w, int64(len(raw))); err != nil {
 		return err

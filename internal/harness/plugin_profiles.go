@@ -68,8 +68,14 @@ func nativeProfileSessionID(ref plugins.RuntimeRef, id string) (acp.SessionID, e
 
 func (m *Manager) openPluginSession(ctx context.Context, at Placement, upstream, workdir string, servers []acp.MCPServer) (Runner, error) {
 	ref := PluginProfile(ctx)
-	if ref == nil || ref.Validate() != nil || ref.Selection.Harness != at.Harness || ref.Selection.Node != at.Node {
-		return nil, plugins.ErrInvalid
+	if ref == nil {
+		return nil, fmt.Errorf("%w: plugin session has no runtime", plugins.ErrInvalid)
+	}
+	if err := ref.Validate(); err != nil {
+		return nil, err
+	}
+	if ref.Selection.Harness != at.Harness || ref.Selection.Node != at.Node {
+		return nil, fmt.Errorf("%w: plugin runtime %s is for %q/%s, not %q/%s", plugins.ErrInvalid, ref.ID, ref.Selection.Node, ref.Selection.Harness, at.Node, at.Harness)
 	}
 	native, err := nativeProfileSessionID(*ref, upstream)
 	if err != nil {
@@ -158,7 +164,7 @@ func (m *Manager) closePluginSession(ctx context.Context, at Placement, id strin
 	}
 	head, native, ok := strings.Cut(strings.TrimPrefix(id, "ps_"), ":")
 	if !ok || len(head) != 64 || native == "" {
-		return true, plugins.ErrInvalid
+		return true, fmt.Errorf("%w: plugin session ID %q", plugins.ErrInvalid, id)
 	}
 	m.mu.Lock()
 	host := m.hosts["plugin/"+head+"/"+at.key()]

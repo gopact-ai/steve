@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
@@ -9,7 +10,7 @@ import (
 
 func (s *Server) closePluginRuntime(ctx context.Context, req nodewire.PluginRequest) error {
 	if req.Runtime == nil || req.Runtime.Validate() != nil || req.Runtime.Selection.Node != s.conf().Name {
-		return plugins.ErrInvalid
+		return fmt.Errorf("%w: runtime close names no valid runtime of node %q", plugins.ErrInvalid, s.conf().Name)
 	}
 	if s.sessions != nil {
 		s.sessions.mu.Lock()

@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -132,14 +133,14 @@ func (p *Peer) authorizePluginRequest(ctx context.Context, req nodewire.PluginRe
 
 func authorizePluginRuntime(declaration platformconfig.Declaration, req nodewire.PluginRequest) error {
 	if req.Selection == nil || req.Selection.Node != req.Node {
-		return plugins.ErrInvalid
+		return fmt.Errorf("%w: plugin runtime request has no selection for node %q", plugins.ErrInvalid, req.Node)
 	}
 	if _, err := req.Selection.Hash(); err != nil {
 		return err
 	}
 	if req.Action == nodewire.PluginRuntimeInspect {
 		if req.Runtime == nil {
-			return plugins.ErrInvalid
+			return fmt.Errorf("%w: runtime inspection names no runtime", plugins.ErrInvalid)
 		}
 		// Inspection retains an existing runtime; it never grants a new selection.
 		expected, err := req.Runtime.Selection.Hash()
@@ -148,7 +149,7 @@ func authorizePluginRuntime(declaration platformconfig.Declaration, req nodewire
 		}
 		actual, _ := req.Selection.Hash()
 		if actual != expected {
-			return plugins.ErrInvalid
+			return fmt.Errorf("%w: runtime %s selection differs from the inspected selection", plugins.ErrInvalid, req.Runtime.ID)
 		}
 		return nil
 	}
@@ -179,7 +180,7 @@ func authorizePluginRuntime(declaration platformconfig.Declaration, req nodewire
 
 func authorizePluginRemoval(ctx context.Context, book *ledger.Ledger, declaration platformconfig.Declaration, req nodewire.PluginRequest) error {
 	if req.Runtime == nil || req.Runtime.Validate() != nil || req.Runtime.Selection.Node != req.Node {
-		return plugins.ErrInvalid
+		return fmt.Errorf("%w: request names no valid runtime of node %q", plugins.ErrInvalid, req.Node)
 	}
 	refs, err := state.PluginReferences(book.Document("state"))
 	if err != nil {
@@ -219,7 +220,7 @@ func authorizePluginRemoval(ctx context.Context, book *ledger.Ledger, declaratio
 
 func authorizePluginRuntimeClose(ctx context.Context, book *ledger.Ledger, req nodewire.PluginRequest) error {
 	if req.Runtime == nil || req.Runtime.Validate() != nil || req.Runtime.Selection.Node != req.Node {
-		return plugins.ErrInvalid
+		return fmt.Errorf("%w: request names no valid runtime of node %q", plugins.ErrInvalid, req.Node)
 	}
 	active, err := attempt.New(book).Live(ctx)
 	if err != nil {

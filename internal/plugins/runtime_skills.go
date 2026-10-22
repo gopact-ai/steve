@@ -105,7 +105,7 @@ func (s *Store) RuntimeInstructions(selection Selection) (string, error) {
 	}
 	text := strings.Join(instructions, "\n\n")
 	if len(text) > MaxPackageBytes {
-		return "", ErrInvalid
+		return "", fmt.Errorf("%w: runtime skill instructions exceed %d bytes", ErrInvalid, MaxPackageBytes)
 	}
 	return text, nil
 }
@@ -138,14 +138,14 @@ func SkillsDigest(ctx context.Context, dir string) (string, error) {
 			return nil
 		}
 		if !packagePath(name) {
-			return ErrInvalid
+			return fmt.Errorf("%w: runtime skills entry %q is not a package path", ErrInvalid, name)
 		}
 		info, err := root.Lstat(name)
 		if err != nil {
 			return err
 		}
 		if !info.Mode().IsRegular() {
-			return ErrIntegrity
+			return fmt.Errorf("%w: runtime skills entry %q is not a regular file", ErrIntegrity, name)
 		}
 		f, err := root.Open(name)
 		if err != nil {
@@ -161,7 +161,7 @@ func SkillsDigest(ctx context.Context, dir string) (string, error) {
 		}
 		total += len(raw)
 		if len(raw) > MaxFileBytes || total > MaxPackageBytes || len(files) >= MaxFiles {
-			return ErrInvalid
+			return fmt.Errorf("%w: runtime skills exceed the package size or file limit at %q", ErrInvalid, name)
 		}
 		files[name] = packageFile{data: raw, executable: info.Mode()&0111 != 0}
 		return nil

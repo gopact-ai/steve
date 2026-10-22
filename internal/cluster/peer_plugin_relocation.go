@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -18,7 +19,7 @@ func authorizePluginRelocation(ctx context.Context, book *ledger.Ledger, declara
 		return err
 	}
 	if plan.Plugins == nil || plan.Target.Node != req.Node || plan.Plugins.Selection.Node != req.Node || plan.Plugins.Selection.Project != plan.Target.Project || plan.Plugins.Selection.Harness != plan.Target.Harness {
-		return plugins.ErrInvalid
+		return fmt.Errorf("%w: relocation plan %s does not move plugins to node %q", plugins.ErrInvalid, plan.ID, req.Node)
 	}
 	record, err := service.Get(ctx, plan.Target.ID)
 	if err != nil {
@@ -47,7 +48,7 @@ func authorizePluginRelocation(ctx context.Context, book *ledger.Ledger, declara
 		}
 	case nodewire.PluginRuntimePrepare:
 		if req.Selection == nil {
-			return plugins.ErrInvalid
+			return fmt.Errorf("%w: plugin runtime request has no selection", plugins.ErrInvalid)
 		}
 		want, err := plan.Plugins.Selection.Hash()
 		if err != nil {
