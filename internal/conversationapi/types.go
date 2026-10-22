@@ -254,6 +254,8 @@ type Exchange struct {
 	EnqueuedAt time.Time         `json:"enqueued_at"`
 	StartedAt  time.Time         `json:"started_at,omitzero"`
 	ReplyID    string            `json:"reply_id,omitempty"`
+	// StopTarget is the exchange a targeted /cancel control stops.
+	StopTarget string `json:"stop_target,omitempty"`
 }
 
 var (
@@ -264,5 +266,21 @@ var (
 	// no longer in the transcript: it was already rewound past, or the
 	// thread was trimmed beyond it.
 	ErrRewindTargetGone = errors.New("that message is no longer in this thread")
+	// ErrStopTargetEnded refuses a new stop for an exchange that has ended.
+	ErrStopTargetEnded = errors.New("the turn to stop has already ended")
 )
+
+// ErrProjectConflict matches a ProjectConflictError.
+var ErrProjectConflict = errors.New("project conflict")
+
+// ProjectConflictError refuses a submission whose expected project is not
+// the project the conversation is bound to. Nothing was queued.
+type ProjectConflictError struct{ Expected, Bound string }
+
+func (e ProjectConflictError) Error() string {
+	return "expected project " + e.Expected + ", but conversation is bound to " + e.Bound
+}
+
+func (e ProjectConflictError) Is(target error) bool { return target == ErrProjectConflict }
+
 var ErrBusy = errors.New("busy")

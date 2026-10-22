@@ -693,6 +693,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 			ExpectedProject: exchange.ExpectedProject,
 			ExpectedTask:    exchange.ExpectedTask,
 			ResumeAdmission: exchange.ResumeAdmission,
+			StopTarget:      exchange.StopTarget,
 		},
 		Actor:  turn.Actor{ID: requester},
 		Locale: exchange.Locale,

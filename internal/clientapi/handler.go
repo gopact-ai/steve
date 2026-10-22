@@ -112,7 +112,9 @@ func classify(err error) *apiError {
 		status, code = http.StatusServiceUnavailable, CodeUnavailable
 	case errors.Is(err, consoleapi.ErrCommandConflict):
 		status, code = http.StatusConflict, CodeCommandConflict
-	case errors.Is(err, consoleapi.ErrExchangeNotQueued), errors.Is(err, consoleapi.ErrQuestionConflict), errors.Is(err, consoleapi.ErrBusy):
+	case errors.Is(err, consoleapi.ErrProjectConflict):
+		status, code = http.StatusConflict, CodeProjectConflict
+	case errors.Is(err, consoleapi.ErrExchangeNotQueued), errors.Is(err, consoleapi.ErrQuestionConflict), errors.Is(err, consoleapi.ErrBusy), errors.Is(err, consoleapi.ErrStopTargetEnded):
 		status, code = http.StatusConflict, CodeConflict
 	case errors.Is(err, consoleapi.ErrExchangeNotFound), errors.Is(err, consoleapi.ErrRewindTargetGone), errors.Is(err, consoleapi.ErrQuestionNotFound), errors.Is(err, consoleapi.ErrChannelConversationNotFound), errors.Is(err, task.ErrTaskNotFound):
 		status, code = http.StatusNotFound, CodeNotFound
@@ -124,6 +126,13 @@ func classify(err error) *apiError {
 		status, code = http.StatusConflict, CodeStaleCursor
 	}
 	return &apiError{status: status, code: code, err: err}
+}
+
+// WriteUnavailable answers a request the server cannot take right now,
+// such as a mutation while the Hub prepares a restart, with the v1 error
+// body: 503 and code unavailable.
+func WriteUnavailable(w http.ResponseWriter, message string) {
+	writeError(w, refuse(http.StatusServiceUnavailable, CodeUnavailable, errors.New(message)))
 }
 
 func writeError(w http.ResponseWriter, err error) {

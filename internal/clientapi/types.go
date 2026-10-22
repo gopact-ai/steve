@@ -137,7 +137,10 @@ type StartTurn struct {
 	RewindTo string `json:"rewind_to,omitempty"`
 }
 
-// Quote carries one stored item of a thread along with the input.
+// Quote carries one item of a thread along with the input. Only an
+// assistant message, a milestone or a notice can be quoted; a user
+// message, a question or an item derived from a reply (an ID with "#") is
+// refused with bad_request.
 type Quote struct {
 	Thread string `json:"thread"`
 	Item   string `json:"item"`

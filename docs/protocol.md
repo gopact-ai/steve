@@ -28,11 +28,11 @@ Every refusal other than `401` has a JSON body:
 | 403 | `forbidden` | The thread belongs to a channel and is read-only, or the question belongs to someone else. |
 | 404 | `not_found` | The thread, turn, question, task or line does not exist. |
 | 409 | `command_conflict` | The `command_id` was already used with different content. |
-| 409 | `project_conflict` | `expected_project` differs from the thread's project. Nothing was queued. |
+| 409 | `project_conflict` | `expected_project` differs from the thread's project. It is checked before anything else in the submission. Nothing was queued. |
 | 409 | `conflict` | The object has moved on: the turn is no longer queued or has ended, or the question is resolved. |
 | 409 | `stale_cursor` | A page cursor no longer matches the data. Read again from the start. |
 | 501 | `not_implemented` | This server is not set up to serve the method. |
-| 503 | `unavailable` | The server is shutting down, or a dependency cannot be read right now. Retry. |
+| 503 | `unavailable` | The server is shutting down or preparing a restart, or a dependency cannot be read right now. Retry. |
 
 ## Objects
 
@@ -95,7 +95,7 @@ Every refusal other than `401` has a JSON body:
 {"id":"console:3f2a","project":"scratch","agent":"codex"}
 ```
 
-The client may choose `id` so that a retry names the same thread. An ID without the `console:` prefix gets it. Without an `id` the server generates one. Creating a thread with the same ID and project again changes nothing. Naming another project for an existing thread is refused. `agent` sets the thread's agent. The response is the thread as `GET /v1/threads/{id}` returns it.
+The client may choose `id` so that a retry names the same thread. An ID without the `console:` prefix gets it. Without an `id` the server generates one. Creating a thread with the same ID and project again changes nothing. Naming another project for an existing thread is refused. `agent` sets the thread's agent. It must be the exact `id` of an agent from `GET /v1/agents`; anything else is a `bad_request` and creates nothing. The response is the thread as `GET /v1/threads/{id}` returns it.
 
 ### Turns
 
@@ -111,7 +111,7 @@ The client may choose `id` so that a retry names the same thread. An ID without 
 
 `expected_project` refuses the turn with `project_conflict` when the thread is bound to another project. Optional fields are:
 
-- `quotes`: earlier items carried along, as `{"thread","item"}`.
+- `quotes`: earlier items carried along, as `{"thread","item"}`. An assistant `message`, a `milestone` or a `notice` can be quoted. A user `message`, a `question` and the items that make up a reply (`reasoning`, `tool_call`, `file_change`) cannot; quote the reply's `message` instead. Quoting one of those is a `bad_request`.
 - `refs`: stored materials. Available when `material_refs` is listed.
 - `locale`: `zh` or `en`.
 - `rewind_to`: replaces an earlier user message and everything after it.
@@ -123,8 +123,9 @@ The response is the turn. Input starting with `/` is a Steve command and runs as
 `POST /v1/turns/{id}/interrupt` takes `{"command_id":"…"}`.
 
 - A queued turn is removed. `turn.state` is `cancelled`.
-- A running turn is stopped by a `/cancel` control turn keyed by that `command_id`. It is returned as `control`, and retrying with the same `command_id` returns the same control.
-- A turn that has ended is a `conflict`.
+- A running turn is stopped by a `/cancel` control turn keyed by that `command_id` and bound to that turn. It is returned as `control`. The control stops only that turn: if the turn ends before the control runs, the control stops nothing and its reply says no turn is running.
+- Retrying with the same `command_id` returns the same control, even after the turn has ended.
+- A new `command_id` for a turn that has ended is a `conflict`.
 
 ### Questions
 

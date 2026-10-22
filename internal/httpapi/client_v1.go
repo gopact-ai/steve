@@ -29,7 +29,10 @@ func (b clientBackend) ChannelHistory() consoleapi.ChannelHistory { return b.s.c
 func (b clientBackend) ServerVersion() string                     { return nodewire.Version() }
 
 // clientRoutes serves the versioned client protocol beside the console,
-// behind the same token.
+// behind the same token. A mutation refused while the Hub prepares a
+// restart is answered in the v1 error body, as 503 unavailable.
 func (s *Server) clientRoutes(mux *http.ServeMux) {
-	clientapi.New(clientBackend{s}).Routes(mux, s.guard)
+	clientapi.New(clientBackend{s}).Routes(mux, func(next http.HandlerFunc) http.HandlerFunc {
+		return s.guardWith(next, clientapi.WriteUnavailable)
+	})
 }

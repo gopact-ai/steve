@@ -59,6 +59,10 @@ type Admission struct {
 	// Queue waits for the running turn; parsed interrupt controls still determine
 	// the final queue policy in Handle.
 	Queue bool
+	// StopTarget is the exchange a /cancel control stops. When set, the
+	// stop reaches only the turn running that exchange, and arms nothing
+	// for a later turn.
+	StopTarget string
 }
 
 // Request is the shared turn contract used by Console, Gateway and recovery.

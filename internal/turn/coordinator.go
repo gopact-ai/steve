@@ -161,6 +161,8 @@ type coordinatorState struct {
 	preferenceLocks sync.Map // conversation/agent -> *sync.Mutex
 	active          map[string]harness.Runner
 	sessionAdmissionState
+	// cancelPending holds stops armed for a turn not yet begun: by session
+	// key, and by exchangeCancelKey for a stop bound to one exchange.
 	cancelPending map[string]time.Time
 	skillsLock    int
 }

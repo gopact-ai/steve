@@ -1,9 +1,11 @@
 package clientapi
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -11,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/conversationapi"
@@ -209,6 +212,7 @@ func (h *Handler) createThread(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest("project is required"))
 		return
 	}
+	agent := strings.TrimSpace(req.Agent)
 	id := newThreadID()
 	if strings.TrimSpace(req.ID) != "" {
 		id = threadID(req.ID)
@@ -219,11 +223,17 @@ func (h *Handler) createThread(w http.ResponseWriter, r *http.Request) {
 	}
 	// Initializing the same thread with the same project again is a no-op,
 	// so a retry carrying the same ID is safe.
+	if agent != "" {
+		if err := knownAgent(r.Context(), c, id, agent); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	if err := c.InitializeConversation(r.Context(), id, strings.TrimSpace(req.Project)); err != nil {
 		writeError(w, err)
 		return
 	}
-	if agent := strings.TrimSpace(req.Agent); agent != "" {
+	if agent != "" {
 		// Choosing the agent is the console's /use command, keyed by the
 		// thread and agent so a retry is answered from its receipt.
 		_, err := c.SendSubmission(r.Context(), conversationapi.Submission{Conversation: id, Input: "/use " + agent, CommandID: "v1-thread-agent:" + agent})
@@ -234,6 +244,24 @@ func (h *Handler) createThread(w http.ResponseWriter, r *http.Request) {
 	}
 	detail, err := h.consoleThreadDetail(r, c, id, "", defaultItems)
 	respond(w, detail, err)
+}
+
+// knownAgent accepts only the exact ID of a registered agent, so choosing
+// the agent never carries a prompt or matches an alias prefix.
+func knownAgent(ctx context.Context, c consoleapi.Console, thread, agent string) error {
+	if strings.IndexFunc(agent, unicode.IsSpace) >= 0 || strings.HasPrefix(agent, "@") || strings.HasPrefix(agent, "/") {
+		return badRequest("agent must be a registered agent ID")
+	}
+	state, err := c.Context(ctx, thread)
+	if err != nil {
+		return err
+	}
+	for _, choice := range state.Agents {
+		if choice.ID == agent {
+			return nil
+		}
+	}
+	return badRequest(fmt.Sprintf("agent %s is not registered", agent))
 }
 
 // writable refuses a mutation that names, in any form the console would

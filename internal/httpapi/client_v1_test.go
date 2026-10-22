@@ -138,7 +138,13 @@ func TestClientV1TurnCommandIDIsTheConsoleSubmissionKey(t *testing.T) {
 // boundHandler binds every conversation to project alpha.
 type boundHandler struct {
 	turntest.IdleCoordinator
-	calls atomic.Int32
+	calls  atomic.Int32
+	resets atomic.Int32
+}
+
+func (h *boundHandler) ResetConversationSessions(context.Context, string) error {
+	h.resets.Add(1)
+	return nil
 }
 
 func (h *boundHandler) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
@@ -193,7 +199,6 @@ func TestClientV1SteerAndInterruptQueuedTurns(t *testing.T) {
 	if stopped.Control == nil || stopped.Control.Input != "/cancel" || stopped.Control.CommandID != "stop-1" {
 		t.Fatalf("interrupting a running turn = %+v", stopped)
 	}
-	v1Call(t, server, http.MethodPost, "/v1/turns/4/interrupt", `{"command_id":"late"}`, http.StatusConflict)
 	v1Call(t, server, http.MethodPost, "/v1/turns/missing/interrupt", `{"command_id":"x"}`, http.StatusNotFound)
 	v1Call(t, server, http.MethodPost, "/v1/turns/1/interrupt", `{}`, http.StatusBadRequest)
 
@@ -495,4 +500,237 @@ func (readableChannels) Read(_ context.Context, id, _ string, _ int) (consoleapi
 		return consoleapi.ChannelConversationHistory{}, consoleapi.ErrChannelConversationNotFound
 	}
 	return consoleapi.ChannelConversationHistory{Conversation: consoleapi.Conversation{ID: id, Transport: "feishu", ReadOnly: true}, Replies: []consoleapi.Reply{{ID: "c1", Conversation: id, Kind: "reply", Text: "from the channel"}}}, nil
+}
+
+// While the Hub prepares a restart, a v1 mutation is refused in the v1
+// error body, still behind the token; the console routes keep theirs.
+func TestClientV1SealedWritesAnswerInTheV1Envelope(t *testing.T) {
+	server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
+	server.SetConsole(&fakeConsole{})
+	release, err := server.SealWrites()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	raw := v1Call(t, server, http.MethodPost, "/v1/turns", `{"thread":"main","input":"x","command_id":"c"}`, http.StatusServiceUnavailable)
+	if e := v1Decode[clientapi.Error](t, raw).Error; e.Code != clientapi.CodeUnavailable || e.Message == "" {
+		t.Fatalf("sealed v1 refusal = %s", raw)
+	}
+	if code, _, _ := taskMetaRequest(t, server, http.MethodPost, "/v1/turns", "", `{}`); code != http.StatusUnauthorized {
+		t.Fatalf("sealed v1 without a token = %d", code)
+	}
+	v1Call(t, server, http.MethodGet, "/v1/threads", "", http.StatusOK)
+	legacy := v1Call(t, server, http.MethodPost, "/console/queue", `{"conversation":"main","input":"x","command_id":"c"}`, http.StatusConflict)
+	if !strings.Contains(string(legacy), `"code":"busy"`) {
+		t.Fatalf("the console's refusal changed: %s", legacy)
+	}
+}
+
+// A project mismatch is named before anything else about the submission
+// is checked, and another refusal keeps its own code.
+func TestClientV1ProjectConflictComesFirstAndOtherErrorsPassThrough(t *testing.T) {
+	server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
+	handler := &boundHandler{}
+	server.SetConsole(console.New(handler, "owner", nil))
+	raw := v1Call(t, server, http.MethodPost, "/v1/turns", `{"thread":"console:p","input":"go","command_id":"c1","expected_project":"beta","quotes":[{"thread":"console:p","item":"gone"}]}`, http.StatusConflict)
+	if code := v1ErrorCode(t, raw); code != clientapi.CodeProjectConflict {
+		t.Fatalf("mismatch with a bad quote = %s", raw)
+	}
+	raw = v1Call(t, server, http.MethodPost, "/v1/turns", `{"thread":"console:p","input":"go","command_id":"c2","expected_project":"alpha","quotes":[{"thread":"console:p","item":"gone"}]}`, http.StatusBadRequest)
+	if code := v1ErrorCode(t, raw); code != clientapi.CodeBadRequest {
+		t.Fatalf("a bad quote on the right project = %s", raw)
+	}
+	// A rewind resets the thread's sessions; one meant for another project
+	// is refused before it does.
+	sent := v1Decode[clientapi.Turn](t, v1Call(t, server, http.MethodPost, "/v1/turns", `{"thread":"console:p","input":"first","command_id":"c3"}`, http.StatusOK))
+	var line string
+	for deadline := time.Now().Add(5 * time.Second); line == ""; time.Sleep(20 * time.Millisecond) {
+		for _, item := range v1Decode[clientapi.ThreadDetail](t, v1Call(t, server, http.MethodGet, "/v1/threads/console:p", "", http.StatusOK)).Items {
+			if item.Turn == sent.ID && item.Role == "user" {
+				line = item.ID
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the first line never appeared")
+		}
+	}
+	raw = v1Call(t, server, http.MethodPost, "/v1/turns", fmt.Sprintf(`{"thread":"console:p","input":"edited","command_id":"c4","expected_project":"beta","rewind_to":%q}`, line), http.StatusConflict)
+	if code := v1ErrorCode(t, raw); code != clientapi.CodeProjectConflict || handler.resets.Load() != 0 {
+		t.Fatalf("rewind for another project = %s, sessions reset %d times", raw, handler.resets.Load())
+	}
+
+	// Whatever the binding, a refusal that is not about the project keeps
+	// its own code.
+	busy := &busyConsole{fakeConsole: &fakeConsole{}}
+	server.SetConsole(busy)
+	raw = v1Call(t, server, http.MethodPost, "/v1/turns", `{"thread":"console:p","input":"go","command_id":"c5","expected_project":"beta"}`, http.StatusConflict)
+	if code := v1ErrorCode(t, raw); code != clientapi.CodeConflict {
+		t.Fatalf("a busy refusal = %s", raw)
+	}
+}
+
+// busyConsole is bound to alpha and refuses every submission as busy.
+type busyConsole struct{ *fakeConsole }
+
+func (busyConsole) Context(_ context.Context, conversation string) (consoleapi.Context, error) {
+	return consoleapi.Context{Conversation: conversation, Project: &consoleapi.ContextProject{ID: "alpha"}}, nil
+}
+
+func (busyConsole) Submit(context.Context, consoleapi.Submission) (consoleapi.Exchange, error) {
+	return consoleapi.Exchange{}, consoleapi.ErrBusy
+}
+
+// Only items the console can carry are quotable: an assistant message by
+// its own ID. Derived items, questions and user messages are refused.
+func TestClientV1QuotesOnlyQuotableItems(t *testing.T) {
+	handler := &submissionHandler{}
+	service := console.New(handler, "owner", nil)
+	server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
+	server.SetConsole(service)
+	first := v1Decode[clientapi.Turn](t, v1Call(t, server, http.MethodPost, "/v1/turns", `{"thread":"console:q","input":"hello","command_id":"k1"}`, http.StatusOK))
+	var user, assistant string
+	deadline := time.Now().Add(5 * time.Second)
+	for user == "" || assistant == "" {
+		detail := v1Decode[clientapi.ThreadDetail](t, v1Call(t, server, http.MethodGet, "/v1/threads/console:q", "", http.StatusOK))
+		for _, item := range detail.Items {
+			if item.Turn == first.ID && item.Kind == clientapi.ItemMessage {
+				if item.Role == "user" {
+					user = item.ID
+				} else {
+					assistant = item.ID
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("thread never showed the exchange: %+v", detail)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	quote := func(item, command string, want int) []byte {
+		return v1Call(t, server, http.MethodPost, "/v1/turns", fmt.Sprintf(`{"thread":"console:q","input":"again","command_id":%q,"quotes":[{"thread":"q","item":%q}]}`, command, item), want)
+	}
+	for i, item := range []string{assistant + "#reasoning", user, "question:x"} {
+		if code := v1ErrorCode(t, quote(item, fmt.Sprint("bad", i), http.StatusBadRequest)); code != clientapi.CodeBadRequest {
+			t.Fatalf("quoting %s = %s", item, code)
+		}
+	}
+	quoted := v1Decode[clientapi.Turn](t, quote(assistant, "good", http.StatusOK))
+	if quoted.ID == "" {
+		t.Fatalf("quoting the reply = %+v", quoted)
+	}
+}
+
+// A thread's agent is a registered agent ID and nothing else: a trailing
+// prompt or an alias prefix is refused before anything is created.
+func TestClientV1ThreadAgentIsAnExactID(t *testing.T) {
+	server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
+	handler := &agentsHandler{}
+	server.SetConsole(console.New(handler, "owner", nil))
+	for _, agent := range []string{"codex write a file", "codex-extra", "@codex", "cod"} {
+		body := fmt.Sprintf(`{"id":"console:a","project":"alpha","agent":%q}`, agent)
+		if code := v1ErrorCode(t, v1Call(t, server, http.MethodPost, "/v1/threads", body, http.StatusBadRequest)); code != clientapi.CodeBadRequest {
+			t.Fatalf("agent %q = %s", agent, code)
+		}
+	}
+	if handler.inputs.Load() != nil {
+		t.Fatalf("a refused agent reached the coordinator: %v", handler.inputs.Load())
+	}
+	v1Call(t, server, http.MethodPost, "/v1/threads", `{"id":"console:a","project":"alpha","agent":"codex"}`, http.StatusOK)
+	if got, _ := handler.inputs.Load().(string); got != "/use codex" {
+		t.Fatalf("selection = %q", got)
+	}
+}
+
+// agentsHandler has codex registered and records what it was asked.
+type agentsHandler struct {
+	turntest.IdleCoordinator
+	inputs atomic.Value
+}
+
+func (h *agentsHandler) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
+	h.inputs.Store(req.Input)
+	return turn.Result{Text: "ok"}, nil
+}
+
+func (h *agentsHandler) InitializeConversation(context.Context, string, string, string) error {
+	return nil
+}
+
+func (h *agentsHandler) Context(_ context.Context, conversation string) (turn.Context, error) {
+	return turn.Context{Conversation: conversation, Agents: []turn.AgentChoice{{ID: "codex"}}}, nil
+}
+
+// stopHandler blocks every prompt until released and records the stops
+// it is given with their targets.
+type stopHandler struct {
+	turntest.IdleCoordinator
+	started chan string
+	release chan struct{}
+	stops   chan string
+}
+
+func (h *stopHandler) Handle(ctx context.Context, req turn.Request) (turn.Result, error) {
+	if req.Input == "/cancel" {
+		h.stops <- req.Admission.StopTarget
+		return turn.Result{Text: "stopped"}, nil
+	}
+	h.started <- req.Admission.ExchangeID
+	select {
+	case <-h.release:
+	case <-ctx.Done():
+	}
+	return turn.Result{Text: "done"}, nil
+}
+
+// An interrupt stops the turn it names. Once that turn has ended, a retry
+// with the same command_id returns the original control, and a new
+// interrupt is a conflict that leaves the next turn running.
+func TestClientV1InterruptIsBoundToItsTurnAndReplays(t *testing.T) {
+	h := &stopHandler{started: make(chan string, 4), release: make(chan struct{}), stops: make(chan string, 4)}
+	server := serve(t, readmodel.New(readmodel.Sources{}), ServerConfig{Token: testToken})
+	server.SetConsole(console.New(h, "owner", nil))
+	first := v1Decode[clientapi.Turn](t, v1Call(t, server, http.MethodPost, "/v1/turns", `{"thread":"console:i","input":"one","command_id":"t1"}`, http.StatusOK))
+	if got := <-h.started; got != first.ID {
+		t.Fatalf("started %s, want %s", got, first.ID)
+	}
+	stop := v1Decode[clientapi.InterruptResult](t, v1Call(t, server, http.MethodPost, "/v1/turns/"+first.ID+"/interrupt", `{"command_id":"stop-1"}`, http.StatusOK))
+	if stop.Control == nil || stop.Control.CommandID != "stop-1" {
+		t.Fatalf("interrupt = %+v", stop)
+	}
+	if target := <-h.stops; target != first.ID {
+		t.Fatalf("the stop was bound to %q, want %s", target, first.ID)
+	}
+	h.release <- struct{}{}
+	second := v1Decode[clientapi.Turn](t, v1Call(t, server, http.MethodPost, "/v1/turns", `{"thread":"console:i","input":"two","command_id":"t2"}`, http.StatusOK))
+	if got := <-h.started; got != second.ID {
+		t.Fatalf("started %s, want %s", got, second.ID)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		detail := v1Decode[clientapi.ThreadDetail](t, v1Call(t, server, http.MethodGet, "/v1/threads/console:i", "", http.StatusOK))
+		ended := false
+		for _, turn := range detail.Turns {
+			ended = ended || turn.ID == first.ID && turn.State != clientapi.TurnRunning && turn.State != clientapi.TurnQueued
+		}
+		if ended {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the first turn never ended")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	replay := v1Decode[clientapi.InterruptResult](t, v1Call(t, server, http.MethodPost, "/v1/turns/"+first.ID+"/interrupt", `{"command_id":"stop-1"}`, http.StatusOK))
+	if replay.Control == nil || replay.Control.ID != stop.Control.ID {
+		t.Fatalf("retry = %+v, want control %s", replay, stop.Control.ID)
+	}
+	if code := v1ErrorCode(t, v1Call(t, server, http.MethodPost, "/v1/turns/"+first.ID+"/interrupt", `{"command_id":"stop-again"}`, http.StatusConflict)); code != clientapi.CodeConflict {
+		t.Fatalf("a new interrupt for an ended turn = %s", code)
+	}
+	select {
+	case target := <-h.stops:
+		t.Fatalf("a stop reached the coordinator for %q after the turn ended", target)
+	case <-time.After(50 * time.Millisecond):
+	}
+	h.release <- struct{}{}
 }

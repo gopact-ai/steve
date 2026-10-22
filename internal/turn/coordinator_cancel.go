@@ -32,7 +32,25 @@ type Preface struct {
 	Told func()
 }
 
-func (c *Coordinator) cancel(ctx context.Context, conversationID string, selected agent.Agent) (Result, error) {
+// cancelExchange is a stop bound to one exchange: it reaches the turn
+// running that exchange, whichever agent runs it, and the children that
+// agent's tasks delegated. When no turn runs the exchange — it has ended,
+// or has not begun — nothing is stopped, and only that exchange's turn is
+// stopped should it begin within the pending window.
+func (c *Coordinator) cancelExchange(ctx context.Context, conversationID, exchange string, selected agent.Agent) (Result, error) {
+	agentID, running := c.runningExchange(conversationID, exchange)
+	if !running {
+		return Result{AgentID: selected.ID, Text: c.text.T(i18n.NoRunningTurn)}, nil
+	}
+	if owner, ok := c.catalog.Resolve(agentID); ok && owner.ID == agentID {
+		selected = owner
+	} else {
+		selected = agent.Agent{ID: agentID}
+	}
+	return c.cancel(ctx, conversationID, selected, exchange)
+}
+
+func (c *Coordinator) cancel(ctx context.Context, conversationID string, selected agent.Agent, target string) (Result, error) {
 	// The hold comes first and lasts the length of the stop: the turn
 	// cancelled next ends by delivering what its children left — even a
 	// child delegated and ended while it was being stopped — and a child
@@ -43,7 +61,19 @@ func (c *Coordinator) cancel(ctx context.Context, conversationID string, selecte
 		return Result{}, err
 	}
 	running := c.turnInFlight(conversationID, selected.ID)
-	result, turnErr := c.cancelTurn(ctx, conversationID, selected)
+	result, matched, turnErr := c.cancelTargetTurn(ctx, conversationID, selected, target)
+	if !matched {
+		// The turn this stop was bound to ended first: the agent's tasks
+		// now belong to whatever runs next, and this stop is not for them.
+		for _, tracked := range covered {
+			if stamp, ok := stamps[tracked.ID]; ok && !tracked.Held() {
+				if _, err := c.tasks.ReleaseHold(tracked.ID, stamp); err != nil {
+					slog.Error(fmt.Sprintf("turn: release hold on task #%s after an unmatched stop: %v", tracked.ID, err), "task", tracked.ID, "conversation", tracked.Channel, "agent", tracked.Member)
+				}
+			}
+		}
+		return result, nil
+	}
 	stopped, stopErr := c.stopDelegations(ctx, covered)
 	c.settleHolds(covered, stamps, stopped)
 	if !running && len(stopped) > 0 {

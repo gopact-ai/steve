@@ -1,7 +1,6 @@
 package clientapi
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -44,40 +43,44 @@ func (h *Handler) startTurn(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err)
 			return
 		}
+		if err := quotable(c, quote); err != nil {
+			writeError(w, err)
+			return
+		}
 		submission.Quotes = append(submission.Quotes, conversationapi.QuoteRef{Conversation: quote.Thread, ReplyID: quote.Item})
 	}
 	for _, ref := range req.Refs {
 		submission.Refs = append(submission.Refs, toMaterialRef(ref))
 	}
+	// The console names a project mismatch with its own error, so any
+	// other refusal (a bad quote, a material, a conflict) keeps its code.
 	exchange, err := c.Submit(r.Context(), submission)
-	if err != nil {
-		writeError(w, projectConflict(r.Context(), c, submission, err))
-		return
-	}
-	writeJSON(w, toTurn(exchange))
+	respond(w, toTurn(exchange), err)
 }
 
-// projectConflict names a refusal caused by the thread being bound to
-// another project than the client expected. The console refuses such a
-// submission without a sentinel error, so the binding is read again once
-// the submission has failed; an accepted command replayed later is still
-// answered from its receipt, as the console answers it.
-func projectConflict(ctx context.Context, c consoleapi.Console, s conversationapi.Submission, err error) error {
-	if s.ExpectedProject == "" || errors.Is(err, consoleapi.ErrCommandConflict) || errors.Is(err, consoleapi.ErrConsoleClosing) {
-		return err
+// quotable refuses a quote of an item the console cannot carry: only an
+// assistant reply's message, a milestone or a notice is quoted, by the
+// item ID the thread lists. Items derived from a reply (its reasoning,
+// tools, steps, changes), questions and the user's own messages are not.
+// An ID the thread does not hold is left to the console, which refuses
+// it as no longer in the transcript.
+func quotable(c consoleapi.Console, quote Quote) error {
+	if strings.Contains(quote.Item, "#") || strings.HasPrefix(quote.Item, "question:") {
+		return badRequest(fmt.Sprintf("item %s cannot be quoted: quote the reply's message item instead", quote.Item))
 	}
-	state, cerr := c.Context(ctx, s.Conversation)
-	if cerr != nil {
-		return err
+	for _, line := range c.Replies(threadID(quote.Thread)) {
+		if line.ID != quote.Item {
+			continue
+		}
+		if line.Kind == "sent" {
+			return badRequest(fmt.Sprintf("item %s is a user message and cannot be quoted", quote.Item))
+		}
+		if line.Silent {
+			return badRequest(fmt.Sprintf("item %s is not shown in the thread and cannot be quoted", quote.Item))
+		}
+		return nil
 	}
-	bound := ""
-	if state.Project != nil {
-		bound = state.Project.ID
-	}
-	if bound != s.ExpectedProject {
-		return refuse(http.StatusConflict, CodeProjectConflict, fmt.Errorf("expected project %s, but the thread is bound to %s", s.ExpectedProject, bound))
-	}
-	return err
+	return nil
 }
 
 func toMaterialRef(ref MaterialRef) material.Ref {
@@ -124,8 +127,11 @@ func (h *Handler) steerTurn(w http.ResponseWriter, r *http.Request) {
 	respond(w, toTurn(exchange), err)
 }
 
-// interruptTurn removes a queued turn, or stops a running one with the
-// console's /cancel control. A turn that has ended is a conflict.
+// interruptTurn removes a queued turn, or stops a running one with a
+// /cancel control bound to that turn: the stop reaches no other turn, and
+// does nothing when the turn ends before the stop runs. Retrying the same
+// command_id returns the same control, even after the turn has ended. A
+// new interrupt for a turn that has ended is a conflict.
 func (h *Handler) interruptTurn(w http.ResponseWriter, r *http.Request) {
 	c, err := h.console()
 	if err != nil {
@@ -146,26 +152,33 @@ func (h *Handler) interruptTurn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	turn := toTurn(exchange)
-	switch turn.State {
-	case TurnQueued:
-		if err := c.DeleteQueued(exchange.ID); err != nil {
+	if exchange.State == conversationapi.ExchangeQueued {
+		err := c.DeleteQueued(exchange.ID)
+		if err == nil {
+			turn := toTurn(exchange)
+			turn.State = TurnCancelled
+			writeJSON(w, InterruptResult{Turn: turn})
+			return
+		}
+		if !errors.Is(err, consoleapi.ErrExchangeNotQueued) {
 			writeError(w, err)
 			return
 		}
-		turn.State = TurnCancelled
-		writeJSON(w, InterruptResult{Turn: turn})
-	case TurnRunning:
-		control, err := c.Submit(r.Context(), conversationapi.Submission{Conversation: exchange.Conversation, Input: "/cancel", CommandID: req.CommandID})
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		stop := toTurn(control)
-		writeJSON(w, InterruptResult{Turn: turn, Control: &stop})
-	default:
-		writeError(w, refuse(http.StatusConflict, CodeConflict, fmt.Errorf("turn %s has already ended: %s", exchange.ID, turn.State)))
+		// It started meanwhile: stop it as a running turn.
 	}
+	// The console admits the control only while the target has not ended,
+	// and answers a retry of an admitted control from its receipt.
+	control, err := c.Submit(r.Context(), conversationapi.Submission{Conversation: exchange.Conversation, Input: "/cancel", CommandID: req.CommandID, StopTarget: exchange.ID})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	turn := toTurn(exchange)
+	if current, err := h.ownedTurn(r, c, exchange.ID); err == nil {
+		turn = toTurn(current)
+	}
+	stop := toTurn(control)
+	writeJSON(w, InterruptResult{Turn: turn, Control: &stop})
 }
 
 func (h *Handler) answerQuestion(w http.ResponseWriter, r *http.Request) {

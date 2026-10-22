@@ -83,6 +83,11 @@ type Submission struct {
 	// everything after it leaves the transcript, and this input is said
 	// in its place.
 	RewindTo string `json:"rewind_to,omitempty"`
+	// StopTarget binds a /cancel control to one exchange of the same
+	// conversation: it stops that exchange only, and does nothing once the
+	// exchange has ended. A new control naming an exchange that has ended
+	// is refused with ErrStopTargetEnded.
+	StopTarget string `json:"stop_target,omitempty"`
 }
 
 type Submissions interface {

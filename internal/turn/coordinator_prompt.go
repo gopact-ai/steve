@@ -31,7 +31,7 @@ import (
 func (c *Coordinator) prompt(parent context.Context, req Request, selected agent.Agent, prompt string) (result Result, err error) {
 	conversationID := req.Source.ConversationID
 	turnCtx, cancel := context.WithCancel(parent)
-	if !c.takeTurn(turnCtx, conversationID, selected.ID, cancel, req.Admission.Queue) {
+	if !c.takeTurn(turnCtx, conversationID, selected.ID, req.Admission.ExchangeID, cancel, req.Admission.Queue) {
 		cancel()
 		if c.skillsUpdating() {
 			return Result{}, UserError{Text: c.text.T(i18n.SkillsUpdating)}
@@ -57,7 +57,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	idleCtx, expire, touch := c.newIdleClock(turnCtx, selected.Node)
 	var ctx context.Context = idleCtx
 	defer expire()
-	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
+	if c.consumePendingCancel(sessionKey(conversationID, selected.ID), req.Admission.ExchangeID) {
 		return Result{}, context.Canceled
 	}
 	t := &chatTurn{c: c, req: req, selected: selected, clock: clock, prompt: prompt}

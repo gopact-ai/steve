@@ -42,7 +42,11 @@ func (c commands) dispatch(ctx context.Context, req Request, selected agent.Agen
 	case protocol.CommandStatus:
 		result = c.status(req, selected)
 	case protocol.CommandCancel:
-		result, err = c.cancel(ctx, req.Source.ConversationID, selected)
+		if target := req.Admission.StopTarget; target != "" {
+			result, err = c.cancelExchange(ctx, req.Source.ConversationID, target, selected)
+		} else {
+			result, err = c.cancel(ctx, req.Source.ConversationID, selected, "")
+		}
 	case protocol.CommandSkills:
 		result, err = c.skillsCmd(ctx, req, selected, rest)
 	case protocol.CommandTasks:
