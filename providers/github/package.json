@@ -1,0 +1,17 @@
+{
+  "name": "@gopact/steve-github-provider",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/cli.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@octokit/rest": "22.0.1",
+    "proper-lockfile": "4.1.2"
+  }
+}

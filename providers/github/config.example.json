@@ -1,0 +1,9 @@
+{
+  "steve_url": "http://127.0.0.1:7710",
+  "state_dir": "state",
+  "poll_seconds": 60,
+  "steve_token_env": "STEVE_GITHUB_CONNECTION_TOKEN",
+  "github_token_env": "STEVE_GITHUB_TOKEN",
+  "api_url": "https://api.github.com",
+  "repositories": ["owner/repository"]
+}

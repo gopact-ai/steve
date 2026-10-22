@@ -12,6 +12,9 @@ account authorization, SDK dependencies and private synchronization state remain
 with the provider process. Work subscriptions continue to use the server's
 existing conversation/project admission.
 
+The [GitHub provider](../providers/github/README.md) polls watched repositories and
+publishes pull request, review, check and default-branch workflow events the same way.
+
 ## Authority and enrollment
 
 The owner uses **Connections & Events → Connections** or
