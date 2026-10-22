@@ -1,109 +1,54 @@
-# Contributing
+# Contributing to Steve
 
-All changes go through a pull request. CI must be green before merging.
+Contributions use pull requests with a coherent scope, a description of the resulting behavior and relevant verification. Steve uses merge commits. Required checks must pass before merge.
 
-Complete a coherent change batch before running the full suites and fleet gates.
-During implementation, use formatting and compilation as needed. New tests should
-assert a requirement or reproduce a concrete failure, with expected behavior
-derived independently of the implementation. Reuse existing regression coverage;
-do not add tests merely to mirror forwarding code or increase coverage. Rerun
-affected checks when subsequent changes or failures invalidate their evidence.
+## Development environment
 
-Changes to delegation, landing, timeouts, snapshots, or node channels must also
-pass `make e2e-fleet` in the disposable fleet lab and the live-fleet client
-below before merging. Paste the complete output
-in the PR description, including the final `FLEET PASS`, conversation, task and
-attempt IDs. CI's local tests do not replace this check. Re-run the gate after
-changes that affect those paths.
+Use Go 1.27+, Git, Node.js and npm. Build the console and binaries from the repository root:
 
-Use a **merge commit** for PRs in **steve**. The **acp** repository uses **squash
-merges and linear history**, enforced by its ruleset; keep that policy there.
+```sh
+make console
+make build
+```
 
-## Workbench UI
+The React/Vite console is embedded into the Go binary. Rebuild it when changing frontend code and include the generated assets. Copy `config.console.example.json` to an ignored local config, set the owner and project path, and follow [Getting started](docs/getting-started.md) to run locally.
 
-Project-local design and frontend review skills are listed in
-[.agents/skills](.agents/skills/README.md). Follow the
-[workbench instructions](web/console/AGENTS.md) when changing the console UI.
+For UI work, follow [workbench instructions](web/console/AGENTS.md) and the [project skills](.agents/skills/README.md). Reuse shared components and verify meaningful interaction changes in a browser, including keyboard access, narrow windows and loading/error states.
 
-## Disposable fleet gates
+## Verification
 
-`make e2e-fleet` and `make e2e-autonomous` build an isolated host hub and Docker
-nodes with a deterministic ACP agent. They do not read the operator's hub config
-or exercise a real model. Linux, a local Docker engine and a matching Go toolchain
-are required; missing prerequisites fail the gate. The wrapper owns cleanup and
-has a 25-minute deadline. CI also runs these gates and failure-path cleanup checks.
+Tests should express requirements or reproduce a concrete failure, with expectations independent of the implementation. Reuse existing coverage. Complete a coherent change before running broad suites, and rerun checks when later changes invalidate their evidence.
 
-## Live fleet gate
+`make test` runs Go tests with the race detector. `make test-console` checks the frontend and browser interactions; install dependencies and Chromium first:
 
-Run from the repository root on the hub machine, with an existing hub and remote
-node already running. The gate uses the console API as the owner and checks the
-project's main directory locally. It does not build, deploy or restart the hub.
+```sh
+cd web/console
+npm ci
+npx playwright install chromium
+```
+
+The local Raft copy has its own verification command, documented in [third_party/raft](third_party/raft/README.md). Mail and GitHub providers have local `npm test` commands and opt-in integration checks in their READMEs.
+
+Changes to delegation, landing, timeouts, snapshots or node channels require both the disposable and live fleet checks below. Keep task, conversation and attempt IDs with the result; never include credentials or private inputs. Documentation-only changes need link, example and rendering checks rather than model executions.
+
+## Fleet verification
+
+`make e2e-fleet` runs an isolated Hub and Docker nodes with deterministic ACP agents. `make e2e-autonomous` checks placement, parallel delegation and result handoff in the same isolated environment. They require Linux, local Docker and a matching Go toolchain. Details are in [fleetlab](e2e/fleetlab/README.md).
+
+For a running real-model deployment, use:
 
 ```sh
 go run ./e2e/fleet
 ```
 
-`HUB` and `TOKEN` override `gateway.read_model_addr` and
-`gateway.read_model_token` in the ignored `config.e2e.json`. A wildcard listening
-address such as `0.0.0.0:7710` becomes `http://127.0.0.1:7710`. If no address is
-configured, the default is `http://127.0.0.1:7710`. Keep tokens out of PR output.
-In a new worktree, provide these environment variables or a local connection
-config; the gate never reads another worktree's config.
+The client uses `HUB` and `TOKEN`, or ignored `config.e2e.json`; it does not borrow another checkout's config. Defaults are `PROJECT=scratch`, `AGENT=claude`, `TARGET_NODE=node-b`, `TARGET_AGENT=shipper`. Override these for the authorized test environment.
 
-Defaults are `PROJECT=scratch`, `AGENT=claude`, `TARGET_NODE=node-b` and
-`TARGET_AGENT=shipper`. Set these environment variables to use another fleet, or
-pass flags directly:
+The live check creates a conversation and a unique file through remote delegation, then checks execution, changes, usage and landed contents. It leaves evidence in the project and has a ten-minute client deadline. Timeout does not cancel server work; inspect the original IDs and stop it in the console if needed. Include complete output through `FLEET PASS` in the PR for affected changes.
 
-```sh
-bash -lc 'go run ./e2e/fleet -hub http://127.0.0.1:7710 -project scratch -agent claude -target-node node-b -target-agent shipper'
-```
+`go run ./e2e/fleet -scenario autonomous` requires `kvtool/main.go` in the project's main directory, a remote `build` node, suitable agents, and `sha256sum`/`file` on the Hub. It checks fleet discovery, overlapping children, remote build artifacts, handoff and usage. Its maximum deadline is twenty minutes; include output through `AUTONOMOUS PASS`.
 
-Each run creates a fresh console conversation, binds the project and coordinator,
-and asks the remote agent to add a unique timestamped `e2e-fleet-*.txt` file with
-one line. It checks the persisted reply's completed delegation card, the child's
-attempt and change index, child token evidence in `/console/tasks/{task}`,
-healthy `/usage` reporting and agent totals, and the landed file's exact
-contents. `/usage` task rows aggregate root task trees; they do not by themselves
-prove that a particular child reported tokens. The file and conversation remain
-as evidence. Failures exit nonzero with the failing check and available IDs;
-a local write cannot satisfy the remote attempt check.
+## Documentation
 
-Expect about three minutes for this small task. The entire run has a ten-minute
-client deadline, including the synchronous `/console/send` request. `-timeout`
-can shorten it. A client timeout does not cancel server-side work; inspect the
-printed conversation/task IDs and use the console's `/cancel` if needed.
+The [documentation index](docs/README.md) separates user guides, deployment and protocol references. Public documents describe supported behavior and actual limitations. Keep design exploration, rollout notes and work logs outside the public source tree. Chinese and English READMEs share the same capabilities and naming: “You” is the person, “Me” is the agent, Steve is their collaboration companion.
 
-## Autonomous fleet gate
-
-```sh
-go run ./e2e/fleet -scenario autonomous
-```
-
-This uses the same running hub, owner token, local connection config, `PROJECT`
-and `AGENT` as the live delegate client. The project must contain `kvtool/main.go` in its main
-directory on the hub, and an online remote node must advertise the `build` tag.
-Provide agents that can compile and write documentation; the coordinator chooses
-them from the fleet instead of being given a target agent. The hub needs
-`sha256sum` and `file` for the local artifact checks.
-
-The coordinator must look up the fleet before delegating, create at least two
-successful child tasks with overlapping execution, place the build on a remote
-machine advertising `build`, and let Steve deliver the results back. The gate
-checks attempts, change indexes, landed release files and checksums, usage, and
-that the parent did not repeatedly poll `steve_await`. It leaves the conversation,
-release directory and README changes as evidence.
-
-The default and maximum client deadline is **twenty minutes**; `-timeout` can
-shorten it. Run flags directly with `go run ./e2e/fleet -scenario autonomous`.
-As with the ten-minute fleet gate, a client timeout does not cancel server-side
-work. Include the full output through `AUTONOMOUS PASS` and the conversation,
-task and attempt IDs when reporting this gate.
-
-CI runs gofmt, Go vet/race tests, frontend dependency checks, production builds
-and isolated browser interactions. Its fleet job runs disposable gates, not real-model live fleet gates.
-Run `make test` and `make test-console` locally; install the test browser with
-`cd web/console && npm ci && npx playwright install chromium` first. `make test`
-does not cover the local Raft copy; after changing `third_party/raft`, run
-`./scripts/test-raft.sh` as described in
-[third_party/raft/README.md](third_party/raft/README.md). Configuration, deployment and troubleshooting are in
-[operations](docs/operations.md).
+Do not turn a README into a list of implementation steps or CI jobs. Preserve exact field names and current commands in technical references, and distinguish accepted work from completed results.

@@ -1,23 +1,17 @@
-# 真机 UX 场景验证
+# 飞书交互验收
 
-这些脚本对**在跑的网关**和**真实飞书测试群**执行端到端场景，并断言用户可见面：
-卡片顺序、状态（完成/已取消）、@ 目标、`updated`/`deleted` 标志、阶段角标、时序。
-它们是 `go test` wire 防线之上的第二层——wire 测试证明机器对，这里证明人看到的对。
+这些脚本连接正在运行的 Steve 和真实飞书测试群，检查用户可见的消息、卡片与任务状态。它们会发送真实消息并触发 agent 执行，只用于明确授权的测试环境。
 
-前置条件：
-- 网关正在运行（单实例！先 `pgrep -af 'steve[0-9]+ run'` 确认）
-- `lark-cli` 已授权为提问人身份
-- 环境变量可覆盖默认目标：`STEVE_UX_CHAT`（测试群 chat_id）、`STEVE_UX_BOT`（bot open_id）
+需要运行中的单实例网关、以测试提问者身份授权的 `lark-cli`，以及 `STEVE_UX_CHAT`（群 chat ID）和 `STEVE_UX_BOT`（bot open ID）。使用前核对脚本的目标配置。
 
-每个脚本输出逐次轮询的原文与最终 `*-PASS` / `CHECK:` 行——这就是验证记录，
-跑完把它贴进当轮的记录/台账。脚本会向测试群发送真实消息。
+| 脚本 | 检查 |
+| --- | --- |
+| `queue-interrupt.sh` | 排队与打断 |
+| `milestone-recall.sh` | 进度消息、撤回与最终通知 |
+| `evolving-card.sh` | 同一张卡片更新 |
+| `order-badge-tail.sh` | 消息顺序、进度标记与旧卡片处理 |
+| `task-verbs.sh` | 暂停、继续与取消 |
+| `schedule.sh` | 一次性及周期定时工作 |
+| `offline-reminder.sh` | 长回合结束提醒；需要对应的 `offline_reminder_after` |
 
-场景：
-- `queue-interrupt.sh` — 排队为默认；`!` 打断替换
-- `milestone-recall.sh` — 里程碑卡（不 @ 人）+ channel_recall + 最终卡 @ 提问人
-- `evolving-card.sh` — 单卡演进（channel_update），断言恰一张卡且 updated=true
-- `order-badge-tail.sh` — 最终卡落在里程碑下方、几分之几角标、同族尾标、旧占位卡撤回
-- `task-verbs.sh` — `/tasks pause` 停下当前轮、`resume` 真的续跑、`cancel` 是终局
-- `schedule.sh` — `/at` 建的一次性任务到点自己开跑；`/every` 进列表、能取消
-- `offline-reminder.sh` — 长轮次结束后补一条 @ 提问人的纯文本提醒
-  （需要网关的 `offline_reminder_after` 比这轮耗时短，测试时设 `1m`）
+输出包含观测原文与 `*-PASS` / `CHECK:` 结果。记录原任务和会话身份，失败后核对仍在执行的工作；脚本退出不证明服务端任务停止。

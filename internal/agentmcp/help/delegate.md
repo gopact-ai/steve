@@ -1,40 +1,23 @@
-# 先看有谁
+# 委派
 
-`steve_fleet(requires?)` 列出别的 agent：各在哪台机器、机器有什么、此刻能不能接活。`requires` 用选择器过滤，每个 agent 都会被逐条判定并给出原因，看一眼就知道为什么某台不行：
+`steve_fleet(requires?)` 返回其他 agent 的机器、能力、可用性和拒绝原因。选择器包括 `harness:codex`、`tool:docker`、`hardware:gpu`、`model:claude*`、`skill:<name>`、`mcp:github`、`tag:<name>`。network、credential、a2a 是观察项，不参与放置。
 
-```
-harness:codex      AI 工具          tool:docker      机器上的命令
-hardware:gpu       硬件             model:claude*    模型（可通配）
-skill:<name>       技能             mcp:github       MCP 服务器
-tag:<name>         机器标签
-```
+## 创建子任务
 
-`network:*`、`credential:*` 目前只是观察项，不参与放置。
+`steve_delegate(goal, agent?, requires?, refs?, expect?)` 将有明确边界的目标交给独立会话。提供必要背景、所需资料和完成条件；子任务不继承父会话全部上下文。
 
-# 把目标写好
+可以指定 agent，或用 requires 选择目标。refs 使用工具支持的内容引用，如 `git <commit-or-branch>`、`blob <digest>`。返回的 task_id 和 state 是后续查询身份；短暂等待后子任务可能仍在执行。
 
-`steve_delegate(goal, agent?, requires?, refs?, expect?)`：
+子任务使用目标机器上的隔离工作树，由项目快照物化。快照按收录规则包含未提交文件；是否有 Git commit 不是文件可见性的依据。不要要求子任务通过创建嵌套仓库来提交 Steve 结果。以实际快照、引用和工作区状态确认输入。
 
-- `goal`：**一个**有边界的目标。子任务是全新会话，只有你给它的东西，所以写给一个完全没有你上下文的人也能动手：背景一句、要做什么、做到什么程度。一次交好几件事的委派通常收不回一个能用的结果。
-- `agent` 指名，或留空让 Steve 按 `requires` 放置——不确定谁合适时留空更好。
-- `refs`：子任务需要的指针——`git <commit-or-branch>`、`blob <digest>`。传引用比粘内容可靠：它拿到的是同一份东西，而且不占你的窗口。
-- `expect`：一句话说清什么算做好，会成为子任务的验收线；写了它，结果好不好一眼能判。
-- 立刻返回 `task_id` 和 `state`。
+## 结果与落地
 
-# 等结果
+父回合可以结束，等待 Steve 把持久化结果送回原会话并续跑，无需循环轮询。需要主动查询时使用 `steve_await(task_id, wait_seconds?)`，单次最多等待 50 秒。
 
-`steve_await(task_id, wait_seconds?)`：每次最多等 50 秒，`state` 还是 `running` 就再等。`done` / `failed` 后向用户报告它返回的 task_id、agent、node 与结果——这些都是工具给的，直接引用就好。
+子任务结果绑定到 `steve/<子任务>/result`。主目录可写时合并落地，目录忙碌时排队，冲突单独记录。子任务完成不等于文件已落地，报告时引用实际 task_id、agent、node、产物和落地状态。
 
-# 它在哪跑、结果去哪
+子任务共享父任务预算，受深度和环检测限制。父回合正常结束不停止子任务；用户停止或取消相关任务时，执行按平台停止规则处理。
 
-- 子任务在**它那台机器的隔离工作树**里跑：从项目当前的主目录快照物化出来，不是你眼前这个目录。你改了没推回主目录（git）的东西它看不到——需要它看到，先提交并推上去，再把 ref 传给它。
-- 它会被告知这一点，也会被告知不要在目录里 git init / commit：Steve 快照的是文件，目录里的嵌套仓库会被拍平。
-- 它的结果绑到 `steve/<子任务>/result`，排队等你这一回合释放主目录的写锁后**落地**到主目录（三方合并，冲突留档给人）。它不会直接改你的目录。
-- 它花的是你的任务预算。
+## 选择合适的工作
 
-# 自己做还是委派
-
-- 你这台机器就能做的，自己做更快也更可控。
-- 想"并行快一点"时先想合并成本：两个人改同一批路径会冲突。
-- 需要用户决定的事，问用户比让另一个 agent 猜强。
-- 委派最合适的场景：这件事需要你没有的东西——那台机器上的凭据、GPU、内网、某个 AI 工具或技能。
+独立路径、明确交付、需要另一机器工具或能力的工作适合委派。同一批文件的并行修改有合并成本。需要用户决定的范围、权限或目标不能让子 agent 猜测。

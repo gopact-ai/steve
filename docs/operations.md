@@ -1,842 +1,143 @@
-# Steve 运维指南
+# 部署与运维
 
-本文按当前代码说明配置、部署、门禁和排障。对象与权威边界见 [architecture.md](architecture.md)，首次使用见 [中文 README](../README.md) / [English README](../README.en.md)。
+Steve 可作为单机服务，也可作为持有复制账本的集群节点运行。桌面安装使用集群格式；独立服务适合明确管理配置文件的部署。使用者入口见[入门](getting-started.md)，字段和默认值见[配置参考](configuration.md)。
 
-桌面 App 的首次启动、完整节点接入、协调交接与容灾要求见 [桌面指南](desktop.md)。服务器上的集群首次初始化见[服务端集群初始化](#服务端集群初始化)。下方 `steve run` / `steve-node` 配置说明以独立部署为主。
+## 独立服务
+
+准备 Git、可用的 agent 登录和 ACP 适配器运行环境。源码构建使用 Go 1.27+、Node.js 与 npm：
+
+```sh
+make console
+make build
+cp config.console.example.json config.json
+chmod 600 config.json
+```
+
+填写 `gateway.owner_id` 和真实项目目录，保留需要的 agent/harness。内置适配器首次下载需要 npm registry，之后使用已校验的本地缓存。
+
+```sh
+./steve doctor -config /srv/steve/config.json
+./steve run -config /srv/steve/config.json
+```
+
+将 `run` 作为前台进程交给服务管理器，使用拥有该状态目录和 agent 登录的用户。相同状态目录只允许运行一个 Hub。日常检查使用控制台、`steve top -config ...` 或已认证的 `/state`；`doctor` 会准备状态并启动工具探针，不是在线只读检查。
 
 ## 服务端集群初始化
 
-`peer-init` 有两种互斥输入：`--state-dir` 创建新安装；`--config` 初始化已有服务并保留其配置与账本，见[服务模式的集群初始化](#服务模式的集群初始化)。新目录模式不能同时传入 `--config`、`--storage-level` 或地址、节点标识选项。
-
-在部署用户自己的新目录中创建集群首节点，无需启动原生 App：
+创建新安装：
 
 ```sh
-./steve peer-init --state-dir /home/me/steve-service
+steve peer-init --state-dir /home/me/steve-service
+steve peer --config /home/me/steve-service/config.json
 ```
 
-命令创建私有安装目录、稳定节点身份、集群 CA 与节点证书、控制台凭据、`config.json` 和 `config.json.cluster.json`。完整节点按 `restricted` 级别保存私有协作账本。JSON 输出包含 `config`、`cluster_config`、`cluster_id`、`node_id`、`token_file` 和 `endpoint_file`；凭据内容不写入输出。此命令只初始化文件，不启动服务、不监听端口。
+将路径替换为部署用户自己的目录。初始化只创建文件，不启动服务；输出配置、身份、凭据文件和地址文件的路径，不打印凭据值。新目录必须不存在或是权限为 `0700` 的空目录；重复初始化核对并保留原身份。
 
-目录可以不存在或为权限 `0700` 的空目录。重复执行会校验已有安装并保留身份、凭据、配置和已绑定端口；并发初始化或运行中的服务会使它拒绝执行。未知的非空目录、符号链接、非私有目录、损坏的身份或凭据不会被覆盖。它不接收旧 hub 配置，也不迁移旧账本。共享桌面安装格式不要求安装桌面应用。
+生成的 `config.json` 与 `config.json.cluster.json` 属于同一安装。保留身份、状态路径和控制台配置，通过控制台管理共享声明。完整节点保存私人协作账本，数据等级至少为 `restricted`；共享账本不支持 `sealed` 项目。
 
-首次启动前，可以在生成的 `config.json` 中配置 `nodes`、远端 `agents`、`projects` 等业务声明。保留生成的 `gateway.hub_id`、`state_path`、`read_model_addr` 和 `read_model_token`；不要用独立 hub 的配置文件覆盖它。然后交给服务管理器以前台进程运行：
-
-```sh
-./steve peer --config /home/me/steve-service/config.json
-```
-
-默认监听端口在首次启动时从 20000–29999 中随机选取（不含 SSH 接入使用的 25407–25426，低于 Linux 与 macOS 默认的系统临时端口范围，也不进入 Kubernetes NodePort 的默认范围 30000–32767），之后持久保存，重启继续使用；范围内找不到空闲端口时改由系统分配，并在日志中警告。此前安装的节点保留原来的端口。控制台始终绑定 loopback；地址见日志 `UI available at` 或输出指定的 `endpoint_file`。从另一台机器访问时，用 SSH 本地端口转发连接该地址，并使用 `token_file` 中的本地访问凭据登录。Raft 和 peer 通信沿用集群证书验证；初始化不会开启自动容灾。
-
-独立执行节点的 owner 绑定使用初始化输出的 **`cluster_id`**，不是 `node_id` 或配置文件中的 `gateway.hub_id`。为新执行节点配置 `hubs` 时使用该集群 ID，并把节点地址及其访问凭据配置到 hub 的 `nodes` 中。已有节点更换 owner 应使用现有的 `steve-node adopt` 流程，先确认旧 owner 已停止；`peer-init` 不会接管或重启它们。完整副本节点继续按[桌面多机接入流程](desktop.md)加入。
-
-服务运行后，通过控制台管理共享声明。跨节点插件准备由已提交的协调者授权，操作入口见[插件指南](plugins-local.md#部署到节点需要协调者)。初始化若在发布集群 authority 后、写 sidecar 前中断，重试会验证并恢复原身份；已有 `cluster/raft` 数据却丢失 sidecar 时会拒绝恢复，应找回原配置，不能重新生成身份。
-
-## 配置约定
-
-hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路径/config.json` 指定；node 读取 `node.json`，可用 `steve-node -config /绝对路径/node.json` 指定。两者都拒绝未知 JSON 字段。下文“默认”指省略字段时的代码行为，不是样例里显式写入的值。
-
-- hub 字段以 [internal/config/config.go](../internal/config/config.go) 的结构体为准；默认行为还涉及 agent、harness、project 和 task 的校验、初始化。
-- `Duration` 的 JSON 类型是字符串，使用 Go duration，如 `"30s"`、`"10m"`、`"1h30m"`，不能用数字代替。`[]` / `{}` 表示没有配置项。
-- 路径示例统一用 `/home/me`，需替换为实际部署用户。harness 的 `command`、`args`、环境变量值不经过 shell 展开，`command` 不要写 `~/...` 或启动时在线安装的命令。预先安装适配器，填实际绝对路径。
-- hub 会展开本机的 `state_path`、`home_path`、本机项目 `home.path`、技能路径和 harness `process_dir`；相对路径以进程启动目录为基准。远端项目路径保留原值，工作区副本要求绝对路径。跨机器路径一律填写目标机器上的绝对路径最清楚。
-- [config.console.example.json](../config.console.example.json) 是不带飞书的独立控制台最小配置；设置稳定的 `gateway.owner_id` 并替换项目路径即可使用。
-- [config.example.json](../config.example.json) 展示多机、区域、MCP 和调试配置，并非最小配置。模型和选项的 `<...>` 是占位符，必须替换为资源页实际报告的 ID/值，或删除对应字段；技能目录、地址和密钥同样需要替换。删除不用的 agent、项目、区域和服务；不用调试时删除 `debug_addr` / `debug_chat_id`。
-- [node.example.json](../node.example.json) 展示带 `hubs` 名称绑定和独立 MCP broker 的节点。将 `hubs` 里的 `hub-a` 换成实际 `gateway.hub_id`（控制台配置页可查看），不要使用显示机器名代替。只运行 node 时可删除 `mcp_broker`，保留空 `mcp_servers`；需要 MCP 时按[下文](#mcp-部署)选内置或独立 broker。
-
-### hub 顶层
-
-| 键 | 类型 | 默认 | 作用 | 示例 |
-|---|---|---|---|---|
-| `agents` | object<string, Agent> | 可为空 | 命名执行配置；非空时恰有一个默认 agent | `{"codex":{"harness":"codex","default":true}}` |
-| `projects` | object<string, Project> | 无，至少一项 | 声明项目；`home` 是保留项目名 | `{"work":{"home":{"path":"/srv/work"}}}` |
-| `harnesses` | object<string, Harness> | 无，至少一项 | hub 本机启动命令与权限策略；agent 引用的 harness 必须在此登记 | `{"codex":{"command":"/home/me/.local/bin/codex-acp"}}` |
-| `nodes` | object<string, Node> | `{}` | hub 如何连接远端机器；能力来自 node 的实际申报 | `{"host-3":{"addr":"10.0.0.3:7701","token":"replace-me"}}` |
-| `mcp_servers` | object<string, MCPServer> | `{}` | hub 本机 MCP 定义 | `{"docs":{"type":"http","url":"https://mcp.example.com/mcp"}}` |
-| `feishu` | Feishu object | 可省略；启用时凭据成对填写 | 可选飞书/Lark 连接、访问规则与该通道 owner | `{"app_id":"cli_...","app_secret":"replace-me","owner_open_id":"ou_..."}` |
-| `gateway` | Gateway object | 各字段按下表 | 状态目录、控制台、预算与协调设置 | `{"owner_id":"local-owner","read_model_addr":"127.0.0.1:7710"}` |
-| `policies` | Policies object | 各组采用下文默认值 | 执行、规划、快照与审阅限制 | `{"execution":{"step_timeout":"15m"}}` |
-
-### `projects.<name>`
-
-项目的主目录写在 `projects.<name>.home.path`；agent 没有自己的工作目录字段。配置中没有任何项目时加载会报错。
-
-| 键 | 类型 | 默认 | 作用 | 示例 |
-|---|---|---|---|---|
-| `home` | ProjectHome object | 必填 | 唯一主目录的机器和路径 | `{"node":"host-3","path":"/srv/lab"}` |
-| `home.node` | string | `""`（hub） | 主目录所属机器，非空必须在 `nodes` 中 | `"host-3"` |
-| `home.path` | string | 必填 | 主目录；远端路径不在 hub 上展开 | `"/srv/lab"` |
-| `level` | string | `"internal"` | 数据等级：`public`、`internal`、`restricted`、`sealed` | `"restricted"` |
-| `repo` | string | `"inplace"` | `inplace` 的交互回合直接改工作目录；`isolated` 使用隔离树并走落地 | `"isolated"` |
-| `skills` | string[] | `[]` | 固定到项目的技能目录，在 hub 读取 | `["/home/me/steve-skills/review"]` |
-| `durable_places` | string[] | `[]`（hub）；sealed 会补入 home 所在机器 | 哪些机器的产物回执算耐久；其中任一有效回执即可，`""` 表示 hub | `[""]` |
-| `external_remote` | string | `""`；克隆时尝试使用主目录根仓库的 remote | 控制台创建工作区副本时优先使用的克隆来源；加载配置本身不克隆 | `"git@github.com:example/work.git"` |
-| `grants` | object<string, string> | `{}` | principal（owner 标识或飞书 open_id）到 `none` / `read` / `write` / `admin`；owner 总是 admin | `{"ou_...":"write"}` |
-| `default_role` | string | public/internal 为 `write`，restricted/sealed 为 `none` | 未单独授权的用户角色，可显式设上述四种值 | `"none"` |
-| `workspaces` | ProjectWorkspace[] | `[]` | 主目录之外的已有工作区，一台机器一个；配置不会自动克隆，sealed 不允许副本 | `[{"node":"host-3","path":"/srv/work-copy"}]` |
-| `workspaces[].node` | string | `""`（hub） | 副本所在机器，不能是项目 home 所在机器 | `"host-3"` |
-| `workspaces[].path` | string | 必填 | 该机器上的副本绝对路径 | `"/srv/work-copy"` |
-
-任务创建时固定项目；切换会话项目不会把既有任务搬到新项目。计划步骤和委派使用隔离树；主目录直接修改不提供原子落地保证。
-
-项目页添加项目或工作区时填的是目录名，不是路径：每台机器把它拼在自己工作区的 `projects/` 下（机器的工作区目录来自接入时的设置，由该机器自己申报），留空就用项目名。同一个项目在每台机器上因此是同一段相对路径，换机器不会各写各的绝对路径。目录不存在时由目标机器创建，认领不再要求先手工建好。配置文件里保存的仍是各机器上的绝对路径。
-
-### `agents.<name>`
-
-| 键 | 类型 | 默认 | 作用 | 示例 |
-|---|---|---|---|---|
-| `aliases` | string[] | `[]`；agent ID 本身可用 | `@` 选择的别名，不能跨 agent 重复 | `["coder"]` |
-| `harness` | string | 必填 | 引用 `harnesses` 中的 AI 工具 | `"codex"` |
-| `node` | string | `""`（hub） | 固定执行机器，非空必须在 `nodes` 中 | `"host-3"` |
-| `model` | string | `""`（工具默认） | 开会话时尝试设置的偏好模型；实际模型仍以工具报告为准 | `"<model-id-from-fleet>"` |
-| `options` | object<string, string> | `{}` | 其他会话选择器的 ID → 值；必须是该 harness 暴露的选项 | `{"<option-id-from-fleet>":"<option-value-from-fleet>"}` |
-| `about` | string | `""` | 告诉规划器和其他 agent 这份配置适合什么工作 | `"编译与验证 Go 项目"` |
-| `requires` | string[] | `[]` | 执行所需能力选择器 | `["tool:go","hardware:gpu"]` |
-| `system_prompt` | string | `""` | 装配到会话指令中的文本 | `"报告验证结果与未解决问题。"` |
-| `skills` | string[] | `[]` | 固定到 agent 的技能目录，在 hub 读取 | `["/home/me/steve-skills/review"]` |
-| `mcp_servers` | string[] | `[]` | 引用执行机器本地的 MCP 名字；远端使用 node 上的同名定义 | `["filesystem","docs"]` |
-| `default` | boolean | `false`；整个配置恰有一个 `true` | 未指定 agent 时的默认选择 | `true` |
-
-能力选择器支持 `kind:id`、模式匹配、或、否定、版本条件，例如 `tool:go`、`model:claude*`、`tool:docker@>=27`；裸标签如 `build` 对应 `tag:build`。当前 harness、tool、hardware、model、skill、mcp、tag 可参与调度；network、credential、a2a 只展示，作为要求会返回 `NOT_SCHEDULABLE`。参见 [internal/ability](../internal/ability/) 与 [internal/roster](../internal/roster/)。
-
-### `harnesses.<name>`
-
-| 键 | 类型 | 默认 | 作用 | 示例 |
-|---|---|---|---|---|
-| `adapter` | string | `""` | 内置清单里的适配器名（`codex-acp`、`claude-agent-acp`）。steve 按钉死的版本取到缓存、校验后运行；与 `command` 二选一，不能并存，也不接受 `args` | `"codex-acp"` |
-| `command` | string | 与 `adapter` 二选一，必须给一个 | 自己预装的适配器可执行文件；hub 直接启动，不做 shell 展开 | `"/home/me/.local/bin/codex-acp"` |
-| `args` | string[] | `[]` | 直接传给命令的参数；`adapter` 不接受 | `[]`；kimi 为 `["acp"]` |
-| `process_dir` | string | `""`（hub 进程当前目录） | harness 进程启动目录；会话工作目录另由项目决定 | `"/home/me/steve-runtime"` |
-| `env` | string[] | `[]`（继承进程环境，再加入默认的隔离 home 设置） | 追加或覆盖进程环境，格式 `KEY=value` | `["PATH=/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin"]` |
-| `permission` | string | `"read"` | ACP 工具权限策略，见下表 | `"write"` |
-| `slots` | integer | `0`（不限） | hub 上该 harness 的并发会话槽位；远端使用 node 自己的值 | `4` |
-
-| 策略 | 当前行为 |
-|---|---|
-| `read` | 放行 read/search/fetch/think 类调用；其他调用有人工回调时询问，否则拒绝。 |
-| `write` / `auto` | 放行工具权限请求，优先选择 allow-once。 |
-| `always_allow` | 放行，优先选择 allow-always。 |
-| `deny` | 拒绝工具权限请求。 |
-
-策略作用于 harness 经 ACP 发出的权限请求，session mode 也会尝试与策略匹配。控制台会显示本轮工具权限请求和 Agent 提问，用户可按提供的选项批准、拒绝或取消；回答通过独立接口送回当前等待，不排在执行队列之后。未提供人工回调或策略直接拒绝时，不会自动放行。飞书回合使用卡片问答。控制台“待处理”里的 sealed 披露批准、对外动作对账是另外的机制。依据：[permission/broker.go](../internal/permission/broker.go)、[acphost/host.go](../internal/acphost/host.go)、[console/console.go](../internal/console/console.go)。
-
-
-### ACP 工作区文本文件
-
-Unix 上，Steve 本机运行的 Agent 与节点持有的会话支持 `fs/read_text_file`、`fs/write_text_file`。调用由 Agent 所在的执行机器处理，不会把远端路径交给桌面机器读写；旧式跨机器进程流不声明客户端文件能力。能力探针不获得工作区读写授权，Windows 暂不声明此能力。
-
-文件请求仅在已确认会话的原始活跃回合内受理。工作区固定为该会话打开时的目录及目录身份；更换目录后不能沿用旧会话授权。创建、历史加载、空闲、已经结束或旧代的回调会被拒绝，未结清的客户端文件操作也不会因 Agent 进程退出而被算作已停止。
-
-读取遵循 `read` 权限；写入遵循现有工具权限策略，`read` 策略下需本轮明确批准。拒绝或取消不执行写入，迟到批准不能用于后续回合。支持 UTF-8 全文读取、从 1 开始的行号和行数上限；行号 0 被拒绝，行数上限 0 返回空内容。单次返回文本及 JSON 编码响应、写入内容上限为 1 MiB，读取扫描上限为 8 MiB，超限明确失败而非悄悄截断；读取前几行不要求先读完大的文件尾部。
-
-路径必须位于原工作区，不能访问目录自身或工作区之外。仅处理常规文本文件：FIFO、设备、目录等会被拒绝；写入不追随目标符号链接，也不覆盖多硬链接文件。工作区内相对符号链接可用于读取，绝对符号链接不被跟随。现有文件权限被保留，操作系统禁止写入的文件不会通过替换绕过限制；新文件及父目录只在批准写入后创建。
-
-这些限制只约束 Steve 托管的文件回调，不把任意 Agent 程序变成操作系统沙箱，也不提供同用户之间、挂载点或硬链接的完整安全隔离。Agent 自身的文件操作仍取决于运行环境及其隔离策略。
-
-### ACP 节点终端
-
-Unix 节点持有的会话支持 `terminal/create`、`terminal/output`、`terminal/wait_for_exit`、`terminal/kill`、`terminal/release`。协调端和执行节点必须共同支持终端准入；旧协调端、能力探针、旧式跨机器进程流以及 Windows 不声明终端能力。命令在 Agent 所在节点执行，桌面客户端不启动命令，也不转移节点凭据。
-
-创建仅接受原始活跃回合，按 `execute` 工具权限审批；`read` 策略下每次创建需明确批准。命令和参数按 argv 执行，不隐式添加 shell。环境继承原 Agent 的运行配置，允许有界覆盖，但进程归属标记不能被覆盖。cwd 默认原工作区，显式 cwd 必须留在原工作区内。批准后再次核对原回合、目录身份及当前执行授权，拒绝或取消不会执行载荷。
-
-每个活跃回合最多保留 32 个终端资源，包括有效句柄和仍被工具记录引用的冻结输出；显式替换工具引用会回收无其他引用的冻结资源，不会删除其他工具仍引用的内容。创建和等待共用最多 8 个长期回调槽，停止与释放保留独立余量。每个活跃回合的终端输出预算为 1 MiB，默认每个终端 32 KiB；持续读取输出并保留合法 UTF-8 尾部，超限从头截断，编码响应也受界限约束。剩余预算不足时缩小新终端的保留容量，不停止读取输出。
-
-取消等待只结束等待者，不终止命令。创建已经准入后，创建 RPC 的取消不自动杀掉命令；回合取消、结束或会话停止会清理该回合的终端。kill 保留句柄和输出；release 确认原进程组及输出读取结束后才使句柄失效，已附加到工具记录的输出保留冻结快照。停止不能只凭直接子进程退出判定，未证明的清理继续阻止原执行释放。
-
-终端清理身份在载荷执行前写入节点会话记录；节点重启结束原 Agent 及所有保留终端，不恢复终端输出或重新执行旧命令。终端感知记录使用 format 2：不支持该格式的旧节点软件会拒绝加载，不能将回退二进制视为安全数据回滚。已有不使用终端的 format 1 记录继续可读，启动时不会批量改写。终端准入协商属于原会话配置，重复打开旧上下文不能改变它；需要改变该能力时应创建新会话。
-
-进程组归属和工作区回调限制不是操作系统沙箱，不保证停止任意主动脱离原进程组的程序或同用户隔离。需要更强隔离时，应使用执行环境自身的容器或沙箱策略。
-
-### `mcp_servers.<name>`
-
-| 键 | 类型 | 默认 | 作用 | 示例 |
-|---|---|---|---|---|
-| `type` | string | hub 无有效默认，需显式填写 | `stdio`、`http` 或 `sse` | `"stdio"` |
-| `command` | string | `""`；stdio 必填 | 本机已安装的 MCP 可执行命令 | `"/home/me/.local/bin/mcp-server-filesystem"` |
-| `args` | string[] | `[]` | stdio 命令参数 | `["/srv/work"]` |
-| `env` | object<string, string> | `{}` | stdio MCP 服务环境；与 harness 的 `env` 数组格式不同 | `{"LANG":"C.UTF-8"}` |
-| `url` | string | `""`；http/sse 必填 | 完整 HTTP(S) 服务地址 | `"https://mcp.example.com/mcp"` |
-| `headers` | object<string, string> | `{}` | http/sse 请求头 | `{"Authorization":"Bearer replace-me"}` |
-
-hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留在 node 或独立 broker，由 broker 绑定到执行。内置的 Steve MCP 工具经 node 的 loopback 反向通道回 hub，与这里配置的外部 MCP 是两件事。
-
-内置反向 HTTP 通道每个请求只使用一条流，不透明重发工具调用。已撤销凭据的真实 `401` 不会因为上游先结束请求而改成“hub 不可达”；实际连接失败仍返回可重试的 `503`。请求总输入预算为 1 MiB，包含最终应答到达后的未读尾部；已知长度超限时直接拒绝，未知长度在响应已开始后超限会终止该响应而不是伪装完整成功。响应本身可以流式超过此大小，生命周期由调用者取消或响应结束控制。早应答后不再向 hub 上传请求体，只在总预算内读取客户端尾部以观察关闭；响应结束、关闭或取消时回收上传及响应工作。该连接不接收第二个请求。现有多路流的底层写入期限仍适用，不构成更短的严格实时保证。
-
-### feishu
-
-| 键 | 类型 | 默认 | 作用 | 示例 |
-|---|---|---|---|---|
-| `app_id` | string | 必填 | 飞书/Lark 自建应用 ID | `"cli_..."` |
-| `app_secret` | string | 必填 | 应用密钥 | `"replace-me"` |
-| `domain` | string | `"feishu"` | `feishu` 或 `lark` | `"lark"` |
-| `owner_open_id` | string | `""` | 飞书/Lark owner；也是未设置 `gateway.owner_id` 时的控制台 owner 后备值 | `"ou_..."` |
-| `allowed_senders` | string[] | `[]` | `group_policy=allowlist` 时的群聊发送者名单，空名单拒绝全部群聊；私聊不使用此名单 | `["ou_..."]` |
-| `blocked_senders` | string[] | `[]` | 群聊和私聊均拒绝这些发送者，优先于其他规则 | `["ou_..."]` |
-| `group_policy` | string | `"open"` | `open` 允许群聊，`allowlist` 仅允许名单命中者（空名单拒绝全部），`disabled` 禁止群消息；阻止名单始终优先 | `"disabled"` |
-| `allow_unmentioned` | boolean | `false` | 接收未 @ bot 的群消息，再由参与策略决定是否响应 | `true` |
-
-`feishu.enabled` 可显式启停适配器；省略时由凭据是否齐全决定。停用可以保留凭据，但默认通道必须指向仍启用的通道。控制台操作见 [Channel 设置](#channel-设置)。
-
-### gateway
-
-| 键 | 类型 | 默认 | 作用 | 示例 |
-|---|---|---|---|---|
-| `hub_id` | string | 首次从状态目录生成并持久化的 ID | Hub 的稳定身份；不能借修改 ID 接管其他 Hub 的项目 | `"hub-a"` |
-| `peers` | object<string, HubPeer> | `{}` | 稳定 Hub ID 对应的配置记录；每项含 `name`、`url`、`token`，URL 禁止用户凭据、查询参数和 fragment；不代表在线状态，不启用自动接管 | `{"hub-b":{"url":"https://hub-b.example","token":"replace-me"}}` |
-| `owner_id` | string | 后备到 `feishu.owner_open_id` | 控制台 owner 标识；独立控制台需要有效 owner | `"local-owner"` |
-| `locale` | string | `lark` 域为 `en`，其他为 `zh` | 系统回复默认语言，接受 `""` / `zh` / `en`；浏览器语言另行选择 | `"en"` |
-| `default_channel` | string | 启用飞书时 `"feishu"`，否则 `"console"` | 填充授权消息锚点缺省的通道；只能指向已配置通道，不改变收件人 | `"console"` |
-| `node_binary` | string | `""` | 引导脚本可下载的 steve-node 文件；不填则需预先复制 | `"/home/me/steve-bin/steve-node"` |
-| `prompt_timeout` | Duration string | `"10m"`；非正值也取此默认 | 一轮没有文本、工具调用或报告的静默超时；不是总时长上限 | `"15m"` |
-| `state_path` | string | `"~/.steve/state.json"` | 旧状态文件路径，其父目录决定账本、运行状态和锁的位置 | `"/home/me/.steve/state.json"` |
-| `home_path` | string | `state_path` 父目录下的 `home` | Steve 身份、用户档案与全局记忆目录；保留项目 `home` 的主目录 | `"/home/me/.steve/home"` |
-| `task_max_turns` | integer | `0`（不限） | 为新任务设置最大轮数 | `100` |
-| `task_max_elapsed` | Duration string | `"0s"`（不限） | 为新任务设置执行耗时预算 | `"2h"` |
-| `offline_reminder_after` | Duration string | `"15m"`；零取默认 | 长回合结束且用户期间未继续说话时，额外通知；负数关闭 | `"-1s"` |
-| `debug_addr` | string | `""`（关闭） | 调试消息/卡片回调注入接口，只允许 loopback 地址：配置文本须是 loopback IP 或不区分大小写的 `localhost`，绑定后实际地址也须是 loopback IP（`localhost` 被解析到其他地址时不满足）；任一检查不过时调试端点不启动，Hub 照常运行，只记一条 ERROR 日志说明原因；没有 token，本机其他用户和进程都能注入消息，仅在单用户机器上调试时开启 | `"127.0.0.1:7711"` |
-| `debug_chat_id` | string | `""` | 调试注入的默认飞书 chat ID | `"oc_..."` |
-| `capabilities` | string[] | `[]` | hub 的兼容能力标签 | `["build"]` |
-| `tools` | string[] | `[]` | hub 需要观测的命令 | `["git","go","gh"]` |
-| `declares` | string[] | `[]` | 运维声明的能力，不能替代工具的实际观测 | `["network:internal"]` |
-| `read_model_addr` | string | `"127.0.0.1:7710"` | 控制台、状态快照和事件流监听地址；首尾空白会去掉，只含空白时取默认值 | `"0.0.0.0:7710"` |
-| `read_model_token` | string | `""`（loopback 监听时生成 `<状态目录>/loopback-token`） | 控制台/API 的 bearer token，拥有 owner 操作权限；首尾空白会去掉，只含空白视为未设；非 loopback 监听必填，loopback 监听未设时 Hub 首次启动生成并沿用（loopback 监听的判断见[控制台与凭据](#控制台与凭据)） | `"replace-me-with-a-long-random-token"` |
-| `planner` | string | `""`（规则规划器） | `/plan` 的拆解 agent；不填时开放目标按一步处理 | `"claude"` |
-| `level` | string | 按 hub 需耐久保存的项目推导，至少 `restricted` | hub 的数据等级；默认排除 home 在远端的 sealed 项目 | `"restricted"` |
-| `region` | string | `"default"`（账本的本地区域） | 本 hub 的租约签发区域 | `"east"` |
-| `regions` | object<string, Region> | `{}` | 其他区域的租约签发方 | `{"west":{"url":"http://10.0.0.9:7720","token":"replace-me"}}` |
-| `issuer_addr` | string | `""`（关闭） | 对其他区域提供本地租约签发 HTTP 服务；Hub 启动时绑定该地址，绑定失败时 Hub 不启动（错误见[排障](#排障)），启动日志 `steve: issuing region <区域> leases on <地址>` 记录实际监听的地址 | `"0.0.0.0:7720"` |
-| `issuer_token` | string | `""` | 本地租约签发服务认证 token | `"replace-me-with-an-issuer-token"` |
-| `direct_transfer` | boolean | `false` | 允许持有产物的 node 在 hub 授权下直传给另一 node；关闭时经过 hub | `true` |
-| `default_project` | string | 只有一个项目时自动选它，否则 `""` | 新会话未选择项目时的绑定；owner 私聊（飞书私聊和控制台）默认使用保留项目 home。绑定前，控制台和内置工具按同一规则显示会话将绑定的项目；本进程还没收到消息的飞书会话分不出群聊或私聊，显示为未绑定 | `"work"` |
-| `default_approval` | string | `""`（不设置） | 全局默认审批策略：`ask`、`auto`、`full`，见下文 | `"auto"` |
-
-任务预算的 **0 是不限**；设置正值才施加限制，子任务从父任务剩余预算分配。`prompt_timeout`、任务预算、node 续接宽限和 e2e 客户端截止时间是不同的时钟。
-
-`prompt_timeout` 到期时，node 托管的一轮（包括 delegate 子任务）会请求节点停止原生命令，节点确认停止后按超时结束；节点无法确认停止时保留执行，须通过原任务恢复入口核实。会话接续观察节点保留的执行时，同样受这个静默超时约束。Agent 给出结果后，这个时钟不再计时，结果的提交和清理不会因为静默超时被打断；node 托管的一轮在结果与超时同时到达时，按已给出的结果完成。出结果后的收尾另有上界：delegate 子任务的结果发布、提交和终态转换须在给出结果后一个 `prompt_timeout` 内完成，超出时 hub 上的执行按失败结束，node 托管的执行保留、须通过恢复入口核实；随后把结果交回父任务（落入父任务工作目录或排队待落地）时，静默超时重新计满一整段；落入父任务工作目录被静默超时切断时，已提交的结果改为排队待落地（写入落地队列不受静默超时约束，以 15 秒为限），子任务按成功结束，node 托管的子任务也一样，父任务看到尚未落地的原因和结果已排队待落地的说明，之后由落地队列落入并告知父任务。会话关闭、租约归还等清理不受这两个时钟约束，各步另以 15 秒为限；对话轮次的结果提交以 2 分钟为限。
-
-### 默认审批策略
-
-依据：[internal/approval/approval.go](../internal/approval/approval.go)。`gateway.default_approval` 是一份意图，而不是某个 AI 工具的模式名：Codex 把审批档位叫 `read-only` / `agent` / `agent-full-access`，Claude Code 叫 `default` / `acceptEdits` / `auto` / `bypassPermissions`，同一个意图在会话打开时才被换算成该 agent 自己的说法。`ask` 是每步都要人确认，`auto` 是工作区内自行动手、越界再问，`full` 是不再打断。规划类模式（如 Claude Code 的 `plan`）不属于审批档位，任何意图都不会把 agent 放进去。
-
-在「设置 → 审批与权限」设置全局默认，在「资源 → Agent → 默认审批模式」设置 Agent 默认。Agent 使用 AI 工具实际提供的审批选项；尚未取得选项或工具不提供该能力时，界面说明原因并保留已有配置，不猜测可选值。
-
-生效顺序是：会话单独设置 > Agent 的原生审批选项（如 `options.mode`）> 全局默认 > AI 工具默认。全局设置只是默认值，不强制覆盖 Agent 或会话。保存后不需要重启 Hub，在后续打开或恢复原生会话时应用，不打断正在执行的任务；工具没有对应档位时保持原样并记录日志。导入的原生会话保留其原有设置，不自动套用默认。
-
-「恢复 Agent 跟随」是独立操作，需要确认后才调用 `POST /console/agents/approval`，清除 Agent 单独设置的审批模式，并报告已修改、已跟随和没有对应档位的 Agent。此操作不清除会话单独设置；仅保存全局默认不会触发它。
-
-### policies
-
-依据：[internal/config/policies.go](../internal/config/policies.go)。载入配置时，省略或为零的策略值采用以下默认值；控制台编辑策略时要求显式正值，避免把零误认为关闭限制。所有策略变更在重启 Hub 后生效。
-
-| 键 | 类型 | 默认 | 含义 |
-|---|---|---|---|
-| `execution.step_timeout` | Duration string | `"15m"` | 单个执行步骤的超时 |
-| `execution.verify_timeout` | Duration string | `"10m"` | 验证执行的超时 |
-| `planning.timeout` | Duration string | `"3m"` | 规划请求超时 |
-| `planning.attempts` | integer | `2` | 规划尝试次数 |
-| `snapshot.max_files` | integer | `20000` | 快照文件数量上限 |
-| `snapshot.max_bytes` | integer bytes | `2147483648`（2 GiB） | 快照总字节上限 |
-| `snapshot.max_file_bytes` | integer bytes | `209715200`（200 MiB） | 快照单文件上限，不能大于总字节上限 |
-| `review.max_changes` | integer | `500` | 返回的变更文件数量上限 |
-| `review.max_diff_bytes` | integer bytes | `204800`（200 KiB） | Diff 读取上限 |
-| `review.max_file_bytes` | integer bytes | `204800`（200 KiB） | 源码文件读取上限 |
-| `review.max_entries` | integer | `2000` | 目录列表条目上限 |
-| `review.timeout` | Duration string | `"30s"` | 审阅读取超时 |
-
-表中键位于顶层 `policies` 下，例如 `policies.snapshot.max_bytes`。整数要求 1–9007199254740991；时长必须为正。上限导致的截断会在对应读取结果中标记，不能把截断内容当作完整文件。
-
-
-### `nodes.<name>` 与 `gateway.regions.<name>`
-
-| 键 | 类型 | 默认 | 作用 | 示例 |
-|---|---|---|---|---|
-| `nodes.<name>.addr` | string | 必填 | hub 拨号目标 | `"10.0.0.3:7701"` |
-| `nodes.<name>.token` | string | 必填 | node 验证 hub 的 token；与目标 node 配置对应 | `"replace-me"` |
-| `nodes.<name>.dial_timeout` | Duration string | `"10s"` | TCP 拨号超时；连接上下文也可能施加更短期限 | `"5s"` |
-| `nodes.<name>.level` | string | `"internal"` | 该机器允许承载的最高项目等级，由 hub 赋予 | `"restricted"` |
-| `nodes.<name>.region` | string | hub 自己的区域 | 机器资源的租约签发区域；外区域须列在 `gateway.regions` | `"west"` |
-| `nodes.<name>.peer_addr` | string | `addr` | node 直传时其他机器访问它的地址 | `"10.0.0.3:7701"` |
-| `gateway.regions.<name>.url` | string | `""`，使用时需有效地址 | 外区域租约签发 HTTP 地址 | `"http://10.0.0.9:7720"` |
-| `gateway.regions.<name>.token` | string | `""` | 外区域服务的 bearer token | `"replace-me"` |
-
-### node.json
-
-依据：[cmd/steve-node/main.go](../cmd/steve-node/main.go)、[internal/node/serve.go](../internal/node/serve.go)。hub 的 `nodes` 只是连接配置，这张表才是执行机器自己的配置。
-
-| 键 | 类型 | 默认 | 作用 | 示例 |
-|---|---|---|---|---|
-| `name` | string | 必填 | node 申报的名字，应与 hub 中登记的机器名一致 | `"host-3"` |
-| `listen` | string | `"0.0.0.0:7701"` | 接收 hub 连接；`-listen` 参数可覆盖 | `"10.0.0.3:7701"` |
-| `token` | string | 必填，即使配置了 `hubs` | 通用 hub 认证 token；若也列在 `hubs`，名称同样受约束 | `"replace-me-with-a-long-random-secret"` |
-| `hubs` | object<string, string> | `{}` | 稳定 Hub ID → token；表中的 token 必须匹配该 ID，不会自动禁用未列入表的顶层 token | `{"hub-a":"replace-me-with-a-long-random-secret"}` |
-| `harnesses` | object<string, HarnessSpec> | 必填，至少一项 | 该机器可启动的 ACP 工具 | `{"codex":{"command":"/home/me/.local/bin/codex-acp"}}` |
-| `harnesses.<name>.adapter` | string | `""` | 内置清单里的适配器名；node 自己取到 `state_dir/adapters` 并校验后运行。与 `command` 二选一 | `"codex-acp"` |
-| `harnesses.<name>.command` | string | 与 `adapter` 二选一 | 本机自己预装的可执行文件 | `"/home/me/.local/bin/codex-acp"` |
-| `harnesses.<name>.args` | string[] | `[]` | 命令参数；`adapter` 不接受 | `[]` |
-| `harnesses.<name>.env` | string[] | `[]`（继承 node 环境，再加入默认的隔离 home 设置） | harness 环境覆盖 | `["PATH=/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin"]` |
-| `harnesses.<name>.process_dir` | string | `workspace_root`；后者为空时用进程当前目录 | harness 启动目录，与会话工作目录不同 | `"/home/me/steve-runtime"` |
-| `harnesses.<name>.models` | string[] | `[]` | 该工具在本机提供的模型声明；真实可用模型仍以会话报告为准 | `["<model-id-from-this-harness>"]` |
-| `harnesses.<name>.slots` | integer | `0`（不限） | node 上该 harness 的并发会话槽位 | `4` |
-| `capabilities` | string[] | `[]` | 兼容能力标签，`build` 等价于 `tag:build` | `["build"]` |
-| `tools` | string[] | `[]` | 要在机器上观测的命令 | `["git","go","docker"]` |
-| `mcp_servers` | object<string, MCPSpec> | `{}` | 内置 broker 管理的 MCP 定义；不能与有效 `mcp_broker` 并用 | `{"docs":{"type":"http","url":"https://mcp.example.com/mcp"}}` |
-| `mcp_servers.<name>.type` | string | `"stdio"` | MCP 传输：stdio/http/sse；此默认与 hub 不同 | `"http"` |
-| `mcp_servers.<name>.command` | string | `""`；stdio 需要有效命令 | node 本地 MCP 命令，由 broker 启动 | `"/home/me/.local/bin/mcp-server-filesystem"` |
-| `mcp_servers.<name>.args` | string[] | `[]` | stdio 命令参数 | `["/srv/work"]` |
-| `mcp_servers.<name>.env` | object<string, string> | `{}` | stdio 服务环境，留在 node/broker | `{"LANG":"C.UTF-8"}` |
-| `mcp_servers.<name>.url` | string | `""`；http/sse 需有效地址 | broker 代理的 MCP 上游地址 | `"https://mcp.example.com/mcp"` |
-| `mcp_servers.<name>.headers` | object<string, string> | `{}` | broker 在 HTTP 转发中注入的头 | `{"Authorization":"Bearer replace-me"}` |
-| `declares` | string[] | `[]` | 运维声明的能力 | `["network:internal"]` |
-| `mcp_broker` | BrokerRef object/null | `null` | 选择独立进程中的 broker；不配置时使用内置 broker | `{"socket":"/home/me/.steve-mcp/mcp.sock","token":"replace-me"}` |
-| `mcp_broker.socket` | string | `""`（不启用独立 broker） | 本机 Unix socket；填写绝对路径 | `"/home/me/.steve-mcp/mcp.sock"` |
-| `mcp_broker.token` | string | `""` | broker 控制 token，应与 mcp.json 相同 | `"replace-me-with-a-separate-broker-token"` |
-| `workspace_root` | string | `""` | 物化工作树的根目录，以及未指定目录的命令/进程的后备目录 | `"/home/me/steve-work"` |
-| `state_dir` | string | `"~/.steve-node"` | 隔离 home、进程日志、技能包、取来的适配器（`adapters/`）、节点归属与 broker 状态 | `"/home/me/.steve-node"` |
-
-`Source`、`SessionGrace`、`FaultDropAfter` 的 JSON 标签是 `-`，不能写进 node.json。`Source` 来自 `-config`；后两项的命令行环境入口如下：
-
-| 环境变量 | 默认 | 作用与示例 |
-|---|---|---|
-| `STEVE_NODE`（hub） | 主机名；无法读取时 `local` | 固定 Hub 所在机器的显示名称；不改变稳定 `gateway.hub_id` 或节点归属。 |
-| `STEVE_NODE_SESSION_GRACE`（node） | `10m` | 进程流续接宽限，必须为正 duration，例如 `15m`；通过 advert 告知 hub。 |
-| `STEVE_NODE_FAULT`（node） | 关闭 | 测试故障注入，例如 `drop-hub-after:20s`；会切断 hub 连接，不用于正常部署。 |
-
-### 独立 broker 的 mcp.json
-
-仅 `steve-node mcp-broker -config mcp.json` 使用，依据 [internal/node/mcpbroker.go](../internal/node/mcpbroker.go)。
-
-| 键 | 类型 | 默认 | 作用 | 示例 |
-|---|---|---|---|---|
-| `socket` | string | 必填 | 供 node 和 MCP launcher 访问的 Unix socket | `"/home/me/.steve-mcp/mcp.sock"` |
-| `token` | string | 必填 | 控制接口认证，与 node 的 `mcp_broker.token` 对应 | `"replace-me-with-a-separate-broker-token"` |
-| `mcp_servers` | object<string, MCPSpec> | `{}` | 同 node MCP 字段表中的完整服务定义；密钥放这里 | `{"docs":{"type":"http","url":"https://mcp.example.com/mcp"}}` |
-| `workspace_root` | string | `""`（broker 当前目录） | stdio 服务的启动目录 | `"/home/me/steve-work"` |
-| `port_file` | string | `""`（不持久化代理端口） | 保存 HTTP loopback 代理端口 | `"/home/me/.steve-mcp/proxy.port"` |
-| `launcher` | string | broker 自己的可执行文件 | agent 调用 `mcp-launch` 的 steve-node 路径 | `"/home/me/steve-bin/steve-node"` |
-| `socket_mode` | integer | `0` → `0600` | socket 权限位；JSON 用十进制，跨用户共享组的 `0660` 为 432 | `432` |
-
-## 部署 hub
-
-以下命令用于新部署。示例用户是 `me`，目录按实际环境替换。
-
-内置清单里的适配器（`codex-acp`、`claude-agent-acp`）不用预装：harness 写 `"adapter": "codex-acp"`，hub 首次启动时取到 `state_path` 父目录下的 `adapters/`，按编译进二进制的摘要校验后运行。首次取用需要能访问 npm registry 和本机的 `npm`；之后命中缓存就不再联网。摘要对不上、清单里没有这个名字、或者装不上，都是启动失败并说明原因——不会退回去随便跑一个版本。
-
-自己编译或另有来源的适配器改写 `command`（绝对路径）并把 `args` 填 `[]`，两者只能给一个。这种情况下自行安装：
-
-```bash
-npm install -g --prefix /home/me/.local @agentclientprotocol/codex-acp
-```
-
-只使用一个工具时只保留对应 agent/harness。工具本身的认证与代理在部署用户环境中准备，先在登录 shell 里确认。独立控制台按 [README](../README.md#从控制台开始) 构建、复制 `config.console.example.json`、修改路径与 owner，再执行 `steve doctor` → `steve run` → `steve dash -config config.json`；`steve setup` 用于配置可选的飞书/Lark 通道。
-
-`make build` 使用 `CGO_ENABLED=0` 构建 `steve` 和 `steve-node`；控制台静态文件已嵌入 Go 源码目录，普通后端构建不需要重新构建前端。修改前端时先执行 `make console`，再构建二进制。
-
-部署到固定目录后，可在登录 shell 前台运行：
-
-```bash
-bash -lc 'exec /home/me/steve-bin/steve run -config /home/me/steve-bin/config.json'
-```
-
-hub 对 `state_path` 的父目录持单例锁，同一状态目录不能同时启动两个 hub。配置由 setup 保存时权限为 `0600`；手工复制的含密钥文件也设为 `0600`。不要用 `doctor` 作为线上只读健康检查：它会准备运行目录、打开账本、声明项目并启动 agent 探针；已有 hub 的日常检查用控制台、`steve top -config <config>` 或 `/state`。
+监听端口首次选取后持久保存，控制台绑定 loopback。实际地址见 `endpoint_file` 或日志 `UI available at`。初始化不启用自动容灾。执行节点的 owner 绑定使用输出中的 **cluster ID**。
 
 ### 服务模式的集群初始化
 
-需要向远端节点部署插件时，将现有服务初始化为集群 peer。先停止服务并备份配置和完整状态目录，再运行：
+已有独立服务先停止并备份完整状态和配置，然后执行：
 
 ```sh
-steve peer-init -config /home/me/steve-bin/config.json -storage-level restricted
-steve run -config /home/me/steve-bin/config.json
+steve peer-init -config /srv/steve/config.json -storage-level restricted
+steve run -config /srv/steve/config.json
 ```
 
-`peer-init` 要求支持进程锁的 Unix 平台；其他平台会明确拒绝初始化。它保留原配置、项目、任务账本、owner 和 hub ID；以原 hub ID 作为 cluster ID，原来采用该 hub 的节点仍使用原凭据。命令生成独立 peer 身份、私有证书及 `<config>.cluster.json`，随后 `steve run` 自动发现此文件并激活集群应用。原本的本机 harness 和 MCP 定义写入该 peer 的私有 worker 配置；固定适配器在启动时按原版本解析。原有 harness 权限策略作为共享执行策略保留，在协调者切换和配置修改后仍生效；未配置策略的新工具仍默认为只读。已有会话和运行目录保留，新执行遵循集群会话的准入规则。输出只有配置路径和公开身份。控制台沿用原来的 token，要求至少 32 个字符且不含空白，监听地址必须为 loopback；需要调整控制台监听时可在初始化时传 `-ui-address 127.0.0.1:7710`。
+此模式保留原 Hub ID、owner、项目、账本和凭据，并生成集群 sidecar；`run` 检测到 sidecar 后运行集群应用。控制台必须使用 loopback，token 至少 32 字符且不含空白。需要调整监听时传入 `-ui-address 127.0.0.1:7710`。
 
-必须显式选择 `restricted` 或 `sealed`，表示这台机器可保存私有协作账本。默认 Raft 和 peer HTTPS 在 loopback 自动选择端口（20000–29999，不含 25407–25426），适用于单个协调者管理远端 worker；若要加入其他完整 peer，初始化时用 `-raft-address <可达地址>:7801 -peer-address <可达地址>:7802` 指定本机可绑定且互相可达的地址。`peer-init` 只初始化第一个 peer；添加其他成员使用控制台现有的机群加入流程。
+初始 Raft 与 peer 地址为 loopback。加入其他完整节点需要互通地址或桌面的 SSH 接入，可用 `-raft-address` 和 `-peer-address` 指定初始化地址。重试初始化保留原身份；已有 Raft 数据时不能删除 sidecar 重新生成身份，也不能通过移走 sidecar 退回独立运行。
 
-`<config>.cluster.json` 还可包含 `routes` 与 `links`。`routes` 以成员 node ID 为键，记录本机访问该成员时实际使用的 `raft` / `api` 地址（例如隧道在本机 loopback 上的端口），优先于成员自己公布的地址；`links` 以被接入机器的 node ID 为键，记录本机为它维持的 SSH 会话：`alias` 是 SSH 别名，`remote` 是本机监听在对方 loopback 上出现的地址，`peer` 是对方监听在其自身 loopback 上的地址。启动时本机会按 `links` 重新打开会话，并把本机侧的 loopback 端口写入运行中的路由表；通过控制台 SSH 接入的机器会自动写入这两项，手动接入的独立执行节点不需要。会话本身是 `ssh <alias> 'exec "$HOME/.steve-peer/bin/steve" link --listen <remote>=<本机地址> … --allow <peer> …'`：对端的 `steve link` 在其 `127.0.0.1` 上监听 `remote` 地址，两端在会话的标准输入输出上复用多路流，不使用 sshd 的端口转发，因此与 `AllowTcpForwarding`、`GatewayPorts` 无关。本机侧的 loopback 端口由本机自己持有，会话断开期间对它的连接会立即被拒绝；对端的 `steve link` 每 15 s 探测本机、30 s 内得不到应答就自行退出并释放端口，所以本机异常退出不会留下占住端口的残留进程。
+## 控制台与凭据
 
-重复相同初始化返回原身份；配置不一致会报错。初始化中断时使用原参数重试，已发布的证书会复用。peer 已运行后不要删除 sidecar 重新生成身份，也不要移走 sidecar 退回独立模式；恢复应使用包含集群状态的完整备份。
-
-### 控制台与凭据
-
-省略飞书应用凭据即可独立运行控制台，设置 `gateway.owner_id` 为稳定的部署 owner 标识；`app_id` / `app_secret` 只填写其中一个会被拒绝。两者都填写时，Steve 才验证并启动飞书/Lark 通道。控制台 owner 优先使用 `gateway.owner_id`，否则使用 `feishu.owner_open_id`；独立部署没有有效 owner 时启动失败。飞书 owner 仍使用该应用下的 open_id。身份和记忆文件在本地准备，不需要通过飞书完成首次启动。
-
-默认地址 `127.0.0.1:7710` 只在 hub 本机可访问。控制台始终需要 token：`gateway.read_model_token` 未设或只含空白时，Hub 首次启动在状态目录（`gateway.state_path` 所在目录）生成仅本用户可读的 `loopback-token`，重启沿用，不写回配置，也不写入日志。只有 loopback 监听会生成 token，这按 `gateway.read_model_addr` 的文本判断：主机须是 loopback IP 或不区分大小写的 `localhost`；其他名字（如 `localhost.`、`*.localhost`）即使解析到本机，也须配置 token。
-
-loopback 挡不住本机其他用户和进程，也挡不住浏览器里的其他网站，因此无论监听在哪里，浏览器代其他网站发出的写请求（按 `Sec-Fetch-Site` / `Origin` 判断）都会被拒绝；实际绑定到 loopback IP 的控制台还只接受 loopback 主机名（`localhost`、`*.localhost` 和 loopback IP），防 DNS rebinding。这一检查按绑定后的地址判断，与配置怎么写无关，因此经解析到 loopback 的其他本机名访问会被拒绝。在 loopback 控制台前挂反向代理时，代理要把 `Host` 和 `Origin` 改写为 loopback 地址；否则改为对外监听并配置 token。对外监听需要设置 `gateway.read_model_addr` 和非空白的 `gateway.read_model_token`。
-
-Hub 绑定后会核对 `gateway.read_model_addr` 与实际绑定的地址，以下两种情况拒绝启动，错误信息给出配置的地址、实际绑定的 IP 和对应改法：
-
-- 实际绑定到 loopback IP，但主机不是上述 loopback 主机名，如 `localtest.me`，或 hosts 映射到 `127.0.1.1` 的本机名。按这个名字访问的客户端都会被拒绝，包括按配置里的名字访问的 `-config` 客户端。改为写 `localhost:<端口>` 或 `<绑定 IP>:<端口>`；要让其他机器访问，就绑定非 loopback 地址并配置 token。
-- 地址按文本是 loopback（loopback IP 或 `localhost`），实际却绑定到非 loopback 地址，例如 hosts 把 `localhost` 指向了其他地址。这类地址在未配置 token 时会得到为本机生成的 token，不能让其他机器访问。改为写 `127.0.0.1:<端口>`，或修正解析，让这个名字解析到 loopback。
-
-`dash` / `top` / `say` 可用显式 `-config <path>` 只读加载连接：
-
-```bash
-./steve dash -config config.json
-./steve top -config config.json -once
-./steve say -config config.json /fleet
+```sh
+steve dash -config /srv/steve/config.json
 ```
 
-连接规则：
+`dash` 打印带 token 的访问地址。独立 Hub 默认 `127.0.0.1:7710`；未配置 token 时，只在 loopback 模式生成状态目录中的 `loopback-token`。非 loopback 监听必须配置 `gateway.read_model_token`。
 
-- 不传 `-config` 时不自动查找配置，使用 `http://127.0.0.1:7710`、空 token 和原命令参数默认值；Hub 总有 token，所以此时须用 `-token` 提供，否则请求返回 401。
-- 传入时按 Hub 的规则读取 `gateway.read_model_addr` / `gateway.read_model_token`：两者都去掉首尾空白，地址只含空白时使用默认地址，token 只含空白时视为空；token 为空且连接地址是 loopback（不区分大小写的 `localhost` 或 loopback IP）时读取 `gateway.state_path` 所在目录的 `loopback-token`（Hub 尚未启动过则为空），其他地址不读取该文件；显式传入 `-token`（包括 `-token ''`）时也不读取该文件；存在 `<config>.cluster.json` 时，地址改用 sidecar 的 `ui_address`，token 仍来自原配置。普通 `gateway` 的监听地址可省略 `http://`，`0.0.0.0`、`[::]` 和省略主机的 `:端口` 分别转为 `127.0.0.1`、`[::1]` 和 `127.0.0.1`；除此之外，客户端按配置里的主机名访问 Hub，请求的 `Host` 就是这个名字。
-- 自动发现的 cluster sidecar 沿用服务的私有文件要求：必须是普通文件，不能是链接，不能授予 group/other 权限，最多 8 MiB。`ui_address` 必须有明确的 loopback IP 和端口；缺失、空值、`null`、通配或远程地址都会拒绝，不会带着配置凭据退回其他监听。普通配置可省略连接字段使用默认值，但显式 `null` 不是有效字段值。
-- 显式 `-url` / `-token` 覆盖对应配置值；`-token` 与配置里的 token 规则相同，去掉首尾空白，只含空白视为空；`-token ''` 明确禁用凭据。同 origin（协议、主机、有效端口相同，默认端口等价）的 URL 覆盖可继承配置 token；改变 origin 且配置有 token 时，必须显式给出 `-token`，否则报错，不发送请求。`localhost` 与 `127.0.0.1` 视为不同主机，不做 DNS 等价判断。客户端也不跟随跨 origin 或含 userinfo 的重定向。
-- `-url` 必须是 HTTP(S) URL；连接地址禁止 userinfo、query 和 fragment。缺失或损坏的显式配置、损坏的已存在 sidecar、非法连接地址都会报错，显式覆盖也不会跳过配置读取和地址校验。无须让其他服务配置合法，不读取证书或初始化运行目录，不启动 Hub、探测 Agent、修改配置；`say` 仍会向正在运行的控制台发送所给命令。
+远程访问可通过 SSH 本地转发连接实际控制台端口。浏览器入口验证 Host 和写请求来源；反向代理到 loopback 时需要将 Host、Origin 与上游地址正确对应，并在代理侧保留认证与来源校验。对外监听使用 TLS 入口并妥善保存 owner token。Steve 的本地 token 不等于外部 SSO 账号体系。
 
-例如 `./steve top -config config.json -url http://localhost:17710 -token "$STEVE_CONSOLE_TOKEN" -once` 显式指定转发端点及其凭据；这里的环境变量由部署者预先设置，客户端不会自动读取它。read-model token 代表 owner 管理权限，仅通过 Authorization 请求头发送；`dash` 原有输出登录链接的功能保留，打印的 URL 会包含 token，不要贴进 PR。它与飞书 app secret、node 认证 token、MCP broker token 和区域 issuer token 分别配置。
+服务配置页区分保存值和当前运行值。需要重启的设置由节点与服务页显示；确认后可重启空闲服务。重连后检查版本和生效配置。
 
-远程浏览器可使用 localhost SSH 转发：在浏览器所在机器执行 `ssh -N -L 127.0.0.1:17710:127.0.0.1:7710 user@hub.example`，再访问 `http://localhost:17710` 并登录。浏览器将 localhost 视为安全上下文，可使用 Web Locks；普通远程 HTTP 地址不具备这一条件。端口按实际部署调整，若复制 `dash` 打印的登录链接，应仅在本地将地址替换为该转发地址，并保护其中的 token。
+## 飞书 / Lark
 
-资源页可以即时添加机器和 agent，项目页可以添加项目/工作区，并写回相应配置；直接在磁盘上编辑 JSON 不是通用热加载接口。当前没有 `steve config apply` 命令。
+`steve setup` 录入已有应用，`steve setup -create-app` 使用官方设备流。配置成对的 `app_id`、`app_secret` 与该应用下的 owner `open_id`。无应用凭据时控制台独立运行。
 
-管理保存会检测配置文件是否被外部改过，拒绝覆盖检测到的新版本。项目配置已保存但账本投影失败时，界面会报告“投影尚未应用”，对应项目解析暂停；修复存储问题后重试管理操作或重启恢复。不要把已保存误当成未执行，再并发修改另一份配置。删除声明不会删除已保存的历史产物。
-
-### 导入已有 Agent 会话
-
-启用集群的服务可以从已连接机器导入 Codex、Claude Code、Grok 和 dsh 的历史会话。先在来源机器登记对应工具和 Agent，然后打开会话侧栏的“导入历史会话”，选择 Agent、查找历史、选择会话，点击“导入并打开会话”。导入会自动关联同一机器、同一原工作目录的已有项目；尚未登记时自动创建项目，不需要先退出导入手动添加。默认查找该机器运行用户的 `~/.codex`、`~/.claude`、`~/.grok` 或 `~/.dsh`，Botmux 等使用独立 home 时可以填写那个绝对路径。来源工具适配器必须声明支持 ACP `session/load` 或 `session/resume`。
-
-自动关联以来源机器保存的历史快照中的原目录为准。项目登记或会话绑定失败时保留快照供同一次导入重试；不会启动任务或修改源历史。写入权限、工作区状态、目录归属与会话绑定仍须通过检查，自动登记不会覆盖已有项目或绕过冲突。单次快照最多 256 MiB、10,000 个文件；每个节点的 `native-imports` 与 `native-runtimes` 各限制新建准入为 128 项、8 GiB，崩溃留下的临时目录也计入。达到限制会拒绝新增迁移，已有导入收据仍可重试；运行后的历史增长仍由工具本身管理。关闭会话后保留历史，便于继续迁移；清理前需在服务停止且确认会话不再使用后归档相应记录，Steve 不自动删除用户上下文。
-
-导入会复制所选会话的历史并保存导入收据，保留原 native session ID。此时不会发送任务；用户在新会话里发送第一条消息时，Steve 才在独立运行目录恢复它。原历史保持不变，后续 Steve 对话留在 Steve 管理的运行目录中。认证、模型接入、技能和 MCP 使用当前登记的运行配置；原工具的 hooks、插件配置、Botmux 提示词文件和外部聊天集成不会自动启用。dsh 使用 `dsh --profile acp`，支持旧版 `session.jsonl[.zstd]` 和最高 v3 的分代历史；同目录只列出最高代，未来格式和混用压缩编码会明确拒绝。纯文本历史只在执行副本中转成默认 ACP 配置要求的 Zstandard，原快照保留原字节，仅导入根会话；其子 agent 会话不能单独通过 ACP 恢复。旧版 dsh（例如 `0.1.0-rc.7`）的 ACP 仅支持新会话，需要重新安装声明支持 resume 的新版工具（已验证 `0.1.5-rc.2`，其 CLI 需支持 `import.meta.main` 的 Node，例如 Node 24）；所选历史中的图片引用会携带对应附件对象，不会复制其他会话的附件。
-
-历史目录发生变化时需要重新查找后选择；重复提交同一次导入会打开原来的 Steve 会话。恢复报错会保留错误与来源，不会自动创建空会话代替旧上下文。当前导入保留来源机器和原工作目录，尚不执行跨机器目录改写；源会话应先结束当前一轮再导入。单次历史快照上限为 256 MiB、10,000 个文件，不接收链接或特殊文件。读取列表和导入接口需要控制台所有者认证。所在平台（非 Unix）无法保存原生历史的节点会拒绝读取和导入并说明原因。
-
-控制台前端与 Hub 应一起更新。当前前端在发送前检查 Hub 的持久提交身份能力；旧 Hub 未提供 `submission_keys` 时，Console 保持只读并提示更新。提交结果不明时使用原请求的“重试”，同一个提交编号不会创建第二份工作。
-
-对话草稿、引用与待确认提交使用当前 App 或浏览器的本地持久存储，完全退出后可在同一环境中恢复；清除站点数据会删除这些本机草稿；换浏览器或换电脑不会自动迁移它们。跨窗口写入通过 Web Locks 协调；同一草稿发生冲突时需选择保留版本。存储不可写或环境不支持 Web Locks 时，界面会提示并阻止发送，请复制当前输入后检查存储权限或更新 App/浏览器。未完成上传和设置页未保存的修改不在这项保证内。
-
-
-### 语言、控制台配置与版本
-
-侧栏底部“设置”的通用页可选择简体中文、English 或跟随浏览器，并设置外观。显式选择保存在当前浏览器，不写入 Hub 配置；界面切换保留草稿、标签页和阅读状态。普通 API 请求带 `Accept-Language`，一次提交的 locale 在接收时固定，重试沿用原提交身份与语言。回复与拒绝使用请求的语言；请求未指明 Steve 支持的语言时使用 Hub 默认语言。没有具体请求者的内容——后台任务、跨节点转发、广播通知，以及启动和 `steve doctor` 经语言目录输出的说明——使用 Hub 默认语言，按写入时的语言保存，切换语言不会重新翻译已保存的文字。通过 SSH 接入或升级机器时，安装记录按发起者的语言写入；SSH 隧道状态和协作内容副本的修复通知使用 Hub 默认语言，节点之间的互联核对使用发起接入者的语言；新接入的机器沿用发起接入的 Hub 的默认语言，远端的 `steve link` 按该 SSH 账户的 `LANG` 输出。机群中的 Hub 默认语言是设置页保存在共享配置里的那一项，修改后节点随即采用；应用尚未在某个节点上运行过时，该节点使用自己配置文件中的语言。用户输入、材料、Agent 输出和历史正文不会随界面切换被重写；浏览器切换语言也不修改 Hub 默认语言或飞书连接配置。
-
-设置中心按通用、Channel、执行与资源、节点与服务分类展示；低频字段默认折叠，运行值仅在与保存值不同时提示，不平铺原始含密钥配置。`gateway.owner_id` 在页面只读；身份变更通过部署配置完成。
-
-- `GET /console/settings` 返回 `revision`、`desired`、`effective`、`pending_restart`、`apply_mode` 和字段 schema（类型、范围、单位与默认值）。
-- `PUT` / `PATCH /console/settings` 接收 `{"base_revision":"读取到的版本","settings":{"gateway":{"task_max_turns":20}}}`。只有版本一致才保存；409 表示配置已变更，界面保留草稿，重新读取前要求确认。
-- 这组设置的 `apply_mode` 当前都是 `restart`。`desired` 是已保存的目标值，`effective` 是当前进程运行值；保存成功不意味着已热更新。落盘成功但目录同步出现告警时，响应带 `warning`，仍应按已保存处理。
-- `GET /console/versions` 返回 Hub ID、Hub/节点版本、协议范围与协商信息，以及可用的项目归属和 peer 配置。peer 配置与项目归属不等于在线/健康状态，页面不探测远端，也不发起迁移。
-- 当前无自动安装。未配置 ReleaseProvider 时不查询公网发布服务；配置后只发现版本清单，安装仍与发现分离。
-
-### Channel 设置
-
-`GET /console/channels` 返回共享配置 `revision`、`desired`、`effective`、`pending_restart` 和 `apply_mode: restart`。已启用不等于连接正常。飞书/Lark 通道启动时先验证应用并读取机器人身份：
-
-- 可能自行恢复的失败会自动重试：网络不通、DNS 失败、超时、5xx、408、429 和限流，以及不属于凭据或应用错误的业务码（包括随 5xx、429 返回的业务码）。无法判断的失败也会重试，例如代理返回的非 JSON 页面、不受信任的证书；这类失败源于网络或代理配置，会一直重试，需要根据 `startup_retry.last_error` 排查。重试间隔从 1 秒起指数增长，上限 2 分钟，带随机抖动；每次尝试最长 15 秒。重试期间响应带 `startup_retry`（`attempts` 已失败次数、`next_at` 下次尝试时间、`last_error` 最近错误），设置页可见时在每次尝试后自动刷新；验证通过后该字段消失，无需重启 Hub。
-- 不会自行恢复的失败不重试：app ID、secret 或应用无效，缺少 app ID 或 secret，除 408、429 外的 4xx，以及机器人未启用。`runtime_error` 给出原因，修正配置后重启 Hub。`startup_retry` 与 `runtime_error` 不会同时出现。
-- 验证通过前，飞书侧的工作只等待、不执行：已接收的飞书消息和待恢复的飞书任务保持待处理，到期的飞书定时任务保持待触发，Agent 发往飞书的消息直接返回通道不可用，飞书任务的手动恢复请求返回错误。验证通过后，恢复流程在下一轮（5 秒内）接手积压的消息，定时任务在下一次检查（20 秒内）触发。凭据被拒绝时这些工作一直等待，修正配置并重启 Hub 后再处理。
-- 验证通过后，长连接的建立与断线重连由飞书官方 SDK 负责。首次建连失败或连接断开后，SDK 自行重连期间响应带 `reconnect`（`since` 断开或首次失败的时间、`attempts` 此后已失败的建连次数、`last_attempt_at` 最近一次失败的时间、`last_error` 最近一次失败的原因，后两项在尚无失败时省略）；连接恢复后该字段消失，无需重启 Hub。设置页打开通道设置时一直跟进：重连期间每 5 秒刷新，连接正常时每 30 秒刷新，页面打开之后才发生的断线在 SDK 发现后 30 秒内出现，无需重新载入；页面隐藏时暂停，恢复可见时立即刷新一次。断线由 SDK 发现：连接无声断开（对端消失而没有关闭连接）时，要等操作系统放弃重传、读操作出错才发现（Linux 默认十几分钟），此前 `reconnect` 不出现。重连间隔、次数和首次重连前的随机等待由飞书服务端下发（SDK 默认不限次数、间隔 2 分钟、随机等待最长 30 秒），`attempts` 可能长时间停在 0。服务端下发有限次数且一轮全部失败时，SDK 停止重连：发生在首次建连阶段（通道还没连上过），记为 `runtime_error`，`reconnect` 随之消失；发生在断线之后，SDK 不报告，`reconnect` 一直保留、`last_attempt_at` 不再更新。两次失败之间相隔一个重连间隔，再加上下一次尝试本身的耗时（握手最长 45 秒），所以默认设置下 `last_attempt_at` 停在 3 分钟前仍属正常；超过 5 分钟没有更新，说明重连已停止。SDK 获取连接地址的请求不设超时，一次尝试卡住时同样表现为 `last_attempt_at` 不再更新；尚无失败时则是 `attempts` 一直为 0，默认设置下首次尝试在断开后 30 秒内开始，断开超过 5 分钟仍无结果即属此类。设置页的提示按默认设置给出这两个 5 分钟的门槛；服务端下发更长的间隔或随机等待时，门槛相应延长。以上情况都要重启 Hub。SDK 判定不可恢复的连接失败——获取连接地址时飞书以 HTTP 200 返回 0、1、1000040343 以外的业务码，或握手时应用被封禁、连接数超限——不再重试，无论发生在首次建连还是断线之后，都记为 `runtime_error`，`reconnect` 随之消失；修正配置后重启 Hub。
-- 发往飞书的消息（回复、卡片、卡片更新、撤回和主动发送）失败时分两类。请求确定没有到达飞书——SDK 在发送前拒绝、取不到 tenant token、连接飞书被拒绝或域名解析失败——或飞书以业务码拒绝（HTTP 5xx 以外），是确定失败：定时任务通知保持待触发，下一次检查重试；子任务结果投递记为待投递（`pending`）；Agent 的通道消息不计入发送次数，可以再次调用。请求可能已经到达飞书——发出后连接中断或超时、飞书返回 5xx、成功响应里缺少回复的消息 ID 或主动发送的会话 ID——结果未知，不自动重发：定时任务记为 `unknown`，子任务结果投递记为不确定（`uncertain`），需要核对。回合的最终卡片确定失败时改为原地更新卡片或文本回复，结果未知时不再补发。已有 tenant token 时，API 请求连接飞书超时、经代理连接失败或 TLS 握手失败，请求其实没有发出，也按结果未知处理。崩溃恢复中的通知与结果回复无论哪类失败都要核对，不区分；创建话题也不区分，失败后不自动重发。首次私聊的欢迎消息也不区分：发送失败就不记为已完成引导，下次 Hub 启动再发，结果未知时可能收到两次。
-
-Console 始终可用，以便修正凭据。
-
-`PUT /console/channels` 接收 `base_revision` 和 `channels` 对象，其中可修改 `default_channel` 及 `feishu` 的 `enabled`、`app_id`、`domain`、`owner_open_id`、`group_policy`、`allow_unmentioned`、`allowed_senders`、`blocked_senders`。凭据仅写入：省略 `app_secret` 保留现值；`{"action":"replace","value":"..."}` 替换；`{"action":"clear"}` 明确清除，不能清除仍启用适配器的凭据。读取仅返回 `app_secret_configured`，不回显密钥或摘要。
-
-Console 始终启用，owner 在该接口只读。首次保存将原有效 Console owner 和默认语言固定为独立配置，之后修改 IM owner 或域不再改变它们。不可停用当前默认通道；先选择 Console。群聊 `open` 放行未被阻止的发送者，`allowlist` 仅放行名单命中者（空名单拒绝全部群聊），`disabled` 拒绝群聊，阻止名单优先，私聊不受群聊名单控制。
-
-### 飞书 / Lark 会话卡片
-
-会话卡片不显示机器人标题栏。唤醒、执行和等待确认的状态在正文中显示；Agent 上报后可看到当前动作、回答、计划和执行详情，完成后过程默认折叠。底部展示已上报的模型、模式、上下文与 token 用量；耗时取最近一次事件或完成时刻，不是独立计时器。尚未上报的数据不会显示为估算值。
-
-正文和执行信息的变化合并刷新，普通进度更新间隔至少 3 秒，无变化不空刷；授权、提问和最终结果不等待普通进度的节流窗口。执行中提供紧凑的终止按钮，失败或取消后保留重试。长工具树、计划和字段受卡片大小限制，省略的详情会有提示。
-
-### 在 Console 查看 Channel 会话
-
-Steve 已接收并持久保存的飞书 / Lark 会话会出现在 Console 会话列表中，按原项目归组并标明渠道来源。打开后可查看已保存的输入、回答和当前执行状态，加载更早的记录；新消息和结果自动刷新。列表和正文读取保留原会话及话题身份，不重新执行历史输入，不新建替代会话，也不向 Lark 重发消息。
-
-渠道会话在 Console 中是只读视图。继续提问、审批、取消和重试仍在原渠道操作；此视图不提供发送、改 Agent、编辑或删除会话。原生 Console 会话的输入和队列不受影响。
-
-记录范围限于 Steve 已保存的数据，不等同于完整的 Lark 聊天记录。保存的回答与渠道投递回执分别判断：未确认发送、明确未投递或正文不可用会有提示。旧版本未保存的工具过程、流式片段及缺失正文不能通过查看操作补回；读取失败会明确报错，不显示为“没有历史”。
-
-### 删除原生 Console 会话
-
-原生 Console 会话永久删除前，须先停止仍在执行的工作，并完成未确认的原生停止、收尾投影和待关闭会话。普通会话关闭也遵守此约束：确定未发送的原生关闭，先原子归档并记录原执行的待关闭义务；结果未知或明确拒绝保留原会话供核对。回退编辑在旧执行仍未结清时拒绝，保留完整原文；旧回合已空闲、且精确关闭义务已持久保存时可在新上下文继续，补关仍保留原任务授权。删除会话同时移除任务树及项目绑定；未完成的计划 run 记为 `completed`、结果为 `discarded`，不称为执行成功，也不再自动续跑或落地。计划修订、原执行授权、错误和 sink 记录保留为历史，已完成的计划结果不改写。任务取消本身只撤销执行授权，不删除这些记录。
-
-### 服务重启
-
-“节点与服务”列出 Hub 和 worker 的版本、可用性及重启结果。重启先关闭准入，释放缓存会话并等待进程退出；下一回合由新进程恢复会话。Hub 重启会短暂中断 Console。升级安装不在此入口提供。
-
-重启有两种模式。`now` 沿用原来的行为：工作台不空闲、仍有排队请求或待核实执行时直接失败，保留当前服务。`when-idle` 把请求登记下来，每两秒复核一次，等到服务真正空闲再执行，期间会话照常进行，不会被打断。等待中的请求可以撤销，也可以改为立即重启；同一个 `command_id` 重复提交返回同一次等待，不会排出第二次重启；换一个 `command_id` 的等待请求会接管旧的等待，旧请求记为 `cancelled`，否则一次过期的等待会把服务钉住。已被隔离（quarantine）的未结执行不再阻挡等待，否则它会把服务永久钉在旧版本上。
-
-- `GET /console/services` 查询列表。
-- `POST /console/services/{name}/restart` 接收稳定 `command_id`，可选 `mode`（`now` 默认，或 `when-idle`）与 `cancel`（撤销等待中的请求）；Hub 名称为 `hub`，worker 使用已登记节点名。
-- `GET /console/services/{name}/restart?command_id=...` 查询回执；省略编号查询当前实例最近操作。
-- `accepted` 只表示请求已持久受理，`restarted` 要求新 incarnation 上线。`draining` 表示请求在等待空闲，`waiting_on` 指出还差什么（`requests`、`conversations`、`executions`、`attempts`、`agents`、`channel`、`question`、`copy`、`node`、`offline`、`preparing`），`waiting_conversations` 给出对应的会话，控制台据此显示会话标题而不是 ID。`question` 表示某个会话停在等你答复的审批上：它不会自己结束，答复之后重启才会继续。拒绝和等待的说明会带上具体的会话与执行标识，而不是只说有工作在进行。`cancelled` 表示等待期间被撤销，服务照常运行。断线和未知响应不等于成功；重试原编号，不另造一次重启。节点需协商 `service_restart.v1`。
-- 重启前验证配置。Console 外直接编辑了 Hub 配置时，UI 重启会拒绝，需通过部署校验并应用；服务地址、身份、认证和状态目录的变更也应走部署。自动端口 `:0` 不支持保持地址的 UI 重启。
-- Unix CLI 在清理完成后重新执行当前二进制，保留 PID、参数和环境；不依赖额外 supervisor，不下载或切换版本。配置无效、退出未确认或服务正在工作时返回明确错误并保留当前服务。
-
-### 材料、标记与问答
-
-材料按项目保存，来源可记录会话回复、执行快照和上传文件；来源描述不授权任意文件系统或 URL 读取。文本可选择精确片段或行范围，图片可选择矩形区域。源码和 Diff 的标记绑定材料与快照来源，不会因当前文件变化而自动漂移。注释保存带 `expected_revision`，冲突不覆盖已有内容；删除使用带版本的删除标记。
-
-| 接口 | 作用 |
-|---|---|
-| `GET /console/materials`、`GET /console/materials/{id}` | 查询项目材料与元数据 |
-| `GET /console/materials/{id}/content` | 读取材料内容 |
-| `POST /console/materials/capture`、`POST /console/materials/upload` | 捕获已有来源或上传文件 |
-| `POST /console/materials/resolve` | 解析指定材料及选区 |
-| `GET /console/annotations`、`PUT /console/annotations/{id}` | 查询和按 revision 保存标记 |
-| `GET /console/questions?conversation=...` | 读取会话中的待处理问答及结果 |
-| `POST /console/questions/{id}/answer` | 以稳定 `command_id` 回答当前问题 |
-
-Console 回复、源码及 Diff 的选区显示浮动操作条。加入对话先核对目标项目，保留原始回复版本或代码快照；Markdown 显示文本映射回原始文本，不能证明来源的选区不生成引用。源码支持精确文本引用，Diff 局部选区扩为同侧连续整行并显示行范围；跨修改前后或跨行号缺口的选区不会混合成一个引用。键盘选区可用 Tab 或 Shift+F10 进入操作条，方向键切换操作，Escape 关闭。
-
-侧边提问使用同项目的独立 Console 会话，不替换当前主会话；点击侧聊入口只准备引用，用户发送问题后才绑定项目并提交。草稿、引用、语言和提交身份独立保留，未知响应重试沿用同一身份。审查工作区内的侧聊可继续阅读代码，也可打开为主会话。
-
-回复下的变更卡片绑定该回复的 attempt，默认显示三个文件，可展开或收起。增删行和二进制计数来自同一快照；截断结果明确标为部分统计，未捕获不显示为“无变更”。卡片进入可见区域时才加载文件索引。Review 和文件行打开原快照；该入口不提供撤销写操作。
-
-文件可在消息输入区或输入栏控件区域拖入，和“添加附件”一样生成材料引用，不会将文本文件自动写入正文。拖放不提交消息；普通文本拖拽仍编辑正文。上传失败或上一批仍在上传时，正文与已有引用保留，并提示重新选择；不支持材料引用的 Hub 不会把文件静默当成正文。
-
-当前材料限制：单个 blob 20 MiB、文本 2 MiB、图片 10 MiB 且不超过 1600 万像素；每次提交最多 8 个引用，解析后的文本合计 64 KiB、媒体合计 10 MiB，单条标记正文 16 KiB。材料不是可执行指令；二进制附件保留类型与来源，不能冒充图片。提交时解析并固定引用，受目标项目作用域校验。
-
-问题答复使用 `decision`（`accept` / `decline` / `cancel`）和问题提供的 `choice`；同一 `command_id` 的相同答复可以重放，不同答复冲突返回 409。问题绑定会话、执行、会话代次与 principal，过期或已解决的请求不能再次批准。回答直接交给等待中的执行，不通过普通 `enqueue` 创建下一轮消息。网络结果未知时应重试原答复，不另造新的答复编号。
-
-### 用量口径
-
-1d 按 Hub 当天的小时聚合，7d / 30d 按包含今天的日历天聚合，沿用 Hub 提供的时区与区间。未上报 token 在图中按 0 绘制并保持连线，覆盖率仍单独表示缺失程度；0 点不构成提供方已确认“零消耗”的证据。
-
-用量页分别展示输入、输出、缓存读取和缓存写入，可按 Agent、模型、harness、触发方式、项目查看，并展开任务明细。TPM 和任务耗时使用接口报告的统计口径；界面语言切换只改变格式，不重新划分时间桶或改变统计范围。
+Channel 设置管理启停、默认通道、群聊策略、允许及阻止名单。凭据测试成功表示可连接，不代表所有群聊或项目都已授权。控制台可以查看已记录的 Channel 会话；外部消息投递仍以各通道的回执为准。
 
 ## 部署 node
 
-### 构建、复制、启动
+目标机器需要 Git、已认证的 harness 和匹配系统/架构的 `steve-node`。配置参考 [node.example.json](../node.example.json)。
 
-在源码目录为目标机器的 OS/CPU 架构构建。例如目标是 Linux amd64；arm64 机器将 `GOARCH` 改成 `arm64`，不能把本机架构的二进制直接用于异构机器：
-
-```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o steve-node ./cmd/steve-node
-ssh me@host-3 'mkdir -p /home/me/steve-bin /home/me/steve-work'
-scp ./steve-node me@host-3:/home/me/steve-bin/steve-node
+```sh
+steve-node -config /srv/steve/node.json
 ```
 
-在本地准备 node.json，最小配置如下；token 换成与 hub 登记值相同的随机密钥，工具需要预装在目标机器：
-
-```json
-{
-  "name": "host-3",
-  "listen": "0.0.0.0:7701",
-  "token": "replace-me-with-a-long-random-secret",
-  "workspace_root": "/home/me/steve-work",
-  "state_dir": "/home/me/.steve-node",
-  "harnesses": {
-    "codex": {
-      "command": "/home/me/.local/bin/codex-acp",
-      "args": []
-    }
-  }
-}
-```
-
-```bash
-scp ./node.json me@host-3:/home/me/steve-bin/node.json
-ssh me@host-3 'chmod 600 /home/me/steve-bin/node.json'
-ssh me@host-3 'bash -lc "nohup /home/me/steve-bin/steve-node -config /home/me/steve-bin/node.json > /home/me/steve-node.log 2>&1 < /dev/null &"'
-```
-
-**从登录 shell 启动**，才能让 agent 继承部署用户 profile 中的 PATH、代理及认证环境。若使用自备 `nodectl` 脚本，也从登录 shell 调用，例如 `bash -lc '/home/me/bin/nodectl start'`；`nodectl` 不是 Steve 内置命令。systemd 可让 `ExecStart` 调用 `/bin/bash -lc 'exec ...'`，并用 `EnvironmentFile` 显式提供环境。
-
-node 要安装 Git；工作树物化和产物传输依赖它。默认 harness home 隔离在 `state_dir/runtimes/<harness>`，初始化时按工具规则引用认证、筛选配置，不会直接沿用用户的个人技能/MCP 清单。正常运行时 hub 下发启用的技能包，node 校验并物化；认证和必要的环境变量仍需在 node 本机准备。
-
-内置工具的隔离 home 各自引用部署用户的认证并复制筛选后的配置：Codex 链接 `~/.codex/auth.json` 并保留 `config.toml` 的模型与 provider；Claude Code 链接 `~/.claude/.credentials.json` 并保留 `settings.json` 里描述模型访问的键：`env`（base URL、自定义 header、token）与 `modelPicker`、`availableModels`、`modelOverrides`（该端点提供的模型目录），去掉默认模型、effort、权限、hooks 与终端偏好；隔离配置在 node 启动时生成，改动这些键后要重启才会生效；Grok 复制 `~/.grok/auth.json` 并关闭 compat；Kimi Code 链接 `~/.kimi-code/credentials`、`oauth`，并保留 `config.toml` 的 `default_model`、`[providers]`（含 OAuth 存储）、`[models]`、`[thinking]`、`[loop_control]` 等模型访问配置，去掉 hooks、MCP、skills、plugins、agents、cron 与终端偏好。部署用户没有 `~/.kimi-code/config.toml` 时不生成隔离配置，Kimi 使用自身默认值；用环境变量 `KIMI_MODEL_NAME` / `KIMI_API_KEY` 等配置的模型仍通过 harness `env` 传入。
-
-node 对每个 harness 的能力探测（agent 是否接受 HTTP MCP，决定平台 MCP 能否注入）按二进制、参数、目录和环境缓存 1 小时，真实会话打开时以 agent 自己的回答刷新，打开失败则丢弃缓存。这意味着同一台机器上原地更换适配器二进制后，最迟在下一次会话打开时纠正；要立刻生效可重启 node。
-
-当前独立 `steve-node` 也支持由节点持有的原生会话。作为多机协作的执行节点时，它通过已认证连接向当前协调节点核对执行授权，并保存会话与输入回执；无需为此添加 `node.json` 字段，也不会成为账本副本或投票成员。不支持节点协议 v2 的旧二进制在握手时即被拒绝，须升级并重启，刷新资源页不能升级进程；见[节点协议版本](#节点协议版本)。
+在协调端资源页登记机器地址和 token，创建绑定该机器的 agent。`nodes` 只声明连接，模型、工具和技能由节点实际报告。独立 Hub 使用稳定 hub ID 绑定 owner，集群使用 cluster ID。
 
 ### 在控制台添加机器
 
-资源页添加机器需要 hub 能拨到的 node 地址，例如 `10.0.0.3:7701`。返回的引导命令要在 node 上执行，命令中的 hub URL（如 `http://10.0.0.1:7710`）也必须从 node 可达；不要把浏览器访问 hub 时的 `127.0.0.1` 当作 node 的下载地址。
+资源页的引导命令在目标机器运行。下载用的 Hub URL 必须从目标可达；浏览器使用的 `127.0.0.1` 不能直接当远端下载地址。
 
-如果 hub 配了 `gateway.node_binary`，引导脚本会从 hub 下载二进制；该文件必须匹配目标 OS/架构。当前脚本会写 node.json，只复制 hub harness 的 `command` / `args`，不复制 `env`、`process_dir`、slots、模型、MCP、技能目录或认证；node 上路径不同就需要调整。已有可执行的 steve-node **不会更新**，更新需重新构建和复制。引导脚本会替换其匹配到的既有 node 进程；应把它用于新增/重新部署，不当作在线升级接口。
+引导脚本只复制 harness 的 `command` / `args`，其他环境、凭据、模型、技能和 MCP 需在节点准备。已有可执行的 `steve-node` 不会被引导脚本更新。桌面 SSH 接入的完整节点见[桌面指南](desktop.md#接入机器)。
 
-手工部署时在 hub 登记对应 `nodes`、绑定 `node` 的 agent，以及需要的项目工作区；资源页登记可即时连接，无需重启 hub。配置中写了 harness 只代表声明，资源页或 `/fleet` 报的可用性来自机器观测；缺命令、模型不匹配或能力不足都有具体原因。
+单个 node 实例只归属一个协调身份；多实例需要独立端口、状态目录和运行环境。移交前停止实例并确认旧 agent 进程退出，再执行：
 
-每个 node 实例归属一个 Hub，`hubs` 将 token 绑定到稳定 `gateway.hub_id`。归属持久化；正常断线、心跳超时和进程流续接宽限到期都不会把实例自动交给另一个 Hub。显式移交时，先停止 node 实例并核实旧 harness 进程已退出，再执行：
-
-```bash
-./steve-node adopt -config /home/me/steve-bin/node.json -evidence "旧实例与其 harness 进程已停止" hub-b
+```sh
+steve-node adopt -config /srv/steve/node.json \
+  -evidence "已核实旧实例及其 agent 进程停止" hub-b
 ```
 
-`adopt` 获取实例维护锁并更新归属记录；仍运行的实例会拒绝移交。存在未确认退出的旧进程记录时必须提供核实证据。它不修改 `hubs` 的认证映射，也不迁移项目；先配置目标 Hub 的认证，再启动 node。同一物理机器可运行多个拥有独立端口、state_dir 和 harness 环境的 node 实例；单实例不同时接受多个 Hub 调度。
+`adopt` 更新归属记录，不修改认证映射或迁移项目。先配置目标 owner 的认证再启动。
 
 ### 节点协议版本
 
-协调节点与执行节点之间使用节点协议 v2（[internal/nodewire/handshake.go](../internal/nodewire/handshake.go) 的 `ProtocolVersion` 与 `ProtocolMin`），双方都只接受 v2。握手时协调节点给出自己支持的协议区间，节点以双方共有的最高版本回复；没有共有版本时连接被拒绝：
+协调端与执行端使用节点协议 v2，不兼容的连接在握手时拒绝。资源页显示双方版本与需升级的一方。手工部署需要替换匹配架构的二进制并重启；桌面 SSH 接入的机器可使用其升级入口。
 
-- 只支持 v1 的 `steve-node` 被协调节点拒绝，错误写明节点名和双方的协议区间，并提示在该机器上把 steve 或 steve-node 替换为协调节点的版本；只有经 SSH 加入桌面 App 集群的机器可以在控制台升级。
-- 节点只支持比协调节点新的协议时，协调节点的错误写明双方的协议区间，并提示把协调节点升级到支持该版本的构建。
-- v2 的 node 拒绝 v1 协调节点，node 日志写明双方的协议区间。
-
-控制台「资源 → 机器」把协调节点最近一次连接因协议不符被拒的机器标为“协议不兼容”，详情写明双方的协议版本和应升级的一方。协议比协调节点旧的机器在详情和页面提示条中提供升级入口，但只有经 SSH 加入桌面 App 集群的机器能通过它（`POST /console/ssh/upgrades/{node}`）升级；服务端协调节点经 SSH 安装的 `steve-node` 和手工部署的 `steve-node` 都会被拒绝升级，需在该机器上替换为新构建的二进制，引导脚本不更新已有二进制。协议比协调节点新的机器只显示说明。
-
-`POST /console/ssh/upgrades/{node}` 发起升级，`GET /console/ssh/upgrades/{node}` 读取这台机器进行中或刚结束的升级记录。路径参数 `{node}` 是机器的 node ID（形如 `node-…`），不是显示名。桌面 App 集群中，node ID 既不是本机、也不是本机记录了 SSH 隧道的机器、也不在本机副本的集群成员中时，两个请求都返回 404，错误体与该 API 其他拒绝相同（`error` 与 `step`，`step.code` 为 `unknown_node`，按请求语言写明），不创建升级记录。成员从本机副本读取，不经多数派确认：机器刚加入，或本机与集群多数成员失联、副本停在失联前时，本机副本里可能还没有它，这期间它（本机没有到它的隧道时）同样得到 404，副本追上后恢复。已知机器不能升级（本机、没有记录 SSH 隧道的成员等）时仍返回 200 与 `needs_attention` 的升级记录，记录里写明原因。已知机器在本机没有进行中或刚结束的升级记录时（本机这次运行以来没有为它发起过升级，或上次升级结束已超过 5 分钟、记录已过期），`GET` 同样返回 404，错误体形状相同（`step.code` 为 `unknown_upgrade`，按请求语言写明这台机器没有进行中或刚结束的升级）。服务端协调节点不提供这项升级，`POST` 与 `GET` 对任何 node ID 都返回 400，错误体形状相同（`step.code` 为 `upgrade_unsupported`，按请求语言写明），不创建升级记录。
-
-经 SSH 加入桌面 App 集群的机器也可以只重启节点进程：机器详情的「节点进程」一栏提供「重启节点」，对应 `POST /console/ssh/restarts/{node}`；`GET /console/ssh/restarts/{node}` 读取本节点能否重启这台机器（`restartable`），以及这台机器进行中或刚结束的重启记录和自动拉起状态（见[连接中断与恢复](#连接中断与恢复)），本机没有为它重启过、也不自动拉起它时后两项为空。不能重启时 `reason` 写明原因和该去哪里操作：提供控制台的节点自身不从这里重启；本节点没有这台机器的 SSH 隧道时，要到经 SSH 把它加入集群的那个节点（隧道由它持有）的控制台重启、查看自动拉起，不是经 SSH 加入的机器只能登录机器手动重启。机器详情里的「重启节点」这时显示为不可用，旁边附这句话。重启经 SSH 用与升级相同的方式找到机器上的节点进程：持有这个安装的网关锁（`~/.steve-peer/cluster/peer-process/gateway.lock`）的进程，不论它以什么命令行启动；命令行以这个安装的程序路径开头的进程，状态目录按原样或解析符号链接后的写法都算；以及在安装目录里以 `./bin/steve` 启动的进程。谁持有网关锁在 Linux 上读 `/proc/locks`，没有 `/proc` 的系统用 `lsof`，`lsof` 看不出锁时不当作持有、仍按命令行找；其他账号或其他状态目录的节点进程不受影响。找到后先发 TERM，30 秒内没有退出再 KILL，然后用机器上现有的程序启动，确认它保持运行后，最多等 3 分钟让机器回到集群；节点进程已经重启，所以发起请求的页面关闭后也继续等并记下结果，本节点关闭时才提前结束（升级换上新程序后的等待相同）；不上传程序、不校验 SHA，也不改动 `steve`、`steve.previous`、`steve.rejected`。结果写明节点进程原本在运行并已重启、原本没有运行并已启动，还是启动后没能保持运行（附 `peer.log` 的末尾若干行）；机器上缺少 `pgrep`、`ps`，或 `gateway.lock` 不可读等原因使得无法判断节点进程是否在运行时，重启和升级都明确失败并说明原因，不当作没在运行，升级这时不改动任何程序，也不留下上传的文件；原来的节点进程没能停下、仍占着网关锁，新启动的随即退出时，重启报告没能停止原进程，升级也不把这当作新程序的问题，而是把原来安装的程序放回原处，报告没能停止原进程、机器没有升级（`step.code` 为 `upgrade_not_stopped`）；升级后新程序和换回的后备程序都没能保持运行时，节点进程停止，`~/.steve-peer/bin/steve` 是换回的后备程序，新程序留作 `steve.rejected`；没有回到集群或其他失败都返回 200 与 `needs_attention` 的记录，写明原因。在线的机器要先确认：重启会中断它上面正在运行的执行，这些执行按正常的停止流程确认结果；离线的机器直接重启。同一台机器同一时间只运行一个升级或重启（含自动拉起），另一个请求返回 400（`step.code` 为 `in_progress`）。404 的规则与升级相同（`step.code` 为 `unknown_node`）；服务端协调节点不提供重启，两个请求都返回 400（`step.code` 为 `restart_unsupported`）；本机的节点进程随 App 重启，不经 SSH 重启。每次手动或自动重启都作为 `node.restart` 事件记入集群历史，写明由哪台机器执行、手动还是自动拉起及结果；机器详情显示最近一次，不论这台机器的角色，也不论本节点能否重启它。
-
-升级顺序：v1 与 v2 的节点协议连接互相拒绝，协调节点和执行节点都升级完之前，两者之间的节点连接一直被拒绝。桌面 App 集群由本机协调时先升级 App，再从控制台升级经 SSH 加入的机器；协调职责已交接给其他机器时，先升级当前协调节点，或先把协调交接回本机。服务端部署把协调节点的 `steve` 与各执行节点的 `steve-node` 一起替换并重启。
-
-v2 基线包括节点会话、原生会话续接、输入回执确认、进程流 journal、执行准入与 MCP 绑定、技能包、节点配置及其修订号、目录检查、MCP 探测、机器自带技能与 MCP 上报、产物与文件操作、插件包与插件运行时，协调节点对这些操作不检查 feature。advert 的 `features` 只列 v2 节点可能缺少的能力：`native_history.v1`（非 Unix 平台无法保存原生历史，不声明）与 `service_restart.v1`（仅 Unix 上独立运行的 `steve-node` 声明）。
+节点软件版本不同不必然表示协议不兼容。原生历史、服务重启等可选能力仍以节点报告为准。
 
 ### MCP 部署
 
-简单模式是在 node.json 的 `mcp_servers` 写定义，并删除 `mcp_broker`。例如下面两项（合并进 node.json），stdio 命令已预装，HTTP 地址和认证头换成自己的服务：
+简单部署在 `node.json` 的 `mcp_servers` 配置 stdio、HTTP 或 SSE 服务。Agent 引用目标节点的服务名称，远端服务定义和敏感值由节点持有。
 
-```json
-{
-  "mcp_servers": {
-    "filesystem": {
-      "type": "stdio",
-      "command": "/home/me/.local/bin/mcp-server-filesystem",
-      "args": ["/home/me/steve-work"],
-      "env": {"LANG": "C.UTF-8"}
-    },
-    "docs": {
-      "type": "http",
-      "url": "https://mcp.example.com/mcp",
-      "headers": {"Authorization": "Bearer replace-me-with-the-mcp-token"}
-    }
-  }
-}
-```
-
-内置 broker 使用 `state_dir/mcp.sock`。远端 agent 的 `mcp_servers: ["filesystem", "docs"]` 会绑定到这台 node 的服务；stdio 会话只拿到 `steve-node mcp-launch -socket ... <binding>`，HTTP/SSE 只拿到 loopback binding URL，服务的 env/headers 由 broker 使用。
-
-[node.example.json](../node.example.json) 演示另一种部署：将定义移进独立的 mcp.json，node 的 `mcp_servers` 留空，只保留 `mcp_broker` 的 socket/token。例如 mcp.json：
-
-```json
-{
-  "socket": "/home/me/.steve-mcp/mcp.sock",
-  "token": "replace-me-with-a-separate-broker-token",
-  "workspace_root": "/home/me/steve-work",
-  "port_file": "/home/me/.steve-mcp/proxy.port",
-  "launcher": "/home/me/steve-bin/steve-node",
-  "mcp_servers": {
-    "filesystem": {
-      "type": "stdio",
-      "command": "/home/me/.local/bin/mcp-server-filesystem",
-      "args": ["/home/me/steve-work"],
-      "env": {"LANG": "C.UTF-8"}
-    },
-    "docs": {
-      "type": "http",
-      "url": "https://mcp.example.com/mcp",
-      "headers": {"Authorization": "Bearer replace-me-with-the-mcp-token"}
-    }
-  }
-}
-```
-
-```bash
-bash -lc 'exec /home/me/steve-bin/steve-node mcp-broker -config /home/me/steve-bin/mcp.json'
-```
-
-先运行 broker，再从另一登录 shell 启动 node。独立进程仍与 node 同用户时不构成秘密隔离；需要隔离时以另一用户运行 broker，仅该用户能读 mcp.json，给 node/agent 共享组访问 socket 及父目录的权限，`socket_mode` 使用十进制 `432`（`0660`）。launcher 必须是 agent 用户能执行的路径。
+独立 broker 使用 `steve-node mcp-broker -config mcp.json`，节点仅配置 `mcp_broker` 的 socket/token，并清空 `mcp_servers`。两种方式互斥。Agent 获得绑定的本机地址或启动器，平台 MCP 通过认证回程连接访问协调端。
 
 ### 连接中断与恢复
 
-共享账本模式下，由节点持有的原生会话使用任务、执行和输入回执恢复。协调实例退出只会断开观察，健康执行节点可继续运行；新协调实例核对原记录后接回同一次执行。手动接入的独立执行节点升级后也使用这条路径。以下进程流 journal 与独立部署重启说明是另一条恢复路径，不应把流断开或重启当作原生执行停止的证据。
+执行节点持有 agent 进程和输入/输出回执。连接恢复后按原身份与序号续接，默认进程流宽限为 10 分钟。宽限结束、节点进程丢失或日志不可用均可能阻止续接。
 
-进程流 journal 属于[节点协议](#节点协议版本) v2 基线。node 保留 harness 进程与有界输入/输出 journal；连接恢复后按 stream ID、已读输出位置与 `ResumeAck.HaveIn` 续接，回放缺失输出并避免重复输入。默认续接宽限 10 分钟，由 node 的 `STEVE_NODE_SESSION_GRACE` 可调整；等待重连期间相关静默时钟暂停。
-
-超过宽限、node 进程已消失、日志超出保留范围（`too old`）、日志写入失败或不可续接都会失败；journal 有界，不保证无限期回放。显式结束、取消和干净关闭不按网络故障保留进程。journal 未能创建或写入失败的进程流不可续接，连接断开时立即结束，不等待宽限。
-
-经 SSH 加入桌面 App 集群的机器，节点进程退出后由持有它 SSH 隧道的 `steve peer`（通常是桌面 App 所在的机器）自动拉起；服务端协调节点、手工部署或经 SSH 安装的 `steve-node` 都不自动拉起。只看仍是集群成员、不在移除中的机器，机器开始移除后，下一轮检查（15 秒内）停止对它的尝试，正在进行的一次随之中断。**手工停止的节点进程约 1 分钟后会被自动拉起**；要让一台机器长期停下，先把它从集群移除。这个进程每 15 秒经隧道问一次每台机器，判定离线只依据它经隧道问这台机器自己的集群服务有没有应答，不看协调节点上的成员状态；从它发现机器不应答起算，离线超过 1 分钟，且它到这台机器的 SSH 会话在线时，才经 SSH 用与重启相同的定位逻辑确认节点进程不在，只在不在时启动；1 分钟长于集群重拨成员（约 15 秒一次）和隧道重连的退避，短暂的网络抖动会先自行恢复。**节点进程仍在运行时（例如卡住或只是网络不通），自动拉起不会结束它**：机器详情显示“节点进程还在运行，但机器没有回到集群”，事件里记一次，5 分钟后再检查，需要时在机器详情里手动「重启节点」。自动拉起不与这台机器的升级或手动重启同时进行；升级或手动重启结束后，之前开始的检查结果作废；升级结束或手动重启成功后，离线时间重新计算。无法判断节点进程是否在运行时，自动拉起按一次失败计入次数，不启动；启动时发现另一个节点进程仍占着网关锁，视为节点进程仍在运行。机器上的安装锁被占着（另一次安装或升级正在进行，或中途被打断的一次留下了锁），或到这台机器的 SSH 会话建不起来时（包括 SSH 认证失败、主机密钥没有通过校验），自动拉起被挡住：不计次数，从 1 分钟起加倍退避，最长每 10 分钟再试一次，锁释放或会话恢复后自动继续。机器详情显示被挡住的原因和处理办法，例如在终端核实并信任主机密钥，或检查该别名的账号、密钥和 SSH agent；认证和主机密钥的问题不会自行消失，处理之前一直每 10 分钟重试一次；机器上没有正在进行的安装或升级时，安装锁是遗留的，在机器上删除 `~/steve-bin/.install-lock` 目录即可。
-
-每次启动都计入次数，包括启动成功的（防止进程反复启动又退出）；被挡住时不计。两次尝试之间按 1、2、4、8 分钟退避；计满 5 次后停止自动拉起（包括 5 次都启动成功、之后又掉线的情况），记一条 `stopped` 事件，机器详情显示已停止和最后一次失败的原因。机器稳定在线 10 分钟，或手动重启成功后，次数清零并恢复自动拉起。到这台机器的 SSH 会话不在线时不尝试，也不记事件；其余自动拉起都与手动重启一样记为 `node.restart` 事件。接连发现节点进程仍在运行时只记第一次；每次进入被挡住的状态记一次，之后的重试不再记；机器应答过集群后又被挡住，算新的一次，重新从 1 分钟退避并再记一次。自动拉起的实时状态只在持有这台机器 SSH 隧道的节点的控制台里显示，其他节点的控制台在「重启节点」旁说明要到哪个节点查看；事件与机器详情里的最近一次重启在整个集群可见。
-
-独立部署的协调服务重启是另一条路径：先将缺少停止证据的旧执行隔离，回收已确认静止的未完成 attempt，再应用配置、恢复未完成落地及符合条件的任务和队列，并补投递已完成子任务的结果。隔离中的任务和暂停任务不会自动续跑；中断超过 24 小时的会话任务留在停止状态，缺少消息锚点的聊天任务不能自动回复。重启不承诺恢复旧 hub 内存中的 ACP 连接，也不表示旧 node 进程已经停止。
-
-节点确认原生进程停止，指 Agent 进程已退出，且它所在的进程组里已没有运行中的进程。Agent 被停止、在关闭宽限内自行退出或意外退出时，都会向整个进程组发送 SIGKILL，在内核报告组内已没有任何进程，或组内只剩僵尸进程且节点能列出所有进程时，才报告停止。僵尸进程已不能执行任何操作，只要它还留在组里，这个进程组号就不会分给别的进程组。这同样适用于 hub 在本机启动的 Agent：Agent 留在自己进程组里的后台进程（例如它启动的开发服务器）会随 Agent 一起结束；需要在 Agent 结束后继续运行的进程，要用 `setsid` 等方式离开进程组，这样的进程也不在这项确认之内。进程组在 Agent 进程退出时就被结束，不等 Agent 的标准输出关闭，所以组内继承了这条输出的进程不会让宿主或节点一直把 Agent 当作还在运行；离开了进程组却仍持有这条输出的进程，在 Agent 退出 2 秒后被宿主或节点断开，之后它写的内容不再读取。Linux 上 `/proc` 属于节点所在的 pid 命名空间、未以 `hidepid` 挂载（或为 `hidepid=0`、`hidepid=off`），且读取时没有被拒绝的进程，节点才算能列出所有进程；macOS 总能列出。列不全时，组是否清空只以内核的判断为准：节点列不出的成员（例如 `/proc` 以 `hidepid` 挂载时其他用户的进程）、无权发信号的成员、还没被回收的僵尸进程，都让停止保持未确认。组员在 SIGKILL 后仍不退出（例如处于不可中断等待）时同样保持未确认。停止迟迟得不到确认时，5 秒后记一条 ERROR 日志，之后每分钟一条，直到确认，日志写明组内还有几个运行中的成员、几个僵尸；只剩僵尸而节点列不全时，日志提示原因可能是 1 号进程不回收孤儿进程，或 `/proc` 以 `hidepid` 挂载。Agent 退出后，宿主不等它的进程组清空就可以启动新的 Agent；新 Agent 启动不算旧进程组已结束的证据，旧 Agent 的停止仍按上述规则单独确认。执行节点上的 Agent 退出后，节点最多等 5 秒让它的进程组清空；到期仍未清空时，节点告诉 hub 这个 Agent 已经结束，但不报告退出，hub 据此可以启动新的 Agent，旧 Agent 的停止保持未确认，直到组清空、节点回复 hub 的释放请求；hub 只在会话宽限期（默认 10 分钟）内等这个回复。组清空前，节点自重启仍视为忙；节点在这期间正常停止时不再等这个进程组，停止保持未确认。关闭时先给 Agent 5 秒自行退出，到期强制结束后最多再等 5 秒；届时停止仍未得到确认的，关闭照常返回，停止保持未确认。Agent 已经退出时，关闭没有要等的 Agent，只等已退出 Agent 的进程组最多 2 秒，组内仍有进程就照常返回，停止保持未确认，组清空后再确认。在容器中运行节点时，停止确认不依赖容器的 1 号进程回收孤儿进程：只有进程列表可能漏掉进程时（例如 `/proc` 以 `hidepid` 挂载、读取 `/proc` 被拒绝、`/proc` 属于另一个 pid 命名空间），未回收的僵尸才会让停止保持未确认。仍建议让 1 号进程回收孤儿进程（例如 `docker run --init`），以免被结束的组员留作僵尸越积越多。
-
-执行节点进程被杀或崩溃后重新启动时，上一个节点进程留下的、未确认停止的原生会话无法再接回，节点在加载记录时尝试结束它们。节点为每个启动的 Agent 记录进程组号、组长 pid、组长启动时间和注入 Agent 环境的标记 `STEVE_PROCESS_MARK`，以及当时的开机标识和 pid 命名空间，只在能证明该进程组属于原执行时发送信号：组长仍以原启动时间占用该 pid，或组长已退出、组内成员都在组长之后启动且其中有成员带着这个标记。能证明时节点结束整个进程组，确认组内无成员仍在运行后写入停止确认；这个 pid 已被另一启动时间的进程占用，说明原进程组早已结束，也写入确认且不向该进程发信号；组内只剩僵尸进程（包括未被回收的组长）且节点能列出所有进程时，同样直接写入确认，不发信号，也不要求证明这些僵尸属于原执行：不论它们是否来自原进程组，原进程组都已没有运行中的成员，进程组号若已分给别的组，说明原进程组此前已经清空；开机标识变了而 machine-id 相同，说明本机重启过，原进程必然已结束。节点加载记录时同时结束所有遗留的进程组，共用一个 2 秒的期限，启动耗时不随遗留数量增长。协调实例下一次核对原执行时即可完成暂停或取消。无法证明归属时（记录里没有进程组、记录来自 machine-id 不同的另一台机器（开机标识相同也一样，例如由另一台机器的快照恢复或克隆出的虚拟机）、pid 命名空间不同、无法确认本机是否重启、组长已退出且剩余成员都不带标记、节点自身就运行在该进程组里），节点不发送任何信号，停止保持未确认，任务按停止结果不明保留；记录了进程组的，人工结束相关进程后再次停止会重新核对并确认。组员在 SIGKILL 后仍未退出，或组内还有节点列不出、无权发信号的进程，或节点列不全时组内还留有僵尸进程，也保持未确认；之后每次通过授权核对的停止或取消请求都会重试，被拒绝的请求不会触发重试。节点的数据目录只供一台机器上的一个节点进程使用：把它复制到另一台 machine-id 相同的机器（例如由同一镜像克隆）上，与原节点同时运行，不受支持，那里的节点会把原机仍在运行的进程当作已随重启结束。这项核对支持 Linux 与 macOS，其他平台上重启后的停止保持未确认。节点启动 Agent 前先记下「进程未确认停止」，Agent 运行后才补记进程组；在这两步之间被杀的节点留下的记录同样保持未确认，不会被当作从未启动。Agent 启动后读不出它的进程组身份时（例如 Agent 在读取前离开了自己的进程组，或 `/proc` 以 `hidepid` 挂载而 Agent 以 setuid 身份运行、或把自己设为不可转储），没有记录的进程组在节点重启后无法确认停止，所以节点不使用这个 Agent：打开会话失败，已启动的进程组被结束，停止按上文规则确认。
-
-执行节点正常停止后，若原生会话的每条输入都已完成、没有待答问题，而且节点保存了进程退出确认，下一条新消息会加载同一个 Agent 原生会话。Steve 为这次续接建立新的执行记录，保留旧输入回执，并禁止两个执行同时占用同一份上下文。已导入的会话继续使用导入后积累的历史目录；不会重新复制最初的快照。适配器必须支持 `session/load` 或 `session/resume`，加载失败不会静默新建空白会话。未确认停止或输入结果不明的记录仍须通过原任务恢复入口核实。
-
-续接要求项目、工作目录、权限、插件运行时和 MCP 连接配置保持一致。每轮准入重新生成地址或启动参数的节点 MCP 绑定目前不能原地续接，会报告配置变化；需要显式 `/new` 开始新会话。内置 `steve` 授权及连接配置保持不变的插件不受这一限制。内置 `steve` 服务的 loopback 端口由 Steve 自己选择，记住的端口在重启期间被占用时会换一个；续接时 Agent 拿到新地址，端口变化不算配置变化，主机、路径和凭据仍须一致。这依赖 Agent 适配器在 `session/load` 或 `session/resume` 时使用请求里的 `mcpServers` 连接，而不是沿用会话里保存的旧地址；否则它会去连已被别的进程占用的旧端口。仍在运行的进程不会换地址：节点只在重启后换端口，而重启后的节点不会接回上一个节点进程启动的原生进程，只会结束它们或保持停止未确认，续接要求原进程已确认停止，因此节点对自己启动的进程仍按含端口的精确地址比较。除此之外，不要通过忽略 MCP 地址或绑定标识来跳过配置校验。
-
-跨节点恢复在目标节点上新开替代会话，不经过上面的续接。打开时内置 `steve` 服务连到目标节点当前的 loopback 端口，凭据仍用恢复计划冻结的那一份；查不到目标节点当前的端口时不打开，这次恢复留待核对。如果节点已经记下这次打开，之后又因重启换了端口，重试会被节点当作冲突拒绝，不会再起第二个原生会话，这次打开按结果不明留待核对。
-
-计划恢复从已提交的步骤输出和工作流检查点继续；输出分支使用稳定落地 ID。`applying` 阶段会按原目录完成 WAL 恢复，恢复前不能移动或退休该项目。任务只有在全部约定落地完成后才显示完成。
-
-### 隔离执行与复制操作
-
-`/tasks cancel ID` 撤销任务及子任务的执行授权并等待收尾；普通回合结束不会取消已派发子任务。`/cancel`（Console 的“停止”）停止当前回合，并一并取消该 Agent 在此会话中持有的每个任务（不论由消息、计划还是定时任务发起）派发出去、仍在运行的子任务；任务本身保持可继续，但被置为 held：子任务的结果不再自动唤醒它，用户下一条消息的回合会先带上这些子任务的状态和结果，再处理用户的话。hold 持久化，重启后的补发也不会绕过它。停止未得到执行端确认的子任务没有结果，在任务 held 期间的回合中报告；之后它在任务列表里保持已取消，执行端事后确认并写入结果时按普通交接送达。hold 解除后，它不会让之后的 `/cancel` 再次 hold 任务；hold 尚未解除时，再次停止保持 hold。若未能确认进程停止，隔离会继续阻止目录接管，租约到期也不会解除它。
-
-切换项目或执行 `/new` 时，旧会话中失败或阻塞的任务会被置为暂停，而不是标为完成。预算和执行历史保留，原任务及子任务的执行授权被撤销；尚未确认的原生停止仍需核对回执。新项目的输入使用独立任务，不继承旧项目的执行授权。
-
-切换项目时，新绑定及全部旧会话的归档在同一个事务中提交；权限检查、绑定冲突或归档保存失败时，两者都保持原状。`/cancel` 对覆盖的全部任务也在同一个事务中设置 hold，后一个任务被拒绝不会把前面的任务留在新 hold 中，原有 hold 的时间戳也不会被覆盖。
-
-`/new` 在发送原生关闭请求前先检查权限并持久化 `closing_at`。关闭已经批准后，归档只核对这个会话的原始身份，不再次以当前调用者权限拒绝收尾。响应丢失或归档保存失败时，这个标记跨重启保留，旧会话不能继续输入、恢复历史或迁移项目；再次发送 `/new` 重试原关闭，成功或执行端确认会话已不存在后完成归档。重试仍验证输入的调用者及通道身份，但不重新准入项目写权限、Agent 选择或任务退休；它只核对并完成原始关闭意图，不授权新的关闭。明确未送达且能定位原执行的关闭继续使用已有 owed-close 补发机制。
-
-`/model` 先检查权限并保存所选模型，再更新运行中的会话。保存被拒绝时不会更换原生模型；只有执行端回报所选模型的 ID 或名称后才回复切换成功。原生更新失败、回报空值或不同模型时，回复说明选择已经保存，下一条输入执行前会重新应用并确认，仍无法确认时不向 Agent 发送输入。
-
-其余任务标为 done，但这不是验收回执，而且要先通过下文 `/tasks complete` 所用的账本检查，范围比它窄：只查任务本身，已派发的子任务照常独立运行和交付；控制台里排队尚未开始、也不属于任何任务的输入（例如指令运行时接着输入的内容）不算未处理。任务仍有未结束或未确认停止的执行、待落盘产物、待你回答的问题或待确认事项，或控制台会话里还有别的正在运行、等待你回答、恢复中或属于某个任务的消息时，这次 `/new` 或切换项目被拒绝。会话不归档，项目绑定不变，任务保持原状。待办属于某个正在关闭的任务本身时（它的执行、产物、问题，或指定由它继续的消息），回复点名这个任务、说明原因，并提示先处理待办，或用 `/tasks cancel ID` 取消该任务；待办是会话里不属于这些任务的消息或问题时（例如另一个 Agent 的任务提出的问题或正在处理的消息、恢复中的消息），取消正在关闭的任务解除不了它，回复不点名任务，只说明会话里还有消息或待回答事项未处理，请等它们处理完，或回答、处理后再试。一次关闭多个任务时，若失败不是检查拒绝了其中某一个（例如某个任务刚被取消，或变更未能保存），回复不点名任务，提示稍后重试，或用 `/tasks` 查看后取消其中一个。检查在归档会话和改绑项目之前完成，不会留下会话已归档而任务未关的状态。已取消的任务不再参与这项检查：取消之后，即使原执行的停止尚未确认，`/new` 也不会因为这个任务被拒绝。在控制台里，任务已取消或已暂停、原回合只剩等待停止确认时，这个回合和它的等待提示也不算会话里未处理的消息或问题：之后发出的 `/new` 与其他待发指令照常执行，等待提示保留到停止确认为止（见[中断与恢复](desktop.md#中断与恢复)）。控制台里排在 `/new` 之后的输入在重置之后执行，进入新会话和新任务；排在切换项目之后的输入是按原项目受理的，切换完成后不会在任何项目中执行，回复说明会话已改绑到新项目、这条输入没有执行；需要的话在新项目里重新发送。
-
-聊天任务空闲一天后的自动关闭，和定时任务下次触发时对上次任务的轮换，也使用这组检查。轮换与 `/new` 一样不把排队尚未开始、不属于任何任务的输入算作未处理；空闲关闭与 `/tasks complete` 一样把它们算在内，因为这样的输入马上就会继续这个任务。未通过时任务保持运行：空闲关闭留到之后的清理再判断；定时任务这次不轮换，新的触发仍归原来的定时任务，与发给它的其他输入一样处理：控制台里排在原回合之后，与原回合仍在运行时相同；飞书没有这样的队列，原执行尚未结束或尚未确认停止时，这次触发与发给该任务的其他消息一样被拒绝，失败显示在这次触发的卡片上，不会另开任务。
-
-验收通过后，在主任务详情点击“完成任务” / “Complete task”，或发送 `/tasks complete ID`（别名 `done`、`完成`）。省略编号优先选择当前会话最新的运行中或待验收聊天主任务；重复完成同一编号返回稳定的已完成确认。完成不会重置会话或 native context；下一条新消息打开新主任务，旧 continuation 和 resume 不能重开已关闭任务。
-
-这是显式验收操作，不是“回合结束即任务完成”。准入仅限运行中或待验收的聊天主任务；计划、定时任务和委派子任务不能借此标为成功。暂停、失败、取消保留原操作。所有后代须已关闭（done/cancelled）、结果落盘且 delivery 为 delivered；委派后代的直接父任务已结束（done/cancelled）时，持久化的 suppressed 也视为交接已收口，但不冒称已送达。仍可重试的 failed 子任务、pending/queued/uncertain 收据、运行中父任务下的 suppressed 或缺少结果都不算收齐。已由用户 handled/ignored 的 failed 后代沿用手动收口合同，保留失败事实。任何未结束 attempt（含旧 epoch）、活动或保留执行、隔离/未知执行、尚欠的 native session close、待落盘产物、待父处理 continuation、用户问题或待确认外部效果都会拒绝。历史 attempt 缺少确定的物理执行收尾证据也会拒绝，需先由既有恢复流程核实，不能用“完成”绕过。
-
-服务端在会话执行槽和 execution registry 的准入锁内检查空闲，在任务锁及同一 ledger 事务内检查任务树、执行、交接和待处理事项并写入 done，同时撤销整棵树的旧执行 epoch。执行保留事务重新检查原 token，避免与完成竞态。前端 `can_complete` 只是已知状态提示，不是授权；服务端拒绝通过错误反馈展示，不显示为成功回执。
-
-尚未产出结果或交付记录的已取消子任务，以持久化的取消状态收尾；主任务验收不伪造它的成功结果或 delivery。活动、隔离或未知执行，以及待落地结果仍会阻止完成。已经产出结果的子任务继续遵守交付与处理收据检查。
-
-控制台里已经入队但尚未处理的消息、尚未持久化回执的普通回复也会阻止完成；当前的完成命令本身不算待处理工作。先收齐这些回执，再完成任务；完成后才发出的新消息仍正常进入新任务。
-
-后台落地队列按项目串行处理，回合结束、结果交接和定时清理共用有续租与 fencing 的驱动，避免同时落地同一份结果。旧版本可能留下“尚未取得写入租约即被拒绝”的重复落地记录；只有同一项目、目录、产物、来源 attempt 和 execution epoch 已有 committed 记录时，这类未写入记录才不阻止验收。原记录仍保留；真实合并冲突、已取得写入租约的失败或未完成 WAL 仍需处理。
-
-隔离工作树的显式 `Base` 和每个 input 必须是同一项目已经被产物 owner 接纳的 artifact；仅在影子 Git 仓库中存在的裸 SHA 或被拒绝的 snapshot candidate 不再足以物化。普通已发布的非 canonical 产物、经授权的派生产物和已记录的冲突树仍按原流程使用。没有可信 canonical name、且其他 writer 正持有 canonical 租约时，初始基线请求明确返回可重试的占用错误，不读取该 writer 的目录来补出裸 SHA。等待其建立 accepted name 或释放租约后重试；取得自己快照租约的调用者可以正常建立初始基线。
-
-canonical snapshot 的最终接纳事务核对原声明、目录、精确租约及恢复 hold，并与 artifact/content 索引和名称提交一起判定。已经发出的 I/O 可能完成，但完成回执、Git pin 或可达对象不等于新产物已经被接纳；同 SHA 更早已获接纳的历史事实不会因晚到拒绝而撤销。恢复副本仍从同事务固定的可信基线开始，原目录保留隔离。确认所有原目录写者已真实退出后，恢复驱动排空共享副本并保存原目录现状 R，以最初固定 B 将接受的副本 C 合到执行时的当前目录。不会恢复 B、reset/clean 原树或删除忽略及嵌套内容。冲突沿精确恢复关联交给手工或正常授权的解析者；未取得退出证明、完整来源当前授权或真实提交回执时继续隔离。最终 Result 与 released/原 hold 解除同事务，下一回合重新解析 canonical，不热改 native cwd。合回完成后自有容器仍受声明保护，核对固定路径、marker、安装/目录身份和机器 generation 并以锚定 handle 精确清理；副本新变化或未捕获内容使 cleanup 保持 pending，不重新封锁已释放原目录。节点或安装身份变化、未知替换及不支持的文件身份能力均保守等待。dev/inode、Windows file-id 不是永久不复用标识；协作声明与安装协议提供正常互斥，不承诺外部非合作 rename/check/unlink 的全目录原子性。
-
-仅在物理预检查阶段停止、尚未进入 applying 且没有内容冲突树的恢复 root，才能在障碍移除后以同一身份重新检查和准入。重试保留固定基线与 head，重新核对当前 owner 及全部来源权限，并原子消费精确对应的 Pending；已经进入 applying 的 WAL 或已提交结果只重放原决定，不重新发起落地。
-
-恢复路径检查和容器清理要求执行节点支持当前专用操作合同。节点不认识这些操作时直接拒绝，不回退到旧路径检查或旧清理实现；原目录继续隔离，或已释放目录的副本保持 cleanup pending。应先升级执行节点；无法匹配既有安装、容器或 connection generation 身份时仍保守等待，不以升级成功代替原机器退出或清理证明。
-
-恢复 owner 保存完整连续 head 来源链，并独立引用内容寻址的 Git 存储模式证据。保留检查不依赖普通 artifact 行仍存在；模式证据、producing attempt 事实或当前内容 manifest/依赖/发布回执缺失、错关联时保守拒绝删除与回收。模式证据用于核对历史事实和单条元数据损坏，不是密码学签名，不授予当前 task token、项目权限或合回授权，也不声称防御同时恶意重写全部账本。它随 accepted artifact 的历史事实保留，普通 artifact 行删除不能顺带删除仍被恢复 owner 引用的证据。
-
-
-`completed_by_user` 区分显式验收回执与原有的自动 done：只有前者能作为重复完成请求的幂等回执；普通 done 的已接受结果仍保留原有落盘授权。本入口保守地排除任务树中任何计划关联，不推断计划工作流是否已收敛，也不提供强制完成开关。
-
-父任务处理子结果时，如果另一个结果正在落地、占用了工作区，或执行端点暂时没有空位，平台会在同一个回合里等待准入，保留原通知和执行身份，不重复计入回合预算。等待受原请求的取消和超时约束。只有明确未创建执行的写锁/空位拒绝会重试；已经开始的模型执行和结果不明的失败仍保留原有确认边界。
-
-共享账本模式下，恢复中的“停止”针对原任务及其子任务；未收到原节点确认时继续保留等待。会话创建回执丢失时也应查询或取消原创建指令，不能通过新建会话试探。具体操作和确认条件见[桌面指南：中断与恢复](desktop.md#中断与恢复)。
-
-以下离线核实命令仅用于独立部署；共享账本模式应使用原任务的恢复入口，不能离线修改协作账本。
-
-以下命令用于检查隔离记录：
-
-```bash
-./steve ledger quarantine --config config.json
-./steve ledger clones --config config.json
-```
-
-先在记录指定的机器确认原进程已经退出。不能仅凭断连、关闭流或重启 Hub 认定退出。停止使用该状态目录的 Hub，再记录核实依据：
-
-```bash
-./steve ledger confirm-stopped --config config.json --evidence 'verified original process exit' ATTEMPT_ID
-./steve ledger confirm-clone-stopped --config config.json --evidence 'verified original clone process exit' CLONE_OPERATION_ID
-```
-
-然后启动 Hub 重新对账。确认 clone 停止只解除隔离；原目录内容是否完整仍需检查，后续由工作区管理操作重新准备。
-
-定时任务的飞书通知确定未发出时，触发保持待触发，下一次检查（20 秒内）重试；通知可能已到达飞书时触发结果不明（分类见 [Channel 设置](#channel-设置)）。定时任务结果不明时，`/schedules` 显示 `unknown`。检查对应通道和任务后，已执行使用 `/schedules confirm ID`；确认允许再次执行才使用 `/schedules retry ID`。确认和重试限原创建者或 owner；未处理的未知触发不能通过删除定时任务隐藏。
-
-## 门禁与 CI
-
-[Makefile](../Makefile)、[e2e/fleet](../e2e/fleet/) 和 [.github/workflows/test.yml](../.github/workflows/test.yml) 定义实际入口：
-
-| 命令 | 内容 | 期限/前置 |
-|---|---|---|
-| `make build` | 静态构建 hub 和 node | Go 1.27+；不启动服务 |
-| `make test` | Go 测试、竞态检查与依赖门禁 | 本地运行 |
-| `make test-console` | 前端构建、依赖与隔离浏览器测试 | 先安装 npm 开发依赖和 Playwright Chromium |
-| `make e2e-fleet` | 独立 hub + Docker 节点，确定性 Agent 验证委派与落地 | Linux、本机 Docker、匹配 Go 工具链；总期限 25 分钟 |
-| `make e2e-autonomous` | 同一隔离机群验证并行委派、能力调度与结果交接 | 同上；不调用真实模型 |
-| `make e2e` | `STEVE_MESH_E2E=1` 的 mesh 测试 | Go 测试总超时 25 分钟；独立测试机群配置见 [e2e/mesh/](../e2e/mesh/) |
-| CI | Go gofmt/vet/race、前端构建/依赖门禁/隔离浏览器测试 | master push 与 PR；不运行真实机群门禁 |
-
-上述 make 入口自行构建和清理隔离环境。真实模型验收使用下面的客户端，在 **hub 机器的仓库根目录**运行，使用已有 hub 和 node，不构建、部署或重启它们。它们以 owner 访问控制台 API，读取 hub 本机项目主目录，所以仅有远程 HTTP 访问不够；任务会使用真实模型并留下会话与文件证据。
-
-```bash
-go run ./e2e/fleet
-go run ./e2e/fleet -scenario autonomous
-```
-
-连接参数优先级为命令行 `-hub` / `-token` → 环境变量 `HUB` / `TOKEN` → 当前工作树的 `config.e2e.json` 中 `gateway.read_model_addr` / `gateway.read_model_token`。缺地址时用 `http://127.0.0.1:7710`，通配监听地址转换为 loopback；token 必填。新工作树必须自备连接配置或环境变量，门禁不会读取别的工作树配置。
-
-| 参数 / 环境变量 | 默认 | 含义 |
-|---|---|---|
-| `-config` | `config.e2e.json` | 仅连接配置，已 gitignore |
-| `-project` / `PROJECT` | `scratch` | 主目录在 hub 本机的测试项目 |
-| `-agent` / `AGENT` | `claude` | hub 上的协调 agent |
-| `-target-node` / `TARGET_NODE` | `node-b` | 普通 fleet 指定的远端机器 |
-| `-target-agent` / `TARGET_AGENT` | `shipper` | 普通 fleet 指定的远端 agent |
-| `-scenario` / `SCENARIO` | `delegate` | `autonomous` 由协调 agent 自己挑目标；`-scenario autonomous` 显式选择它 |
-| `-timeout` | delegate 为 `10m`，autonomous 为 `20m` | 可缩短，必须为正数且不能超过对应上限 |
-
-自主门禁还要求项目主目录有 `kvtool/main.go`，在线远端 node 的 `capabilities` 包含 `build`，并有可编译、可写文档的 agent。它检查至少两个子任务成功且执行有重叠、编译产物确实来自申报 build 的远端、README 校验章节与发布说明落地、`sha256sum -c` 成功、二进制是 ELF x86-64，以及子任务 attempt 和实际报告的用量。hub 需有 `sha256sum` 与 `file`。`steve_await` 次数超过子任务数的两倍会失败，避免把轮询当自主协调。
-
-门禁的客户端超时 **不会取消服务端工作**。超时后按输出中的 conversation/task/attempt ID 去控制台检查，必要时用 `/cancel`。成功输出分别以 `FLEET PASS`、`AUTONOMOUS PASS` 收尾；PR 证据要求及需重跑门禁的变更范围见 [CONTRIBUTING.md](../CONTRIBUTING.md)。贴输出前移除 token。
-
-## 排障
-
-先用资源页、任务详情、历史与审计关联机器、会话、任务 ID 和 attempt ID，再看对应 hub/node 日志。`steve top -config config.json -once` 和 `/fleet` 可确认运行中的机群；`steve dash -config config.json` 只检查读模型并打印 URL，不会启动另一个 hub。
-
-| 日志或现象 | 含义与处理 |
-|---|---|
-| `recovered settled attempt: ...` | 旧 attempt 有明确静止证据，启动已回收其占用；继续查看 task 的恢复记录。 |
-| `quarantined previous writer: ...` / `automatic revival is blocked` | 不能确认旧执行进程已经停止；按隔离恢复流程核实进程并记录证据，不要靠 TTL 或重启反复重试。 |
-| `execution shutdown incomplete` | 有界关闭未能确认所有执行已清理；启动时会保守对账，检查隔离列表和原机器进程。 |
-| `console: resuming task #...` | 为控制台任务建立恢复交换并继续；若出现 `console: resume task #...: ...`，查看后面的具体恢复错误。 |
-| `console restarted before this exchange completed` | 上一个进程未完成的 running 交换被明确结算为错误；任务若符合恢复条件，会另开恢复交换。 |
-| `node: <name> disconnected (connection ...)` / `node: <name> up ...` | 节点连接断开/重新连上；仅有 up 不代表原 agent 流已经续接，继续找 stream 日志。 |
-| `node: <name> reattached stream ... (after output ..., accepted input ...)` | hub 收到进程流的续接确认，记录输出游标和已接受输入位置。 |
-| `steve-node: reattached stream ..., replayed N lines` | node 回放缺失输出并切回实时流；`N=0` 也可能是正常续接。 |
-| `session grace exceeded` / `too old` / `stream is not resumable` | 宽限用尽、输出已不在 journal 保留范围或流不可恢复。检查断线时长、node 是否重启及磁盘/日志错误；改长 prompt_timeout 不能修复丢失的进程。 |
-| `delegate: ... task #C under #P on ...` | 子任务 C 已创建并交给所列机器，P 是父任务；后续靠这些 ID 查 attempt 与产物。 |
-| `delegate: delivered N child result(s) into ... for task #P` | 父会话投递接口已接受结果，delivery 状态已处理；不代表父 agent 已完成汇总，也不能单凭此行认定文件落地。查看消息中的落地状态、任务改动和主目录。 |
-| `delegate: deliver ...: <error>` | 结果投递失败，结果留在任务记录，待后续 flush 或启动补投递；先处理日志中的队列/持久化错误。 |
-| `delegate: suppressed N child result(s) for ended task #P: continuation not settled` | 父任务 P 已结束（done/cancelled），而它会话里的续跑消息（continuation）还没有已结算的处理回执，例如仍在等 owner 回答恢复问题；交接键在日志字段 `key` 中。子任务 delivery 记为 `suppressed`，原因按 Hub 默认语言写入 delivery 的 `error` 字段（写入后不随语言切换改写），控制台“结果交接”中可见；结果保留在子任务记录里，不再重发，也不再每轮核对回执。该 continuation 本身不被撤销，仍按会话恢复流程处理；之后它是否处理完不会改写子任务的 delivery 状态。 |
-| `sweep: landing ...: <state> (N paths)` | 每 30 秒的后台任务重试待落地产物；看实际 state，不能把这行一律当成功。 |
-| `sweep: land pending for <project>: <error>` | 后台落地遇到非占锁错误；查看对应产物/landing。规范锁被占用时继续排队，不打印这一错误。 |
-| `sweep: removed N orphaned worktree(s) on ...` | 清理没有活 attempt 持有的隔离工作树；启动及 node 连接时会触发检查。 |
-| `sweep: worktrees on <node>: <error>` | 该机器的孤儿工作树清扫失败；检查可达性、目录和文件权限。 |
-| `coordination: unavailable: local replica did not reach applied index ...` | 协调节点本机的账本副本落后于集群已提交的状态。写入在提交前最多等副本追上 5 秒，超时即放弃，这次写入没有提交，可以重试；激活业务代时等不到自己的写入 fence 也会放弃，副本追上后重新激活。写入已由共识 leader 提交、本机 5 秒内没有应用时，错误末尾带 `; write <ID> was committed`：这次写入已经生效，只是本业务代的缓存还看不到它，所以本业务代被撤销，副本追上后重新激活的业务代能读到它，不要当作失败重做。运行时循环经仲裁读确认本机是协调者后、激活前也等本机副本追上这次读，超时同样报这条错误，这一轮不激活，下一轮重试。持续出现时检查该节点与共识 leader 之间的 Raft 连接和本机磁盘。 |
-| `coordination: unavailable: the state machine did not apply the log up to read index <N> within 5s; it has applied <M>` | 共识 leader 上的仲裁读（读取集群状态、写入前核对协调者等）已经由多数派确认，读取位置是 N，但本机状态机 5 秒内没有把到 N 为止的条目应用完，这次读放弃，没有返回状态，可以重试。leader 的仲裁读连同确认最多等 5 秒（一个 ApplyTimeout）。持续出现时检查 leader 本机磁盘和账本应用是否卡住。 |
-| `coordination: unavailable: term <T> was not established: another request's barrier did not complete within 5s; this node's log ends at index <L>, committed <C>, applied <A>`，或 `coordination: unavailable: in term <T>, a barrier did not complete within 5s; ...` | 共识 leader 在任期 T 内第一次仲裁读或 read index 时向日志追加一个 barrier，等它之前的条目全部提交并由本机状态机应用完，同时到达的请求排队等这一个 barrier（`another request's barrier`）；写入和控制命令在 leader 还没有确认本任期时也先等一个 barrier。5 秒内没有完成，这次请求放弃：读没有返回状态，写入和命令没有提交，可以重试。末尾是本机日志末尾、已提交和已应用的位置：applied 明显落后于 committed 时是本机状态机应用卡住，检查 leader 本机磁盘和账本应用；committed 落后于日志末尾时是多数派没有确认，检查成员之间的 Raft 连接。 |
-| `coordination: unavailable: a majority did not confirm this node's leadership in term <T> within 5s; ...` | 共识 leader 为仲裁读或 read index 请多数派确认自己仍是 leader，5 秒内没有得到确认，这次读放弃，可以重试。leader 失去多数派时通常先因租约到期下台，请求转到新 leader；持续出现时检查成员之间的 Raft 连接。 |
-| `coordination: unavailable: the quorum read of the coordinator assignment did not finish within 5s` | 协调节点的运行时循环在激活业务代前，以及业务应用构建期间每个轮询间隔，经仲裁读核对协调者任命和业务代。本机不是共识 leader 时这次读发给 leader，5 秒内没有读完就报这一行：激活前的读放弃这一轮，下一轮重试；构建期间的核对放弃正在构建的业务代，下一轮重新激活。本机就是共识 leader 时不报这一行，而是报上面 barrier、多数派确认或状态机应用那几行之一，指明卡在哪一步，处理方式相同。持续出现时检查本机到共识 leader 的 peer HTTPS 与 Raft 连接，以及 leader 本机的磁盘和账本应用。 |
-| `coordination: unavailable: leadership transfer in progress` | 共识 leader 正在把 leader 身份转给别的成员（只发生在移除 leader 所在节点时），转移期间它拒绝仲裁读和 read index 请求：被转移的目标发起选举时，其他成员会立即投票，旧 leader 这时得到的多数派确认不能说明它仍是 leader。转移结束后自然消失，可以重试；其他成员选出新 leader 后，请求转到新 leader。移除 leader 所在节点时，成员对已打开 worker 连接的定期确认（每 5 秒向 leader 取一次 read index）若落在转移窗口内，会先被旧 leader 拒绝；成员在这次确认的 5 秒时限内轮流向其他成员重试，转移结束或新 leader 选出后由 leader 确认，确认成功则连接保留。只有 5 秒内没有 leader 确认时，这次确认才失败，该成员上已打开的 worker tunnel 会全部关闭，registry 随后重新拨号（见下面 `cluster: worker tunnel closed` 一行）。 |
-| `coordination: unavailable: no member took <动作> within 5s: ...` | 发往共识 leader 的集群调用（成员加入/移除、协调交接、改名等控制命令，读取集群状态和账本写入）5 秒内轮询了所有已知成员，没有成员接下：尚未选出 leader、成员不可达或正在交接领导权。5 秒窗口结束前发出的最后一次请求还会等到它自己的超时，所以调用最长约 10 秒（窗口加一次单次超时）才返回。本机不是 leader，或执行控制命令途中失去 leader 身份、副本停止时，命令会转给其他成员，这时错误末尾的 `(this member answered: ...)` 是本机自己的错误；本机仍是 leader 却没能完成的命令不转发，直接返回本机的错误。命令沿用原 ID，已提交的部分按回执去重，可以原样重试；持续出现时检查成员之间的 Raft 与 peer HTTPS 连接。控制命令已完整发给某个成员、它在单次超时内没有回应时不报这一行，见下一行。 |
-| `coordination: unavailable: peer <成员> was sent <动作> and did not answer within 5s; the command may still be in progress there, and retrying it with the same ID continues it: ...` | 控制命令（成员加入、投票变更、协调交接等）已完整发给该成员（通常是共识 leader），它在单次请求超时（5 秒）内没有回应。leader 分几步执行这些命令，每一步各以 ApplyTimeout（5 秒）为上限：加入要生成基线快照、把新成员加为非投票成员并等它追上，合起来可能超过一次请求的超时，本机这时不再等待。仍按不可用返回，可以重试；leader 已经开始的步骤不会撤回，命令可能仍在进行，沿用原 ID 重试时跳过已完成的部分接着做（已提交的记录按回执去重，已在配置中的成员不再重复加入，也不再为它生成基线快照）。Hub 接纳新机器时每次轮询（间隔 500 毫秒）都以同一 ID 请求加入，通常在之后的某次轮询中完成。只有请求已完整交给本机到该成员的连接、对方在超时内没有回应才报这一行；这不证明对方已经收到，请求发出后网络不通时也会这样报。连接没建立或请求没发完就超时、对方没有回应就关闭连接等其他失败，仍报上一行 `no member took`；没有回应的成员之后再被发送时以其他方式失败（例如连不上，或明确拒绝、已不是 leader）的，也改报上一行。持续出现时先检查本机到该成员的 peer HTTPS 连接，再检查 leader 的磁盘、账本大小和新成员的追赶进度。 |
-| `coordination: unavailable: snapshot of the application baseline for <节点> did not finish within ...; it may still finish later` | 加入成员前，共识 leader 为新成员生成账本基线快照，5 秒内没有完成就放弃这次加入。在 leader 上发起的加入直接返回这个错误，不再转发；经其他成员转到 leader 的加入，转发的请求等不到这个回答就超时，报上面 `was sent join and did not answer` 一行，不带这段文本。快照仍可能稍后完成，重试加入时等的是尚未完成的同一个快照。持续出现时检查 leader 的磁盘和账本大小。 |
-| `coordination: peer error: ...` | 对端返回了未分类的错误（peer RPC 以 HTTP 500、code `unclassified` 回复），或返回了本版本不认识的 code（例如来自更新版本的成员）。它不是请求本身的问题，不会自动重试，也不作为无效请求返回；对端的原始错误文本就在冒号之后。 |
-| `coordination: unavailable: this replica stopped leading consensus and knows no other leader` | 协调节点同时是共识 leader，下台后还不知道新的 leader，立即放弃当前业务代。下台有两种原因：失去多数派、leader 租约到期后自行下台，这时多数派可能已经选出别的 leader 并任命了别的协调者；或者别的成员已进入更高的任期（例如与它短暂失联后发起了选举），它从复制或心跳的回复中得知后被动下台，在新 leader 的第一条消息到达前同样不知道 leader。本机分不清这两种情况，一律放弃。后一种情况下协调者其实没有变，只是多重建一次业务代；这是偏保守的做法，每次写入都会经多数派核对协调者和业务代，旧业务代的写入会被拒绝，不会因此写错数据。主动转移 leader 身份只发生在移除 leader 所在节点时，而协调节点不能被移除，所以不会因此放弃。重新听到 leader 后，先经一次仲裁读确认自己仍是协调者，再重新激活。持续出现时检查该节点到其他成员的 Raft 连接。 |
-| `coordination: unavailable: this replica has heard from no consensus leader for 5s` | 协调节点不是共识 leader，5 秒没有听到任何 leader，放弃当前业务代。重新听到 leader 后，先经一次仲裁读确认自己仍是协调者，再重新激活。持续出现时检查该节点到 leader 的 Raft 连接。 |
-| `coordination: unavailable: this replica has heard from no consensus leader since it started` | 节点启动（包括重启）后 5 秒内没有听到任何共识 leader，而本机副本记录自己是协调者。启动后的前 5 秒只当作等待选举，不报这条错误，也不做仲裁读；之后听到 leader，照常经仲裁读确认并激活。持续出现时检查多数派成员是否在线，以及本机到它们的 Raft 连接。 |
-| `coordination: unavailable: this replica has not applied committed entry <N> within 5s; it has applied <M>` | 协调节点本机已知条目 N 已经提交，却 5 秒内没有把它交给本机状态机应用，放弃当前业务代：这期间可能已有别的节点被任命为协调者，本机还没看到。副本追上后，先经一次仲裁读确认再重新激活。持续写入时副本总比最新提交落后一点，但不会有哪一条停留 5 秒，不会因此放弃。持续出现时检查本机磁盘和账本应用是否卡住。本机日志复制本身落后、而 leader 心跳照常到达时，本机不知道有新条目提交，这项检查看不出来，由定期的副本确认发现（见下面 `could not be confirmed with a quorum` 一行）。 |
-| `coordination: unavailable: the replica could not be confirmed with a quorum: ...`，或 `coordination: unavailable: no quorum has confirmed this replica for <时长>` | 本机不是共识 leader，经多数派确认本机副本失败，或 3 个 ApplyTimeout 内没有一次确认成功：本机是协调节点时放弃当前业务代（日志 `cluster: business generation <N> invalidated`，`cause` 为这条错误），这台机器上的 worker 连接全部关闭（见下面 `worker tunnel closed` 一行）。本机日志复制落后、而 leader 心跳照常到达时，本机不知道有新条目提交，副本照旧记录原来的协调者、业务代和成员，上面几项检查都看不出来：可能已有别的节点被任命为协调者，本机还没看到。所以不是共识 leader 的节点，只要在运行业务代或开着 worker 连接，就每个 ApplyTimeout（默认 5 秒）向 leader 取一次 read index（leader 经多数派确认自己仍是 leader，不向 Raft 日志追加条目，只是每个任期第一次可能追加一个 barrier，通常已由运行时自己的仲裁读追加过），再在 ApplyTimeout 内等本机状态机把到这个位置为止的条目全部应用完（Raft 已交给状态机、状态机还没应用的不算，状态机卡住时这次确认失败）；业务代和这台机器上的连接共用这次确认，激活业务代、打开连接时的仲裁读也算一次确认。因此复制落后时，旧协调者最迟在被替换后约 2 个 ApplyTimeout 加两个轮询间隔（默认约 10.4 秒）放弃业务代；共识 leader 恰在一次确认途中易主时，这次确认可能漏掉新 leader 提交的替换，可能再晚一个 ApplyTimeout。放弃后先经一次仲裁读确认自己仍是协调者，并等本机副本追上这次读（追不上时报上面 `local replica did not reach applied index` 一行，下一轮重试），再重新激活。共识 leader 本机不做这项确认：它持有全部已提交条目，下台且不知道新 leader 时立即放弃（见上面 `stopped leading consensus` 一行）。原因同时含 `does not serve readindex requests` 时，是 leader 所在机器运行的版本还不支持这项确认，集群全部升级后消失。持续出现时检查该节点到 leader 的 Raft 连接和本机磁盘。 |
-| `coordination: snapshot restored`（附 `applied_index`、`bytes`、`took`） | 本机账本副本用一份完整快照替换了状态（Info 级别）。本地已有快照的节点每次启动恢复一次，属正常；运行中出现，是 leader 给本机安装了快照：新成员加入时装入账本基线，或本机缺的条目已被 leader 压缩进快照、不能再逐条复制追上。`applied_index` 是快照所含最后一个命令或配置条目的位置，Raft 快照自身的位置可能因其后的 barrier 略高；`bytes` 是读入的快照字节数；`took` 从读快照算到状态替换完成，不含从 leader 接收快照的时间。运行中反复出现时检查本机到 leader 的 Raft 连接。 |
-| `cluster: business generation did not start: ...` | 协调节点上的业务应用没能构建（Error 级别）。节点保留副本，继续复制和投票，业务代保持停用，原因可在集群状态中读到；下一次构建前等待，等待从 5 个轮询间隔起每次翻倍，最多 30 秒。构建失败的原因是协调暂时不可用（`coordination: unavailable: ...`）或本业务代已失去授权（`caller is not coordinator`、`not consensus leader`、`stale coordinator epoch`、`stale writer generation`、`business generation is inactive`）时，不当作构建失败，不出现这一行，也不按上面的间隔等待：本业务代被撤销，下一个轮询间隔重新经仲裁读核对后再激活，与激活时等不到本机应用写入 fence 相同。撤销记一行 `cluster: business generation <N> revoked`（附 `cause`），原因是 `caller is not coordinator` 时为 Info，其余为 Warn。之后的构建连续再遇到这类原因时，每次以 Warn 记 `cluster: business generation <N> met lost or unconfirmed authority again; next attempt in <间隔>`，间隔从 1 个轮询间隔起每次翻倍，最多 30 秒；有业务代就绪后重新计数。 |
-| `cluster: worker tunnel closed`（附 `cause`），或拨号返回 `worker tunnel rejected: HTTP <状态>: <原因>` | 协调者到某台机器 worker 的连接被关闭或被拒绝，registry 之后会重新拨号。连接打开时经仲裁读确认协调者 epoch 和业务代（writer generation），协调者拨其他机器时两端各读一次，并等本机副本追上这次读；这次仲裁读与下面的定期确认有相同的局限：共识 leader 恰在确认途中经选举易主时，可能漏掉新 leader 刚提交的替换，这时由之后的定期确认或下台时的检查关闭连接；共识 leader 转移 leader 身份期间拒绝这类读（见上面 `leadership transfer in progress` 一行）：一端所在机器正是正在转移的 leader 时，这一端的读直接失败，拨号失败，registry 随后重拨；其余情况下这一端不是 leader，读发给 leader，在拨号的 5 秒时限内轮流向成员重试，转移结束或新 leader 选出后读成功，拨号照常完成。连接只属于发起拨号的那个业务代，业务代换了就不再拨号；拨号途中业务代结束的，这次拨号失败，不交出连接。worker 上的命令执行（exec）、文件读写、直接启动的 agent 进程（ACP）、技能与配置下发等只凭这条连接的授权；节点会话、会话回执和插件请求另由 worker 逐个经仲裁读核对。连接打开后，两端每 100 毫秒对照本机副本，以下情况关闭连接：本机副本记录的协调者或业务代变了，或那台机器已不再是成员，本机副本应用这一变化后 100 毫秒内关闭；协调者一侧打开连接的业务代结束（被撤销、交出或重建），立即关闭，不等业务代停完；本机副本不够新，判断与协调节点放弃业务代相同（见上面几行）。不是共识 leader 的机器，只要开着连接，还要定期经多数派确认本机副本，与这台机器上的业务代共用同一份确认（见上面 `could not be confirmed with a quorum` 一行）：确认失败（`cause` 含 `could not be confirmed with a quorum`），或 3 个 ApplyTimeout 内没有一次成功（`cause` 含 `no quorum has confirmed this replica`），这台机器上的连接全部关闭。因此复制落后时，连接最迟在协调者被替换后约 2 个 ApplyTimeout 加 0.2 秒（默认约 10 秒）关闭；共识 leader 恰在一次确认途中易主时，可能再晚一个 ApplyTimeout 关闭。协调者一侧的连接还随旧协调者放弃业务代关闭。共识 leader 本机不做这项确认：它持有全部已提交条目，下台且不知道新 leader 时立即关闭连接。新连接与已开连接用同一个判断：副本不够新的机器在重新听到 leader 前拒绝新连接，拨号返回 503 和上面的原因；确认失败后，新连接同样要经仲裁读并等本机副本追上才能打开。空闲连接不向 Raft 日志追加条目（每个任期第一次可能有一个 barrier，同上）。协调交接或业务代重建时偶尔出现属正常；反复出现时按 `cause` 检查该机器到 leader 的 Raft 连接和本机磁盘。 |
-| `cluster: content refused <code> <method> from <caller>: HTTP <status>: ...` | 存放内容副本的节点拒绝了一次内容请求；同一调用方、同一 code 每分钟只记一行，其间未记的次数写在 `suppressed`。403 是拒绝：`authority` 是调用方身份、证书或集群不符，或调用方正在被移除；`stale` 是调用方带来的协调 epoch 或 writer 代不是已提交的当前值（hub 按本业务代已结束处理：本业务代的补副本和回执清理就此结束，不再逐个联系其余节点，也不再开始新的一轮，也不发任何通知——既不对内容，也不报扫描或清理失败；hub 只记一行 `content repair: scan stopped, its generation has ended` 或 `content repair: maintenance stopped, its generation has ended`，`cause` 是停下的原因，清理停下时还列出本轮此前各节点的失败；扫描停下时也不再清理；下一业务代重新核对）；`placement` 是按已提交状态该节点不能存放这个项目的内容（没有平台配置、项目未声明或不归本 hub）。503 不是拒绝，可以重试：`lagging` 是该节点的账本副本在 ApplyTimeout（默认 5 秒）内没有追上集群已提交的状态；`unavailable` 是读不到已提交状态、本机副本已停止应用、项目声明尚未跟上平台配置，或本机暂时无法处理。hub 不把 503 当作放置拒绝，补副本保留已有记录、下一轮重新核对；读取副本时遇到的 503，通知会指向持有副本的节点；补存副本时，被请求存放副本的节点回 503（或不带 code 的 5xx）的，通知会点名这些节点，但同一次补存中另有节点回 `quota`（507）时改为提示检查存储配额，副本记录没能提交时改为提示记录尚未提交（后者优先）；这些通知都不指向本机。持续 `lagging` 时检查该节点与共识 leader 之间的 Raft 连接。其余 code 与请求本身有关：`method`（405）、`invalid`（400，描述符无效或缺项目）、`too_large`（413）、`quota`（507，该节点存储配额不足）、`integrity`（422，内容校验不符）、`missing`（404，该节点上找不到这份内容的副本）。 |
-| `cluster: content failures of <key> since <time>: N not logged` | 上一行的限速在忘掉一个调用方与 code（或 hub 端一个节点与状态码）时，补记这段时间里没有写出的次数，计数不丢，只是迟到。限速最多同时跟踪 256 个键，超出时新键每次都记。 |
-| `cluster: content reply from <node>: HTTP <status> without a code: body "...": ...` | hub 收到的拒绝回复里没有它认识的 code，引号内是回复开头至多 64 字节；同一节点、同一状态码每分钟只记一行。此时只按 HTTP 状态判断：5xx 视为暂时不可用，下一轮重试；其余状态（包括 403）只是一次普通失败，不当作放置拒绝，也不当作暂时不可用。通常是该节点运行的版本与 hub 不一致，或请求被中间代理拦截（例如代理返回的 HTML 页面）。 |
-| `lease issuer on <addr>: listen tcp <addr>: bind: address already in use`（或其他 listen 错误） | 配置了 `gateway.issuer_addr`，但 Hub 启动时绑定不了这个地址。常见原因是端口已被其他进程占用、地址不属于本机或没有绑定该端口的权限。`steve run` 以这条错误退出，已打开的账本和状态目录锁随之释放。集群节点（`steve peer`，桌面 App 同样）在本机担任协调者、启动业务代时遇到它，记 ERROR `cluster: business generation did not start: activate business generation: lease issuer on ...`，按上面 `cluster: business generation did not start` 一行处理：本机保留副本，继续复制和投票，业务代保持停用，之后每次重新构建前等待，最多 30 秒，仍绑定不了时再记这一行。构建成功之前，本机担任协调者期间业务不可用；本机共识服务照常应答，自动容灾不会因此把协调者移到其他机器，需要尽快恢复业务时手动交接协调者（见[桌面指南](desktop.md)）。释放端口、在本机配置中改用其他地址，或不需要对其他区域签发租约时删除 `issuer_addr`，下一次构建即生效，不需要重启。Hub 运行中签发服务意外停止时，以 ERROR 级别记录 `steve: lease issuer on <实际监听地址>: <错误>`，Hub 继续运行。 |
-| `gateway.owner_id is required for a console-only hub` | 独立控制台缺少 owner。设置稳定的 `gateway.owner_id`；控制台 token 用于认证，不能代替 owner 身份。 |
-| `能力或身份文件已变化，请先发送 /new` / `Capabilities or identity files changed` | 会话保存的能力指纹与当前装配结果不同。只有身份与平台说明的变化可以原地补发；MCP、技能或可见性配置变化，以及没有会话配置基线的旧会话（在引入基线之前最后一次对话的会话），都要求 `/new` 一次，之后新会话带基线，身份/平台说明的更新不再要求 `/new`。不要为了隐藏提示跳过校验。 |
-| `Authentication required`，但资源页 harness 可用 | 可执行程序存在/能启动不等于模型认证有效；检查 node 的登录环境、认证链接和隔离 home，尤其不要用裸环境启动 node/nodectl。 |
-| `harness ... missing` 或 `start agent ...` | 检查目标机器命令的绝对路径、执行权限、解释器及 PATH；不是只检查 hub 的安装。启动探针有 3 秒期限。 |
-| `this node is served by hub ...` / `this node belongs to hub ...` | 机器已有活 hub 或仍在归属宽限；确认连接的 hub 名称和 token，按明确的移交流程处理。 |
-| `mcp_servers and mcp_broker are exclusive` | node 同时配置了内置服务和独立 broker；定义应只由其中一个持有。 |
-| 有回复但记忆没有变化 | 只在 owner 私聊/控制台允许写；项目 scope 只能是会话绑定项目，委派子任务不能写。记忆更新在新会话首轮注入，当前上下文不会立即重注入；同 scope 幂等键 24 小时内重放原回执。 |
-
-排查快照时，记住影子仓库会收录未提交文件，并按快照忽略/大小规则筛选；不能从“源仓库没 commit”推断没有产物。新影子仓库先在同父目录的私有暂存目录中完成初始化和配置，再发布到正式路径；操作取消时只清理本次创建的暂存目录，不在正式路径留下未完成的 Git 配置锁。已有非空目录缺少 `steve-initialized` 标记时，会独占取得本次配置锁，核对同一份配置快照，只有完整的 bare 仓库且身份、自动维护配置均符合要求，才会在持锁期间补标记并保留已有产物。配置不会被重写；正常退出时释放本次取得的锁，已经发现锁身份改变则保留路径并报错。这遵循 Git 的 `config.lock` 排他创建协议，不保证其他程序强行删除或替换活锁、移动整个仓库目录时仍安全；身份检查和文件删除不是一条条件原子操作，维护前必须先停止使用该目录的进程。不完整目录、未知 `config.lock` 或不同配置会明确报错，不会自动修补只有 HEAD 的部分仓库、盲删未知锁或重建已有数据。
-
-`steve-initialized` 只接受普通文件且内容严格为 `1\n`。完成标记先写入同目录的私有文件并成功关闭，再用硬链接不覆盖地发布；写入、关闭、取消或发布失败不会暴露未完成标记。影子仓库所在文件系统须支持同目录硬链接；不支持时明确失败，不改用会覆盖目标的重命名。现有未知、残缺、目录或符号链接标记会被拒绝并保留，排查时应先确认其来源。
-
-排查委派时，区分 **子任务完成 → 产物耐久 → 落地 → 结果投递 → 父任务续跑**，以实际账本状态、变更索引和目标文件为准。
-
-从备份恢复账本属于单独的维护流程：停止使用该状态目录的 hub 后，按 [cmd/steve/ledger.go](../cmd/steve/ledger.go) 的命令执行 `steve ledger rotate -config ...`、`steve ledger recover -config ...`，使旧租约失效并对账；用 `steve ledger status -config ...`、`steve ledger effects -config ...` 检查。不确定的外部动作由 owner 在 `/effects` 中裁决，不能因为重试就假设它从未发生。普通连接抖动不需要 rotate/recover。
-
-历史文档中的 `steve config apply` 和 `steve-node streams` 都不是当前已实现的命令；当前排障入口是上面的控制台、read model、日志和 ledger 子命令。
+无法确认停止的执行保持隔离，防止另一执行同时写同一目录。不要通过删除状态、重复发送 prompt 或缩短租约冒充恢复。使用原任务的恢复入口核对；详细操作见[中断与恢复](desktop.md#中断与恢复)。
 
 ## 插件安装与会话版本
 
-插件往**别的节点**部署需要 hub 作为集群应用运行：节点只接受已提交协调者的插件操作。未初始化集群的独立 hub 能导入、能配置、能管自己这台机器，控制台目标状态会写明 `this hub is not a cluster coordinator`；服务部署按上面的 `peer-init` 流程初始化。插件的包准备、节点部署、启用与会话使用是不同状态。控制台「插件」页显示目标机器的实际回执；查看 [插件操作指南](plugins-local.md)。凭据先在执行机器用 `steve plugins secret-put` 从 stdin 写入，管理端仅选择版本引用。不要把密钥放到普通设置、包归档、日志或 MR 中。
+控制台管理包导入、节点配置、启用和会话引用。跨节点准备需要已提交的集群协调者；独立 `steve run` 只能管理自身的插件部署。节点凭据用 `steve plugins secret-put` 从 stdin 写入，协调端选择版本引用。
 
-旧会话使用固定的包摘要、技能目录和 MCP 路由。升版或回退只改变新会话；停用只阻止新绑定。撤销项目/节点范围后，核心会拒绝该范围的新准入和会话接回；已发出的外部请求不会被撤销。
+安装保存、节点准备和新会话启用分别显示。升级影响新会话，旧会话保持原包摘要和运行目录；缺失旧版本会阻止恢复，不自动换成最新版。参见[插件指南](plugins.md)与[作者参考](plugins-local.md)。
 
-| 症状 | 核查与处理 |
-|---|---|
-| 目标机器显示未准备/不可用 | 检查该节点协议、解释器/平台条件和必需凭据引用，然后重试准备。保存配置不等于节点已准备。 |
-| 导入或预设提交结果不明 | 使用「重试原请求」，保留原命令 ID。操作记录可重查；不要推断超时等于未提交。 |
-| 保存返回配置修订冲突 | 保留草稿，读取最新配置并重新审核。不要绕过 `base_revision`。 |
-| 升版后新会话缺少预设能力 | 原预设可能引用了新版移除的技能或 MCP；显式应用兼容预设，再重试。 |
-| 移除被阻止 | 查看空闲/归档会话、待恢复执行、准备中的引用及历史目标节点。关闭已空闲原生会话并等待退出确认；失联节点不能按超时忽略。 |
-| 重启后运行目录或固定技能缺失 | 恢复原节点内容并核对摘要；不要用当前最新版重建原会话，也不要重发结果不明的 prompt。 |
-| 跨节点恢复无法准备插件 | 恢复计划保留原包版本，目标节点须有匹配的本地凭据与依赖。旧包或凭据不可用时保持阻塞。 |
+## 备份与迁移
 
-移除安装会回收确认无引用的运行 home，保留共享包库、命令记录、Agent 当前配置和对话记录。原始用户技能目录与机器 MCP 定义不由插件卸载删除。不要手动清理 `plugins/runtimes`、`runtime-commands`、`removed-runtimes` 或版本化凭据；这些记录用于在故障后区分已退出、结果不明与仍可恢复的会话。
+正常关闭服务并确认执行停止后，备份配置、集群 sidecar、完整状态目录、项目主目录和节点私有状态。凭据与原生 agent 登录也需要由所属机器的备份策略覆盖。账本副本不是所有项目文件的备份。
+
+跨独立实例迁移使用[项目迁移](project-migration.md)。从账本备份恢复使用 `steve ledger status`、`rotate`、`recover` 和 `effects`，命令参数见 [ledger CLI](../cmd/steve/ledger.go)。Rotate/recover 会影响租约，应在停服维护中使用；普通断线不需要它们。
+
+## 排障
+
+| 状态 | 核查与处理 |
+| --- | --- |
+| Agent 显示可用，执行却要求登录 | 在执行机器的部署用户环境核对认证和隔离 home；检测到程序不证明模型登录有效。 |
+| 工具缺失或启动失败 | 核对目标机器上的绝对路径、解释器、PATH 和代理配置。 |
+| 提示能力或身份文件变化 | 新建原生会话，让技能、MCP 和插件按当前配置装配。 |
+| 节点显示协议不兼容 | 升级提示指明的一端，并检查实际运行进程版本。 |
+| 节点属于另一个 Hub | 核对稳定 owner 身份；需要移交时使用停服后的 adopt，不删除归属记录。 |
+| 子任务完成，文件尚未出现 | 查看落地记录：目录可能正忙、待恢复或存在合并冲突。 |
+| 停止或外部动作结果不明 | 保留原任务/操作 ID，核对原执行或外部回执；重试观察不等于重做动作。 |
+| 插件准备失败 | 查看目标节点的解释器、平台、凭据引用及协调者授权。 |
+| 配置保存冲突 | 读取最新修订并合并草稿；不要覆盖外部修改。 |
+| 共享账本无法写入 | 检查完整节点及多数派；离线不会自动缩小投票成员数。 |
+| 影子仓库初始化或锁异常 | 停止使用该目录的进程后检查完整性；保留未知锁与数据，不直接删除重建。 |
+| 服务启动失败 | 核对私有目录权限、单实例锁、监听地址和端口，以及日志中的首个错误。 |
+
+保留问题对应的任务、attempt、操作 ID 与日志，避免附带 token、邮件正文或私有配置。服务接口只返回受理时，要继续读取原记录确认执行和外部结果。
