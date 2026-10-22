@@ -1,0 +1,26 @@
+name: github-provider
+on:
+  push:
+    branches: [master]
+    paths: ['providers/github/**', '.github/workflows/github-provider.yml']
+  pull_request:
+    paths: ['providers/github/**', '.github/workflows/github-provider.yml']
+jobs:
+  github:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: providers/github/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: providers/github
+      - run: npm test
+        working-directory: providers/github
+        env:
+          STEVE_GITHUB_INTEGRATION: '1'
