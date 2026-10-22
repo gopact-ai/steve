@@ -28,7 +28,7 @@ Every refusal other than `401` has a JSON body:
 | 403 | `forbidden` | The thread belongs to a channel and is read-only, or the question belongs to someone else. |
 | 404 | `not_found` | The thread, turn, question, task or line does not exist. |
 | 409 | `command_conflict` | The `command_id` was already used with different content. |
-| 409 | `project_conflict` | `expected_project` differs from the thread's project. It is checked before anything else in the submission. Nothing was queued. |
+| 409 | `project_conflict` | `expected_project` differs from the thread's project. It is checked after the request itself is validated (`command_id`, `input`, `locale`, write access, which items may be quoted, and the `command_id` replay check) and before quoted items are resolved, materials are attached or a rewind is applied. Nothing was queued. |
 | 409 | `conflict` | The object has moved on: the turn is no longer queued or has ended, or the question is resolved. |
 | 409 | `stale_cursor` | A page cursor no longer matches the data. Read again from the start. |
 | 501 | `not_implemented` | This server is not set up to serve the method. |
