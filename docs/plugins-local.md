@@ -20,6 +20,12 @@
 ./steve plugins show -store /tmp/steve-plugins -digest <preview中的digest>
 ```
 
+仓库的 `plugins/` 目录收录随 Steve 发布的能力包。`plugins/steve-dev` 包含在 Steve 中开发、评审和发布 Steve 本身所需的技能，以及 maintainer、reviewer 两个 Agent 预设：
+
+```sh
+./steve plugins preview -source plugins/steve-dev
+```
+
 所有命令都使用独立的本地包存储，不加载 hub 配置，不建立模型会话。`preview` 不创建包存储；读取 Git 时只使用会被清理的临时裸仓库。`prepare` 不执行包内代码或安装脚本。
 
 同一 `command-id`、摘要和来源重试，返回原回执；完成准备后，来源目录被删除也能重放回执。来源自预览后改变时，摘要校验拒绝准备。已经开始准备的同一包 ID/版本不能换内容；发布改动请使用新版本。

@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "api": "steve.plugins.v1",
+  "id": "gopact/steve-dev",
+  "version": "0.1.0",
+  "description": "Develop, review and release Steve from inside Steve: repository conventions, verification gates and release steps, with maintainer and reviewer presets.",
+  "skills": {
+    "contribute": "skills/steve-contribute",
+    "review": "skills/steve-review",
+    "release": "skills/steve-release"
+  },
+  "agents": {
+    "maintainer": {
+      "harness": "codex",
+      "system_prompt": "You maintain the Steve repository. Work on a branch, keep each pull request one coherent change, run the gates the change touches and report their actual output. Do not merge, tag or deploy without the owner's explicit approval in this conversation.",
+      "skills": ["contribute", "release"]
+    },
+    "reviewer": {
+      "harness": "claude-code",
+      "system_prompt": "You review Steve pull requests you did not write. Report reproducible defects and missing verification with evidence. Never approve, merge or push.",
+      "skills": ["review", "contribute"]
+    }
+  }
+}
