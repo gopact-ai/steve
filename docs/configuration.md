@@ -27,7 +27,7 @@ Hub 配置声明可用 agent、项目和连接。样例中的工具与项目需�
 
 项目必须有主目录，`home` 是保留项目名。任务创建时固定项目；切换会话项目不会迁移既有任务。主目录和副本在同一节点上不得重复或嵌套。
 
-`inplace` 交互直接修改主目录；`isolated`、委派和计划步骤使用隔离目录并合并落地。项目页的目录名相对于目标机器工作区的 `projects/`，配置文件保存解析后的绝对路径。
+普通交互使用执行机器上的主目录或就绪副本，`repo: isolated` 不会改变这一目录选择。委派和计划步骤使用隔离目录并合并落地。项目页的目录名相对于目标机器工作区的 `projects/`，配置文件保存解析后的绝对路径。
 
 | 键 | 类型 | 默认 | 作用 | 示例 |
 |---|---|---|---|---|
@@ -35,7 +35,7 @@ Hub 配置声明可用 agent、项目和连接。样例中的工具与项目需�
 | `home.node` | string | `""`（hub） | 主目录所属机器，非空必须在 `nodes` 中 | `"host-3"` |
 | `home.path` | string | 必填 | 主目录；远端路径不在 hub 上展开 | `"/srv/lab"` |
 | `level` | string | `"internal"` | 数据等级：`public`、`internal`、`restricted`、`sealed` | `"restricted"` |
-| `repo` | string | `"inplace"` | `inplace` 的交互回合直接改工作目录；`isolated` 使用隔离树并走落地 | `"isolated"` |
+| `repo` | string | `"inplace"` | 接受 `inplace` / `isolated`；普通交互均使用主目录或副本，不由此字段隔离 | `"isolated"` |
 | `skills` | string[] | `[]` | 固定到项目的技能目录，在 hub 读取 | `["/home/me/steve-skills/review"]` |
 | `durable_places` | string[] | `[]`（hub）；sealed 会补入 home 所在机器 | 哪些机器的产物回执算耐久；其中任一有效回执即可，`""` 表示 hub | `[""]` |
 | `external_remote` | string | `""`；克隆时尝试使用主目录根仓库的 remote | 控制台创建工作区副本时优先使用的克隆来源；加载配置本身不克隆 | `"git@github.com:example/work.git"` |

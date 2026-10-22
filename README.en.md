@@ -16,7 +16,7 @@ It works with the agent tools and sign-ins you already have. Start on one comput
 
 Give an agent a goal, discuss the work, add references and review its output. When it needs help, it can delegate a task to another agent. Steve saves the result and brings it back to the original conversation. You can close the window and return to the work later.
 
-Each turn's file changes have a snapshot and a Diff. Remote and isolated changes can merge into the project's main directory, with completion, pending landing and conflicts shown separately. Permission requests and questions appear in the conversation where the agent needs your answer.
+Each turn's file changes have a snapshot and a Diff. Delegated tasks and plan steps can merge changes from isolated workspaces into the project's main directory, with completion, pending landing and conflicts shown separately. Permission requests and questions appear in the conversation where the agent needs your answer.
 
 The task board shows progress and blockers. Resources shows machines and agents; Usage summarizes reported tokens and execution time. Task records, artifacts and approvals stay in your Steve installation. Model requests are handled by the model service used by your agent.
 
