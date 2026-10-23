@@ -92,9 +92,44 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/console/package-lock.json
-      - run: npm ci
+      - name: Toolchain versions for the caches
+        id: versions
+        run: |
+          echo "node=$(node --version)" >> "$GITHUB_OUTPUT"
+          echo "playwright=$(node -p "require('./web/console/package-lock.json').packages['node_modules/playwright-core'].version")" >> "$GITHUB_OUTPUT"
+      # node_modules exactly as `npm ci` leaves it for this lockfile and Node.
+      - name: Restore web/console/node_modules
+        id: modules
+        uses: actions/cache@v4
+        with:
+          path: web/console/node_modules
+          key: console-modules-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.versions.outputs.node }}-${{ hashFiles('web/console/package-lock.json') }}
+      - if: steps.modules.outputs.cache-hit != 'true'
+        run: npm ci
         working-directory: web/console
-      - run: npx playwright install --with-deps chromium
+      - name: Restore Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.playwright }}
+      # A fresh runner lacks Chromium's system packages every time, so they are
+      # installed on every run; only their downloads are cached. apt fetches
+      # just what the image's package versions no longer match.
+      - name: Restore Playwright system package downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/playwright-debs
+          key: playwright-debs-${{ env.ImageOS }}-${{ env.ImageVersion }}-${{ steps.versions.outputs.playwright }}
+          restore-keys: playwright-debs-${{ env.ImageOS }}-
+      - name: Install Playwright Chromium with its system packages
+        run: |
+          debs="$RUNNER_TEMP/playwright-debs"
+          mkdir -p "$debs/partial"
+          printf 'Dir::Cache::Archives "%s/";\nAPT::Keep-Downloaded-Packages "true";\n' "$debs" | sudo tee /etc/apt/apt.conf.d/90playwright-debs
+          npx playwright install --with-deps chromium
+          sudo rm -f "$debs/lock"
+          sudo chmod -R a+rX "$debs"
+          ls "$debs"/*.deb 2>/dev/null | wc -l
         working-directory: web/console
       - name: Plan shard
         run: |
@@ -129,6 +164,22 @@ jobs:
         run: |
           node scripts/ci/console-shards.mjs all > "$RUNNER_TEMP/all.txt"
           node scripts/ci/console-shards.mjs verify "$RUNNER_TEMP/all.txt" "$RUNNER_TEMP"/shards/console-shard-*.txt
+  # TEMP: measure the official Playwright image as the alternative; removed before review.
+  playwright-image-probe:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+        working-directory: web/console
+      - run: node -e "require('./web/console/node_modules/playwright').chromium.launch().then(b=>{console.log('chromium', b.version());return b.close()})"
   desktop:
     runs-on: macos-latest
     steps:
