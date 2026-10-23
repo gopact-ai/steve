@@ -2,12 +2,15 @@ import { workState, workDetail, nativeHistory } from "./work-fixture.mjs";
 // Build web/console first. Uses an existing Playwright installation;
 // PLAYWRIGHT_MODULE accepts its absolute module path. CHECK selects comma-
 // separated scenarios. Every API is mocked; no request reaches a real hub.
+// INTERACTIONS_CONCURRENCY: contexts run at once. Unset: min(4, cores/2); 1: serial; 0 or
+// a non-integer is an error (see concurrency.mjs).
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { draftOf } from "./composer.mjs";
+import { concurrency as poolSize } from "./concurrency.mjs";
 import { preview } from "../childcard/preview.mjs";
 import { usageDurationFixture, usageFixture, usageState, usageResponse } from "./usage-fixture.mjs";
 
@@ -26,8 +29,13 @@ async function eventually(predicate, message) {
     assert.fail(message);
 }
 
-async function fixture({ history = false, running = false, sandboxed = false } = {}) {
-    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: sandboxed ? "allow" : "block" });
+async function fixture(options = {}) {
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: options.sandboxed ? "allow" : "block" });
+    // A setup failure must not leave its page polling while the pool moves on.
+    try { return await setup(context, options); } catch (error) { await context.close().catch(() => {}); throw error; }
+}
+
+async function setup(context, { history = false, running = false, sandboxed = false }) {
     // Playwright's serviceWorkers:"block" init script reads this getter without
     // a guard and throws in opaque-origin previews. Keep registration blocked
     // without masking application pageerrors or changing the frame's sandbox.
@@ -2650,8 +2658,10 @@ checks["workbench-split"] = async (f) => {
     await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
     await inspector(f.page).waitFor();
     await pane.waitFor();
+    // The inspector clamps its width from a ResizeObserver after it mounts:
+    // read the columns once that measurement has been applied.
+    await eventually(async () => (await f.page.locator(".conversation-content").boundingBox()).width >= 480, "Three columns still leave the conversation its minimum");
     await noHorizontalOverflow(f.page);
-    assert.ok((await f.page.locator(".conversation-content").boundingBox()).width >= 480, "Three columns still leave the conversation its minimum");
     await f.page.screenshot({ path: path.join(output, "workbench-split.png"), fullPage: true });
     // Hiding keeps the tab; closing it gives the room back for good.
     await f.page.getByRole("button", { name: "收起分栏", exact: true }).first().click();
@@ -3789,24 +3799,34 @@ checks["project-drag-reorder"] = async (f) => {
 };
 
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);
+for (const name of selected) assert.ok(checks[name], `Unknown CHECK ${name}; choices: ${Object.keys(checks).join(",")}`);
+// Every check owns a fresh browser context, page, clock and mocked API, so
+// checks run on a bounded pool of concurrent contexts in the one browser.
+const concurrency = poolSize("INTERACTIONS_CONCURRENCY", 4);
 let failed = 0;
-try {
-    for (const name of selected) {
-        assert.ok(checks[name], `Unknown CHECK ${name}; choices: ${Object.keys(checks).join(",")}`);
-        const f = await fixture({ history: name.startsWith("scroll-"), running: name.startsWith("stop-") || name === "scroll-stream" || name === "preferences-during-a-turn", sandboxed: name.startsWith("preview-html-") || name === "preview-svg-scripts-disabled" });
-        try {
-            await checks[name](f);
-            assert.deepEqual(f.errors, [], "Browser and mocked API errors");
-            console.log(`PASS ${name}`);
-        } catch (error) {
-            failed++;
-            await f.page.screenshot({ path: path.join(output, `${name}.png`) });
-            console.error(`FAIL ${name}: ${error.message}`);
-        } finally {
+async function run(name) {
+    let f;
+    try {
+        f = await fixture({ history: name.startsWith("scroll-"), running: name.startsWith("stop-") || name === "scroll-stream" || name === "preferences-during-a-turn", sandboxed: name.startsWith("preview-html-") || name === "preview-svg-scripts-disabled" });
+        await checks[name](f);
+        assert.deepEqual(f.errors, [], "Browser and mocked API errors");
+        console.log(`PASS ${name}`);
+    } catch (error) {
+        failed++;
+        if (f) await f.page.screenshot({ path: path.join(output, `${name}.png`) }).catch(() => {});
+        console.error(`FAIL ${name}: ${error.message}`);
+    } finally {
+        if (f) {
             for (const release of f.releases) release();
             await f.context.close();
         }
     }
+}
+try {
+    const pending = [...selected];
+    await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, async () => {
+        while (pending.length) await run(pending.shift());
+    }));
 } finally {
     await browser.close();
     app.close();

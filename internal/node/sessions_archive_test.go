@@ -9,6 +9,7 @@ import (
 )
 
 func TestNodeSessionClosedArchiveDoesNotConsumeLiveCapacity(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority}
 	req := nodeSessionRequest("open")
@@ -92,6 +93,7 @@ func TestNodeSessionColdInterruptedRecordDoesNotProveOldProcessStopped(t *testin
 }
 
 func TestNodeSessionRestartPreservesDispatchEvidenceWithoutInventingIt(t *testing.T) {
+	t.Parallel()
 	for _, dispatch := range []string{"", "not-dispatched", "dispatched"} {
 		t.Run(map[string]string{"": "unknown", "not-dispatched": "not-dispatched", "dispatched": "dispatched"}[dispatch], func(t *testing.T) {
 			cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}}

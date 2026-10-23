@@ -39,8 +39,11 @@ func requireSettingsOption(t *testing.T, settings view.Settings, id, value strin
 }
 
 func TestNodeProgressKeepsAuthoritativeSelectors(t *testing.T) {
+	t.Parallel()
 	for _, input := range []string{"hello", "switchmodel"} {
 		t.Run(input, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			s, req, one := settingsTestSession(t)
 			req.Action, req.CommandID, req.InputSequence, req.Text = nodewire.SessionActionPrompt, "settings/input", 1, input
 			if _, err := s.sessions.Do(t.Context(), "cluster-1", req); err != nil {
@@ -89,6 +92,7 @@ func TestNodeProgressKeepsAuthoritativeSelectors(t *testing.T) {
 }
 
 func TestNodeCoalescedProgressCannotUndoConfirmedOption(t *testing.T) {
+	t.Parallel()
 	s, req, one := settingsTestSession(t)
 	stale := one.host.Settings(acp.SessionID(one.record.UpstreamID))
 	req.Action, req.CommandID, req.InputSequence, req.Text = nodewire.SessionActionPrompt, "settings/input", 1, "askme"

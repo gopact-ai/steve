@@ -44,6 +44,7 @@ func TestReservationRechecksCompletionAfterLeaseAcquisition(t *testing.T) {
 }
 
 func TestTaskCompletionAndAttemptReservationHaveOneWinner(t *testing.T) {
+	t.Parallel()
 	for range 30 {
 		service, _ := newService(t)
 		tasks, err := task.OpenLedger(service.l)
@@ -83,8 +84,11 @@ func TestTaskCompletionAndAttemptReservationHaveOneWinner(t *testing.T) {
 }
 
 func TestCompletionChecksAllAttemptStatesAndSettlement(t *testing.T) {
+	t.Parallel()
 	for _, state := range []State{Leased, Prepared, Running, Snapshotted, Published, Durable, Verifying, BindReady, Bound, Failed, Expired, BindConflict, Superseded, "unknown"} {
 		t.Run(string(state), func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			service, _ := newService(t)
 			settled := true
 			record := Record{Spec: Spec{ID: "record", TaskID: "root"}, SessionSettled: &settled}

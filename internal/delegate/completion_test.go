@@ -18,6 +18,7 @@ import (
 )
 
 func TestDelegationSettlesReportedUsageOnSuccessAndFailure(t *testing.T) {
+	t.Parallel()
 	for _, failed := range []bool{false, true} {
 		for _, reported := range []bool{false, true} {
 			w := newWorld(t)
@@ -53,6 +54,7 @@ func TestDelegationSettlesReportedUsageOnSuccessAndFailure(t *testing.T) {
 }
 
 func TestDelegationCompletionFailureDoesNotLandOrDiscard(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.running(t, "codex")
 	dir := t.TempDir()

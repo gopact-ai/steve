@@ -21,6 +21,7 @@ import (
 )
 
 func TestBeginTaskPersistsAnchor(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{reply: "ok"}
 	coordinator, tasks := taskCoordinator(t, runner)
 	if _, err := coordinator.Handle(t.Context(), Request{
@@ -68,6 +69,7 @@ func TestBeginTaskPersistsAnchor(t *testing.T) {
 }
 
 func TestReviveSessionClearsTaintSoTheTurnRuns(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
@@ -217,6 +219,7 @@ func TestCrashResumeE2E(t *testing.T) {
 // turn therefore runs under a task of its own, which is closed as soon as the
 // turn is accounted so nothing is left running under the synthetic channel.
 func TestOnboardingTurnRunsUnderAClosedTaskWithAnExecutionToken(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{reply: "ok"}
 	coordinator, tasks := taskCoordinator(t, runner)
 	if _, err := coordinator.Handle(t.Context(), Request{
@@ -261,6 +264,7 @@ func TestOnboardingTurnRunsUnderAClosedTaskWithAnExecutionToken(t *testing.T) {
 // the task the failed turn opened rather than leaving one abandoned task per
 // restart, and only the successful turn closes it.
 func TestFailedOnboardingTurnKeepsItsTaskForTheRetry(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{err: errors.New("agent unavailable")}
 	coordinator, tasks := taskCoordinator(t, runner)
 	req := Request{
@@ -289,6 +293,7 @@ func TestFailedOnboardingTurnKeepsItsTaskForTheRetry(t *testing.T) {
 }
 
 func TestIncompleteProfileOnlyInterceptsHomeProject(t *testing.T) {
+	t.Parallel()
 	for _, projectID := range []string{"codex", "home"} {
 		t.Run(projectID, func(t *testing.T) {
 			runner := &fakeRunner{reply: "ok"}

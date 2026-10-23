@@ -28,6 +28,7 @@ import (
 )
 
 func TestChannelOwnerControlsProjectPermissionsWithoutCrossChannelPrivilege(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), nil, time.Minute, withOwner("console-owner"), withChannelOwner("feishu", "ou_im_owner"))
@@ -58,6 +59,7 @@ func TestChannelOwnerControlsProjectPermissionsWithoutCrossChannelPrivilege(t *t
 }
 
 func TestChannelOwnerHomeUsesNativeIdentityAndSharedMCPMode(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "console-owner"); err != nil {
 		t.Fatal(err)
@@ -174,6 +176,7 @@ func TestNativeChannelOwnerKeepsACPApprovalAndQuestionCallbacks(t *testing.T) {
 }
 
 func TestConcurrentChannelOwnersAndLocalesRemainRequestLocal(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), nil, time.Minute, withOwner("console-owner"), withChannelOwner("feishu", "ou_im_owner"))

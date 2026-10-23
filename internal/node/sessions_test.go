@@ -41,6 +41,7 @@ func nodeSessionRequest(action nodewire.SessionAction) nodewire.SessionRequest {
 }
 
 func TestNodeSessionOwnsPendingQuestionAcrossCoordinatorReplacement(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority})
 	ctx, cancel := context.WithCancel(t.Context())
@@ -140,6 +141,7 @@ func TestNodeSessionOwnsPendingQuestionAcrossCoordinatorReplacement(t *testing.T
 }
 
 func TestNodeSessionServiceRestartNeverReplaysUncertainNativePrompt(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority}
 	s := NewServer(cfg)
@@ -196,6 +198,7 @@ func TestNodeSessionCapabilityRequiresAuthority(t *testing.T) {
 }
 
 func TestNodeSessionCreationRequiresStartAuthorityButExistingSessionCanBeObserved(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority})
 	if err := s.startSessions(t.Context()); err != nil {

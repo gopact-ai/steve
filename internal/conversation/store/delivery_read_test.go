@@ -19,6 +19,7 @@ func (receiptHandler) Handle(context.Context, turn.Request) (turn.Result, error)
 }
 
 func TestConsoleDeliveryUsesServerAttemptAndSurvivesTranscriptPruning(t *testing.T) {
+	t.Parallel()
 	for _, commandID := range []string{"client-command", ""} {
 		t.Run("key="+commandID, func(t *testing.T) { testConsoleDelivery(t, commandID) })
 	}

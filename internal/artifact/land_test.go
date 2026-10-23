@@ -12,6 +12,7 @@ import (
 )
 
 func TestLandingMergesIntoCanonicalUnderTheLockAndReportsConflicts(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "a0")
@@ -78,6 +79,7 @@ func TestLandingMergesIntoCanonicalUnderTheLockAndReportsConflicts(t *testing.T)
 }
 
 func TestLandingOnANodeHomedProject(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	node := &localNode{root: t.TempDir(), state: t.TempDir()}
 	canonical := filepath.Join(node.root, "proj")
@@ -104,6 +106,7 @@ func TestLandingOnANodeHomedProject(t *testing.T) {
 }
 
 func TestDeferredLandingsRunInOrderAndKeepConflicts(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "a0")
@@ -139,6 +142,7 @@ func TestDeferredLandingsRunInOrderAndKeepConflicts(t *testing.T) {
 // held what had been deferred, so nothing retried it and nothing could
 // resolve it. Both paths now leave the same record.
 func TestADirectLandingThatConflictsIsKeptForResolution(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "a0")
@@ -173,6 +177,7 @@ func TestADirectLandingThatConflictsIsKeptForResolution(t *testing.T) {
 // canonical name moves — without that the sweeper wrote a fresh failed
 // landing every thirty seconds forever.
 func TestMergeConflictKeepsAMarkedSnapshotAndStopsRetrying(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "a0")

@@ -18,6 +18,7 @@ func containsHan(s string) bool {
 // How a stopped execution ended is recorded in the language of whoever
 // confirmed the stop.
 func TestStopConfirmationIsRecordedInTheCallerLanguage(t *testing.T) {
+	t.Parallel()
 	for _, action := range []string{"task-stop", "process-stop"} {
 		t.Run(action, func(t *testing.T) {
 			s, _, old, proof, tasks := retainedFixture(t)
@@ -49,6 +50,7 @@ func TestStopConfirmationIsRecordedInTheCallerLanguage(t *testing.T) {
 // A relocation the checkpoint rules refuse is refused in English where
 // nobody's language is known; the edge that answers the owner says it.
 func TestRelocationRefusalIsEnglishUntilSomeoneIsTold(t *testing.T) {
+	t.Parallel()
 	s, _, _, p, _, _ := relocationFixture(t)
 	approval := manualRelocation(p)
 	approval.ActionResults = nil

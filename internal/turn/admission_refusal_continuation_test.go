@@ -38,8 +38,11 @@ func TestContinuationOnAnOpenAttemptIsRefusedInWords(t *testing.T) {
 }
 
 func TestUnconfirmedWriterInThisConversationNamesItsTask(t *testing.T) {
+	t.Parallel()
 	for _, tc := range ownerChannels {
 		t.Run(tc.name, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, _, _ := taskCoordinatorOn(t, &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}, withOwner("owner"), withChannelOwner("feishu", "owner"))
 			req := tc.req
 			if _, err := c.projects.Bind(t.Context(), req.Source.ConversationID, "codex", "owner"); err != nil {
@@ -71,8 +74,11 @@ func TestUnconfirmedWriterInThisConversationNamesItsTask(t *testing.T) {
 }
 
 func TestUnconfirmedWriterNamesAnotherConversationOnTheSameChannel(t *testing.T) {
+	t.Parallel()
 	for _, tc := range ownerChannels {
 		t.Run(tc.name, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, _, _ := taskCoordinatorOn(t, &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}, withOwner("owner"), withChannelOwner("feishu", "owner"))
 			other := tc.req
 			other.Source.ConversationID += ":other"

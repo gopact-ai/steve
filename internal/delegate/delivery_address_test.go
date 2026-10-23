@@ -10,6 +10,7 @@ import (
 )
 
 func TestDeliveryUsesParentsLatestExplicitAddress(t *testing.T) {
+	t.Parallel()
 	store, err := task.OpenLedger(testLedger(t))
 	if err != nil {
 		t.Fatal(err)

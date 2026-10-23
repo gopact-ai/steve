@@ -95,8 +95,11 @@ func TestRevokedCredentialRefreshKeepsNativeContextAndDurableRetryToken(t *testi
 }
 
 func TestCredentialRefreshDoesNotHideDriftOrStorageFailure(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"config", "workspace", "storage", "unmanaged", "harness"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			turn, g, saved := credentialTurn(t)
 			switch mode {
 			case "config":

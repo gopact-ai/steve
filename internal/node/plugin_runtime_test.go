@@ -116,6 +116,7 @@ func TestPluginBrokerRetainsRouteAndSecretVersionAcrossRestart(t *testing.T) {
 }
 
 func TestNodeOwnedPluginSessionPersistsRuntimeBinding(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	bin := buildMockAgent(t)
 	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: bin}}, SessionAuthorizer: authority})
@@ -266,6 +267,7 @@ func TestRemotePluginProcessUsesOriginalRuntimeAndRejectsOtherRuntime(t *testing
 }
 
 func TestPluginStdioLaunchUsesRequiredACPWireFields(t *testing.T) {
+	t.Parallel()
 	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir()})
 	selection := nodeRuntimeFixture(t, s, "stdio")
 	pool := s.pluginRuntimePool()

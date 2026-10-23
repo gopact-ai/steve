@@ -12,6 +12,7 @@ import (
 )
 
 func TestAbandonmentDeliveryRemainsIndexedAfterPhysicalStop(t *testing.T) {
+	t.Parallel()
 	s, book, d, r := durableAbandonFixture(t)
 	abandonDeliverySQL(t, book, `CREATE TRIGGER refuse_indexed_abandon_receipt BEFORE UPDATE ON bindings WHEN NEW.kind='console-exchange' AND json_extract(NEW.data,'$.recovery_abandon') IS NOT NULL BEGIN SELECT RAISE(ABORT,'receipt refused'); END`)
 	out, err := s.Abandon(t.Context(), r.ID, 1)
@@ -60,6 +61,7 @@ func TestAbandonmentDeliveryRemainsIndexedAfterPhysicalStop(t *testing.T) {
 }
 
 func TestAbandonmentDeliveryReadRejectsInvalidCompletionEvidence(t *testing.T) {
+	t.Parallel()
 	s, book, d, r := durableAbandonFixture(t)
 	if out, err := s.Abandon(t.Context(), r.ID, 1); err != nil || out.Pending {
 		t.Fatalf("delivery=%+v %v", out, err)

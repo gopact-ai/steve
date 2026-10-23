@@ -29,6 +29,12 @@ npx playwright install chromium
 
 The local Raft copy has its own verification command, documented in [third_party/raft](third_party/raft/README.md). Mail and GitHub providers have local `npm test` commands and opt-in integration checks in their READMEs.
 
+### Local gates
+
+`make gate` checks what a branch changed against `origin/master`, including uncommitted and untracked files. It runs gofmt, `go vet` and `go test -race` on the changed Go packages and every package whose tests import them or build a binary from them. It also runs the console script steps whose import graph reaches the changed files, plus `make test-desktop` and provider tests when their files change. Changes to `go.mod`, `third_party/`, `internal/architecture`, the `cmd/steve` and `cmd/steve-node` composition roots, the `Makefile` or `.github/` run `make gate-full` instead, as do files the gate cannot place. `make gate ARGS=-n` prints the plan without running it. Test output is kept as `go test -json` under `$TMPDIR/steve-gate/`.
+
+`make gate-full` runs the required CI jobs (`test`, `console`, `desktop`, `macos`, `fleet`) in order. It skips jobs the host cannot run and lists them. Use it for cross-cutting changes. CI is the final authority either way.
+
 Changes to delegation, landing, timeouts, snapshots or node channels require both the disposable and live fleet checks below. Keep task, conversation and attempt IDs with the result; never include credentials or private inputs. Documentation-only changes need link, example and rendering checks rather than model executions.
 
 ## Fleet verification
@@ -46,6 +52,17 @@ The client uses `HUB` and `TOKEN`, or ignored `config.e2e.json`; it does not bor
 The live check creates a conversation and a unique file through remote delegation, then checks execution, changes, usage and landed contents. It leaves evidence in the project and has a ten-minute client deadline. Timeout does not cancel server work; inspect the original IDs and stop it in the console if needed. Include complete output through `FLEET PASS` in the PR for affected changes.
 
 `go run ./e2e/fleet -scenario autonomous` requires `kvtool/main.go` in the project's main directory, a remote `build` node, suitable agents, and `sha256sum`/`file` on the Hub. It checks fleet discovery, overlapping children, remote build artifacts, handoff and usage. Its maximum deadline is twenty minutes; include output through `AUTONOMOUS PASS`.
+
+## Merging
+
+`master` requires branches to be up to date, so every merge after the first needs a branch update and a fresh CI run. Merge an owner-approved list with the merge train, which handles them one at a time:
+
+```sh
+go run ./scripts/merge-train 367 369 370          # plan: order, shared files, next action
+go run ./scripts/merge-train -apply 367 369 370   # update, wait for checks, merge
+```
+
+The train merges only the listed pull requests, always with a merge commit of the head whose checks it read, and never bypasses branch protection. Pull requests that share no files with the others go first. Ones that share files keep the listed order. It stops at the first red check with that job's URL, and at drafts, unresolved review threads or requested changes. It reports conflicts and leaves them for the branch author. Progress is kept in `.git/merge-train.json`, so rerunning with the same list resumes and skips what is already merged. Use `-reset` to plan a different list.
 
 ## Documentation
 

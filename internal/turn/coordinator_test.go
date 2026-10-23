@@ -147,6 +147,7 @@ func (r *fakeRunner) Cancel(context.Context) error {
 func (r *fakeRunner) Abort() { r.aborts.Add(1) }
 
 func TestCoordinatorPreservesSessionOnTurnErrorWithoutKillingProcess(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", SystemPrompt: "rules", Default: true},
 	})
@@ -296,6 +297,7 @@ func TestPromptSilenceIsMeasuredFromThePromptNotFromPreparation(t *testing.T) {
 // Preparation runs under the prompt timeout: a turn whose preparation
 // alone outlasts it ends without sending the prompt.
 func TestPreparationOutlastingPromptTimeoutEndsTheTurn(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
@@ -321,6 +323,7 @@ func TestPreparationOutlastingPromptTimeoutEndsTheTurn(t *testing.T) {
 }
 
 func TestCoordinatorKeepsContextWhenResumeFails(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	assembler := capability.NewAssembler(nil)
 	capabilities, err := assembler.Assemble(catalog.Default())
@@ -347,6 +350,7 @@ func TestCoordinatorKeepsContextWhenResumeFails(t *testing.T) {
 }
 
 func TestCoordinatorNeverFallsBackToNewSessionAfterLoadFails(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	assembler := capability.NewAssembler(nil)
 	capabilities, err := assembler.Assemble(catalog.Default())
@@ -463,6 +467,7 @@ func TestCoordinatorPendingCancelStopsNextTurn(t *testing.T) {
 }
 
 func TestCoordinatorRejectsTaintedSession(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 	})
@@ -523,6 +528,7 @@ func TestCoordinatorSwitchesAgentsAndRestoresSessions(t *testing.T) {
 }
 
 func TestCoordinatorRejectsCapabilityDrift(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}}}
@@ -590,6 +596,7 @@ func TestCoordinatorCancelWithoutRunningTurn(t *testing.T) {
 }
 
 func TestCoordinatorKeepsSessionWhenAgentCancelsTurn(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{err: fmt.Errorf("%w: %w", harness.ErrTurnCanceled, context.Canceled)}
@@ -620,6 +627,7 @@ func TestCoordinatorKeepsSessionWhenAgentCancelsTurn(t *testing.T) {
 // so an interrupt must not throw it away — otherwise steering would cost the
 // agent its entire context every time the user redirects it.
 func TestGracefullyCancelledTurnKeepsItsSession(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{id: "sess-1", err: harness.ErrTurnCanceled}
@@ -640,6 +648,7 @@ func TestGracefullyCancelledTurnKeepsItsSession(t *testing.T) {
 // A turn the agent never settled preserves a tainted native context; it must
 // not silently start over on the next message.
 func TestAbandonedTurnPreservesTaintedContext(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{id: "sess-1", err: context.Canceled}
@@ -654,6 +663,7 @@ func TestAbandonedTurnPreservesTaintedContext(t *testing.T) {
 }
 
 func TestCoordinatorSwitchOnlyAndNew(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true}, "claude": {Harness: "claude"},
 	})
@@ -752,6 +762,7 @@ func TestNewMessageQueuesBehindRunningTurn(t *testing.T) {
 // harmless alias so muscle memory keeps working, and the prefix never
 // reaches the agent.
 func TestPlusPrefixStillQueuesAndStrips(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{}

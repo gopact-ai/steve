@@ -52,8 +52,11 @@ func seedRecentHistory(t testing.TB, s *Store, n int) {
 	}
 }
 
+// Two history sizes a decade apart, both far above every read bound and the
+// 200 seeded projects: a read whose rows or plan depended on history would
+// differ between them.
 func TestRecentArtifactReadsStayBoundedAsHistoryGrows(t *testing.T) {
-	for _, n := range []int{10000, 100000} {
+	for _, n := range []int{1000, 10000} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			s, dir := recentReadStore(t)
 			seedRecentHistory(t, s, n)

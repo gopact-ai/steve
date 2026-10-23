@@ -169,6 +169,7 @@ func TestNodeSessionCancelDistinguishesPromptSettlementAndProcessExit(t *testing
 }
 
 func TestNodeSessionAbortKeepsTerminalStateAfterPromptCallbackReturns(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority})
 	if err := s.startSessions(t.Context()); err != nil {

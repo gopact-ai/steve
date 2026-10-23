@@ -8,6 +8,7 @@ import (
 )
 
 func TestRecoveryContextNamesTheFixedCopyAndRejectsAnotherNode(t *testing.T) {
+	t.Parallel()
 	c, p, _, workspace := sharedCopy(t)
 	catalog, err := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Node: "node", Default: true}, "elsewhere": {Harness: "mock", Node: "elsewhere"}})
 	if err != nil {

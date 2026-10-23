@@ -201,6 +201,7 @@ func TestUnreadableScheduleIsRefusedNotGuessed(t *testing.T) {
 // A schedule that fires for weeks must not spend one task's budget a turn at
 // a time — and must not touch work the user has since started themselves.
 func TestRotateTaskOnlyClosesUnattendedWork(t *testing.T) {
+	t.Parallel()
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
 
 	if _, err := coordinator.Handle(t.Context(), Request{

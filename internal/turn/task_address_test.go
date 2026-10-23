@@ -10,6 +10,7 @@ import (
 )
 
 func TestAdmissionPersistsExplicitAddressWithoutMessage(t *testing.T) {
+	t.Parallel()
 	for _, transport := range []string{"console", "feishu"} {
 		for _, planned := range []bool{false, true} {
 			t.Run(transport+map[bool]string{false: "/chat", true: "/plan"}[planned], func(t *testing.T) {

@@ -84,6 +84,7 @@ func TestAbandonedCommandReceiptCannotReleaseItsWriter(t *testing.T) {
 }
 
 func TestAbandonmentProjectionRemainsVisibleAfterPhysicalConfirmation(t *testing.T) {
+	t.Parallel()
 	s, r, proof, _ := abandonedRecord(t)
 	proof.Session.ProcessStopped = true
 	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "node-exit", proof); err != nil {
@@ -140,6 +141,7 @@ func TestAbandonmentProjectionRemainsVisibleAfterPhysicalConfirmation(t *testing
 }
 
 func TestAbandonedWriterStillRequiresExitAfterALateQuarantineUpdate(t *testing.T) {
+	t.Parallel()
 	s, r, proof, _ := abandonedRecord(t)
 	proof.Session.ProcessStopped = true
 	if _, err := s.ConfirmTaskStopped(t.Context(), r.ID, "physical-exit", proof); err != nil {
@@ -166,6 +168,7 @@ func TestAbandonedWriterStillRequiresExitAfterALateQuarantineUpdate(t *testing.T
 }
 
 func TestAbandonedWriterDoesNotAcceptADeclarativeStopInsteadOfNativeProof(t *testing.T) {
+	t.Parallel()
 	s, r, _, _ := abandonedRecord(t)
 	if _, err := s.ConfirmStopped(t.Context(), r.ID, "owner", "the writer is said to be stopped"); !errors.Is(err, ErrStopConfirmationRequired) {
 		t.Fatalf("abandoned writer accepted a declaration instead of a native receipt: %v", err)

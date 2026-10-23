@@ -14,6 +14,7 @@ import (
 // resolving it ends up: the canonical workspace holds the text they wrote,
 // and the queue is unblocked because the canonical name moved.
 func TestResolveByHandLandsThePersonsTextAndUnblocksTheQueue(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "a0")
@@ -85,6 +86,7 @@ func TestResolveByHandRefusesMarkersMissingFilesAndForeignPaths(t *testing.T) {
 // that asks per project can only report on the projects it thought to ask
 // about.
 func TestAllStuckSpansProjectsAndFindsOneByArtifact(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "a0")
@@ -115,6 +117,7 @@ func TestAllStuckSpansProjectsAndFindsOneByArtifact(t *testing.T) {
 // The half-merged tree is content other machines committed; a symbolic
 // link in it must not carry a person's resolution outside the workspace.
 func TestResolveByHandDoesNotWriteThroughALink(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	outside := filepath.Join(t.TempDir(), "outside")
 	if err := os.WriteFile(outside, []byte("untouched"), 0o644); err != nil {

@@ -18,6 +18,7 @@ import (
 // A restricted project admits nobody by default; a grant opens it; the
 // owner is admin everywhere and is the only one who can grant.
 func TestAccessIsGrantedNotAssumed(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
@@ -87,6 +88,7 @@ func TestAccessIsGrantedNotAssumed(t *testing.T) {
 // A sealed project's answer waits for the owner; approval sends it to the
 // original conversation, denial discards it.
 func TestSealedAnswersWaitForTheOwner(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "the secret answer"}}}

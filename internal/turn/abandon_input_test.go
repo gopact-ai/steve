@@ -71,8 +71,11 @@ func exhaustAbandonInput(t *testing.T, c *Coordinator, r attempt.Record) {
 	}
 }
 func TestAbandonmentKeepsTheOriginalInputAfterTheTaskReanchors(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []attempt.Kind{attempt.KindChat, attempt.KindPlan} {
 		t.Run(string(kind), func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			origin := "chat"
 			if kind == attempt.KindPlan {
 				origin = "plan"
@@ -91,8 +94,11 @@ func TestAbandonmentKeepsTheOriginalInputAfterTheTaskReanchors(t *testing.T) {
 	}
 }
 func TestAbandonPlanWithNoExactOriginalInputIsRefusedWithoutSideEffects(t *testing.T) {
+	t.Parallel()
 	for _, which := range []string{"missing input", "wrong kind of task", "wrong plan turn", "old record"} {
 		t.Run(which, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			origin, anchor := "plan", "web-original"
 			if which == "missing input" {
 				anchor = ""

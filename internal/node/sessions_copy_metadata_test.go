@@ -28,6 +28,7 @@ type permissionMetadataIgnoredCycle struct {
 }
 
 func TestSessionPermissionMetadataSnapshotsOwnContainers(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		value func() any

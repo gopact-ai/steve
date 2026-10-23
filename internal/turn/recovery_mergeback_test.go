@@ -88,6 +88,7 @@ func drainWithoutCopy(t *testing.T) (*Coordinator, project.Project, attempt.Work
 }
 
 func TestRecoveryResidualCaptureKeepsCurrentOriginalContentAndItsName(t *testing.T) {
+	t.Parallel()
 	c, p, episode := drainWithoutCopy(t)
 	capture, ok := any(c.artifacts).(residualCapturer)
 	if !ok {
@@ -147,6 +148,7 @@ func TestRecoveryResidualCaptureKeepsCurrentOriginalContentAndItsName(t *testing
 }
 
 func TestRecoveryResidualAndNewArtifactAreAcceptedInOneTransaction(t *testing.T) {
+	t.Parallel()
 	c, p, episode := drainWithoutCopy(t)
 	capture, ok := any(c.artifacts).(residualCapturer)
 	if !ok {
@@ -193,6 +195,7 @@ func TestRecoveryResidualAndNewArtifactAreAcceptedInOneTransaction(t *testing.T)
 }
 
 func TestRecoveryPreparedWithoutNativeIdentityCannotCaptureOrLoseItsObligation(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	writer, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "unbound-native"))
 	if err != nil {
@@ -244,6 +247,7 @@ func TestRecoveryPreparedWithoutNativeIdentityCannotCaptureOrLoseItsObligation(t
 }
 
 func TestRecoveryCaptureRequiresExactDriverAndTheCurrentOwner(t *testing.T) {
+	t.Parallel()
 	c, p, episode := drainWithoutCopy(t)
 	if err := os.WriteFile(filepath.Join(p.Home.Path, "current"), []byte("preserve\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -354,6 +358,7 @@ func captureBoundCopy(t *testing.T, c *Coordinator, source attempt.Record) attem
 }
 
 func TestRecoveryLandingUsesFixedBaselineAndTheActualCurrentOriginal(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	first := publishBoundRecoveryTurn(t, c, p, ws, "first-fixed", map[string]string{"original": "copy delta\n"})
 	publishBoundRecoveryTurn(t, c, p, ws, "second-fixed", map[string]string{"copy-only": "second delta\n"})
@@ -403,6 +408,7 @@ func TestRecoveryLandingUsesFixedBaselineAndTheActualCurrentOriginal(t *testing.
 }
 
 func TestRecoveryLandingChecksEveryAcceptedProducerBeforeAdmission(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	first := publishBoundRecoveryTurn(t, c, p, ws, "first-authority", map[string]string{"first": "first\n"})
 	publishBoundRecoveryTurn(t, c, p, ws, "last-authority", map[string]string{"last": "last\n"})
@@ -431,6 +437,7 @@ func TestRecoveryLandingChecksEveryAcceptedProducerBeforeAdmission(t *testing.T)
 }
 
 func TestRecoveryLandingDoesNotOverwriteAnIgnoredIncomingPath(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	publishBoundRecoveryTurn(t, c, p, ws, "ignored-authority", map[string]string{"incoming": "copy data\n"})
 	for name, body := range map[string]string{".gitignore": "incoming\n", "incoming": "original ignored data\n"} {
@@ -494,6 +501,7 @@ func (n *recoveryApplyFixture) Artifact(ctx context.Context, node string, req op
 }
 
 func TestRecoveryLandingReplaysAdmittedWALAndRecordsActualCanonical(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	producer := publishBoundRecoveryTurn(t, c, p, ws, "wal-authority", map[string]string{"first-wal": "first\n", "second-wal": "second\n"})
 	episode := captureBoundCopy(t, c, source)
@@ -541,6 +549,7 @@ func TestRecoveryLandingReplaysAdmittedWALAndRecordsActualCanonical(t *testing.T
 }
 
 func TestRecoveryLandingRechecksRevocationBetweenPreflightAndApplying(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	producer := publishBoundRecoveryTurn(t, c, p, ws, "revoked-at-admission", map[string]string{"incoming": "do not apply\n"})
 	episode := captureBoundCopy(t, c, source)
@@ -581,6 +590,7 @@ type resolutionDriverInstaller interface {
 }
 
 func TestRecoveryResultAndOriginalHoldReleaseCommitAtomically(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	publishBoundRecoveryTurn(t, c, p, ws, "release-authority", map[string]string{"landed": "accepted\n"})
 	episode := captureBoundCopy(t, c, source)
@@ -634,6 +644,7 @@ func TestRecoveryResultAndOriginalHoldReleaseCommitAtomically(t *testing.T) {
 }
 
 func TestRecoveryConflictManualResolutionKeepsExactRootAndConsumesPendingOnce(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	publishBoundRecoveryTurn(t, c, p, ws, "conflict-authority", map[string]string{"original": "copy side\n"})
 	if err := os.WriteFile(filepath.Join(p.Home.Path, "original"), []byte("original side\n"), 0600); err != nil {
@@ -768,8 +779,11 @@ func acceptedResolverFixture(t *testing.T, c *Coordinator, p project.Project, st
 }
 
 func TestRecoveryResolverSinkRechecksOwnerMaintenanceAndExactConflictAfterPublication(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"owner", "maintenance", "wrong-root", "source-stopped", "valid"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, episode, stuck := recoveryConflictFixture(t)
 			source, id := acceptedResolverFixture(t, c, p, stuck, "resolver", "resolved agent text\n")
 			ref := *stuck.Resolution
@@ -818,6 +832,7 @@ func TestRecoveryResolverSinkRechecksOwnerMaintenanceAndExactConflictAfterPublic
 }
 
 func TestRecoveryOldResolverSinkCannotRebindAfterAnotherResolutionWins(t *testing.T) {
+	t.Parallel()
 	c, p, episode, stuck := recoveryConflictFixture(t)
 	source, id := acceptedResolverFixture(t, c, p, stuck, "old-resolver", "old proposed resolution\n")
 	land, err := c.artifacts.ResolveByHand(t.Context(), p, stuck, []artifact.Edit{{Path: "original", Text: "new owner resolution\n"}}, "console")
@@ -932,6 +947,7 @@ func TestRecoveryFinalizingInputWaitsAndRefreshesOnlyBeforeCanonicalAdmission(t 
 }
 
 func TestRecoveryResolverAdmittedWALSurvivesTaskCancelAndOwnerChangeWithoutNewAuthority(t *testing.T) {
+	t.Parallel()
 	c, p, episode, stuck := recoveryConflictFixture(t)
 	source, id := acceptedResolverFixture(t, c, p, stuck, "cancel-after-applying", "accepted resolver text\n")
 	nodes := &recoveryApplyFixture{Nodes: artifact.LocalNodes{Dir: t.TempDir()}}
@@ -998,6 +1014,7 @@ func releasedRecoveryCopy(t *testing.T) (*Coordinator, project.Project, project.
 }
 
 func TestReleasedRecoveryCopyKeepsItsContainerClaimUntilExactRemovalIsRecorded(t *testing.T) {
+	t.Parallel()
 	c, p, ws, episode := releasedRecoveryCopy(t)
 	cleaner, ok := any(c.artifacts).(recoveryCopyCleaner)
 	if !ok {
@@ -1040,6 +1057,7 @@ func TestReleasedRecoveryCopyKeepsItsContainerClaimUntilExactRemovalIsRecorded(t
 }
 
 func TestReleasedRecoveryCopyRefusesUnknownMarkerAndKeepsAdjacentContent(t *testing.T) {
+	t.Parallel()
 	c, p, ws, episode := releasedRecoveryCopy(t)
 	cleaner, ok := any(c.artifacts).(recoveryCopyCleaner)
 	if !ok {
@@ -1073,8 +1091,11 @@ func TestReleasedRecoveryCopyRefusesUnknownMarkerAndKeepsAdjacentContent(t *test
 }
 
 func TestReleasedRecoveryCopyWithUnpreservedContentRemainsCleanupPending(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"new-content", "ignored", "nested"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, ws, episode := releasedRecoveryCopy(t)
 			path := filepath.Join(ws.Path, "unpreserved")
 			switch mode {
@@ -1118,6 +1139,7 @@ func TestReleasedRecoveryCopyWithUnpreservedContentRemainsCleanupPending(t *test
 }
 
 func TestNoCopyWorkRecordsRealNoChangeResultWithoutMaterializingAContainer(t *testing.T) {
+	t.Parallel()
 	c, p, episode := drainWithoutCopy(t)
 	if err := os.WriteFile(filepath.Join(p.Home.Path, "residual-current"), []byte("current original\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -1151,6 +1173,7 @@ func TestNoCopyWorkRecordsRealNoChangeResultWithoutMaterializingAContainer(t *te
 }
 
 func TestRecoveryCleanupRefusesAReplacementContainerBeforeRecursiveRemoval(t *testing.T) {
+	t.Parallel()
 	_, p, ws, episode := releasedRecoveryCopy(t)
 	root := filepath.Dir(filepath.Dir(filepath.Dir(ws.Path)))
 	container := filepath.Dir(ws.Path)
@@ -1206,8 +1229,11 @@ func (n *cleanupNodeFixture) Artifact(ctx context.Context, node string, req ops.
 }
 
 func TestRecoveryPartialCleanupKeepsMarkerScopeAndRefusesNewCopyBytes(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"partial", "new-data", "generation"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, ws, episode := releasedRecoveryCopy(t)
 			nodes := &cleanupNodeFixture{Nodes: artifact.LocalNodes{Dir: filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(ws.Path)))))}, refuse: true, generation: 1}
 			c.artifacts = artifact.New(c.artifacts.Dir, ledgerOf(t, c), c.projects, nodes)
@@ -1280,6 +1306,7 @@ func TestRecoveryPartialCleanupKeepsMarkerScopeAndRefusesNewCopyBytes(t *testing
 }
 
 func TestNeverMaterializedCopyCanFinishWithoutReadingANonexistentWorkspace(t *testing.T) {
+	t.Parallel()
 	c, p, episode := drainWithoutCopy(t)
 	// Select before draining as the preparation owner would, but do not
 	// perform any filesystem checkout or native preparation in this fixture.
@@ -1331,6 +1358,7 @@ func TestNeverMaterializedCopyCanFinishWithoutReadingANonexistentWorkspace(t *te
 }
 
 func TestRecoveryDiagnosticRemainsReadableWithinUTF8ByteBudget(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, input, want string }{
 		{"empty", "", ""},
 		{"ascii-exact", strings.Repeat("a", 2048), strings.Repeat("a", 2048)},
@@ -1377,6 +1405,7 @@ func TestRecoveryDiagnosticRemainsReadableWithinUTF8ByteBudget(t *testing.T) {
 }
 
 func TestRecoveryObsoleteConflictedSinkCannotRewindItsSuccessor(t *testing.T) {
+	t.Parallel()
 	c, p, episode, root := recoveryConflictFixture(t)
 	firstSource, firstID := acceptedResolverFixture(t, c, p, root, "first-resolution", "first proposal\n")
 	if err := os.WriteFile(filepath.Join(p.Home.Path, "original"), []byte("first external edit\n"), 0600); err != nil {
@@ -1644,8 +1673,11 @@ func TestRecoveryWaitingRefreshUpdatesEveryLifecycleSessionInput(t *testing.T) {
 }
 
 func TestRecoveryCommittedSinkAcknowledgementDoesNotRequireFreshOwner(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"owner", "maintenance"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, episode, stuck := recoveryConflictFixture(t)
 			nodes := &recoveryApplyFixture{Nodes: artifact.LocalNodes{Dir: t.TempDir()}}
 			c.artifacts = artifact.New(c.artifacts.Dir, ledgerOf(t, c), c.projects, nodes)

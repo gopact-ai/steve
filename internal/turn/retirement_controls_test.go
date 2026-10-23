@@ -108,6 +108,7 @@ func TestScheduledRotationCannotCloseDuringSessionRetirement(t *testing.T) {
 }
 
 func TestRetirementWaitsForAdmittedHistoryMutation(t *testing.T) {
+	t.Parallel()
 	c, _, req, _ := retirementCoordinator(t)
 	release, err := c.beginSessionRetirement(t.Context(), req.Source.ConversationID, "codex")
 	if err != nil {

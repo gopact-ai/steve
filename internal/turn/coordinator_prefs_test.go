@@ -143,6 +143,7 @@ func TestOpenReappliesOptionPreferencesToResumedSession(t *testing.T) {
 }
 
 func TestApprovalDefaultPrecedenceWhenResuming(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, global, agentMode, conversationMode, want string
 	}{
@@ -187,6 +188,7 @@ func TestApprovalDefaultPrecedenceWhenResuming(t *testing.T) {
 
 // Preferences change how the next turn runs, never which conversation it remembers.
 func TestPreferencesPreserveContextAcrossIdleAndBusyUpdates(t *testing.T) {
+	t.Parallel()
 	for _, busy := range []bool{false, true} {
 		for _, same := range []bool{false, true} {
 			t.Run(fmt.Sprintf("busy=%v/same=%v", busy, same), func(t *testing.T) {
@@ -227,6 +229,7 @@ func TestResumedSessionAppliesExplicitModelPreference(t *testing.T) {
 }
 
 func TestLivePreferencesNeverScheduleContextReplacement(t *testing.T) {
+	t.Parallel()
 	for _, refused := range []bool{false, true} {
 		t.Run(fmt.Sprint(refused), func(t *testing.T) {
 			c, rt, _ := selectorCoordinator(t, true)
