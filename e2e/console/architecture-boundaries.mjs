@@ -67,10 +67,36 @@ test("the standard console gate reaches every registered regression suite", () =
     assert.deepEqual(missing, [], "registered regressions must not silently sit outside make test-console");
 });
 
-test("console CI runs every command of make test-console exactly once", () => {
+function workflowJobs() {
     const workflow = readFileSync(path.join(root, "../../.github/workflows/test.yml"), "utf8");
     const jobs = new Map();
     for (const block of workflow.split(/^(?=  [\w-]+:\s*$)/m).slice(1)) jobs.set(block.match(/^  ([\w-]+):/)[1], block);
+    return jobs;
+}
+
+// A required check that only aggregates other jobs must run even when they
+// fail: a job skipped because a need failed is reported to branch protection
+// as Success. So it runs `if: always()` and fails unless each need succeeded.
+function assertAggregate(jobs, name, required) {
+    const job = jobs.get(name);
+    assert.ok(job, `the required ${name} check must remain a job named ${name}`);
+    const needs = job.match(/^    needs:\s*\[([^\]]*)\]\s*$/m)?.[1].split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+    for (const need of required) assert.ok(needs.includes(need), `${name} must wait for ${need} so the required check reflects it`);
+    assert.match(job, /^    if: always\(\)\s*$/m, `${name} must run with if: always(); skipped after a failed need, it would report Success`);
+    for (const need of needs) {
+        assert.ok(jobs.has(need), `${name} needs a missing job ${need}`);
+        assert.match(job, new RegExp(`^\\s+(?:run: )?test "\\$\\{\\{ needs\\.${need}\\.result \\}\\}" = success\\s*$`, "m"), `${name} must fail when ${need} does not succeed`);
+    }
+}
+
+test("the Go test check fails when any shard or check fails", () => {
+    const jobs = workflowJobs();
+    assertAggregate(jobs, "test", ["go-shard", "go-checks"]);
+    assert.match(jobs.get("test"), /shard\.py verify /, "test must check the shards' recorded package coverage");
+});
+
+test("console CI runs every command of make test-console exactly once", () => {
+    const jobs = workflowJobs();
     assert.ok(jobs.has("console"), "the required console check must remain a job named console");
 
     // The commands come from the Makefile recipe, so a script added to the
@@ -99,10 +125,8 @@ test("console CI runs every command of make test-console exactly once", () => {
         assert.match(job, /console-shards\.mjs plan "\$SHARDS" "\$\{\{ matrix\.shard \}\}"/, `${name}: each shard runs its planned share`);
         assert.deepEqual([...matrix].sort((a, b) => a - b), [...Array(shards).keys()], `${name}: the matrix must run every one of the ${shards} shards`);
         runs.push(...assign(commands, loadWeights(), shards).map((bin) => bin.commands));
-        const needs = jobs.get("console").match(/^\s+needs:\s*\[([^\]]*)\]/m)?.[1].split(",").map((s) => s.trim()) ?? [];
         if (name !== "console") {
-            assert.ok(needs.includes(name), `console must wait for ${name} so the required check reflects the shards`);
-            assert.match(jobs.get("console"), new RegExp(`needs\\.${name}\\.result \\}\\}" = success`), `console must fail when a ${name} job fails`);
+            assertAggregate(jobs, "console", [name]);
             assert.match(jobs.get("console"), /console-shards\.mjs verify /, "console must check the shards' recorded coverage");
         }
     }
