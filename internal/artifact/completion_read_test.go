@@ -12,6 +12,7 @@ import (
 )
 
 func TestCompletionBlockerReadMatchesTransactionalLandingGuard(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"locked", "merge-conflict", "superseded", "no-commit", "different-artifact", "different-target", "different-attempt", "different-epoch", "write-lease", "snapshot-taken", "paths", "wal", "unfinished", "apply-conflict", "unapplied"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, _ := newStore(t, &localNode{}, project.Home{Path: t.TempDir()})

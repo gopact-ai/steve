@@ -55,6 +55,7 @@ func TestCanonicalLockOutlivesItsTTLWithoutADriver(t *testing.T) {
 // recovery leaves that lock behind, and boot recovery only releases the
 // lock the landing recorded — otherwise the project waits out the TTL.
 func TestRecoveryRecordsItsLockBeforeWriting(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
@@ -116,6 +117,7 @@ func orphanApplying(t *testing.T, store *Store, p project.Project, canonical str
 }
 
 func TestAnOrphanedApplyingLandingBlocksNewLandingsAndIsRetried(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
@@ -158,6 +160,7 @@ func TestTheRetryLeavesALiveApplyingLandingAlone(t *testing.T) {
 // recovery. It must leave the queue then, not land a second time as an
 // empty landing on the next pass.
 func TestRecoveredQueuedResultLeavesTheQueue(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, nodes, canonical, artifact := nodeLanding(t)
 	if err := store.Defer(ctx, "p", artifact, "test"); err != nil {
@@ -186,6 +189,7 @@ func TestRecoveredQueuedResultLeavesTheQueue(t *testing.T) {
 // lender released it, renewal failed — but its apply is still writing.
 // The retry must not start a second writer on the same directory.
 func TestTheRetryLeavesALandingThisProcessIsApplying(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})

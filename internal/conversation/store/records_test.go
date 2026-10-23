@@ -42,8 +42,46 @@ func consoleRecordFixture(t testing.TB, count int) (*Service, *ledger.Ledger) {
 	return s, book
 }
 
-func TestConsoleTenThousandHistorySmallWritesHaveBoundedPayload(t *testing.T) {
-	s, book := consoleRecordFixture(t, 10000)
+// consoleBoundHistories are the two retained-history sizes a bounded-write
+// test runs at. Both exceed keep, so trimming cannot hide growth, and the
+// larger is four times the smaller: a write whose rows or bytes depended on
+// history would differ between them.
+var consoleBoundHistories = [2]int{3 * keep / 2, 6 * keep}
+
+type consoleWriteCost struct{ rows, payload int }
+
+// sameAs says a write at the larger history cost what it cost at the
+// smaller one: the same rows, and bytes within what timestamps of different
+// lengths explain. One retained exchange record written again adds more than
+// 2KB, so any rewrite of history exceeds the slack.
+func (c consoleWriteCost) sameAs(smaller consoleWriteCost) bool {
+	const slack = 256
+	return c.rows == smaller.rows && c.payload-smaller.payload < slack && smaller.payload-c.payload < slack
+}
+
+func TestConsoleSmallWritesHaveBoundedPayloadAsHistoryGrows(t *testing.T) {
+	var costs [2]map[string]consoleWriteCost
+	for i, history := range consoleBoundHistories {
+		costs[i] = consoleSmallWriteCosts(t, history)
+	}
+	// Compare only mutations measured at both sizes: -run can select a
+	// subset of the subtests, and a mutation that ran at one size only has
+	// no cost at the other to compare with.
+	for name, small := range costs[0] {
+		large, ok := costs[1][name]
+		if ok && !large.sameAs(small) {
+			t.Errorf("mutation %s grew with history: history=%d %+v, history=%d %+v", name, consoleBoundHistories[0], small, consoleBoundHistories[1], large)
+		}
+	}
+}
+
+// consoleSmallWriteCosts applies each small mutation to a console holding
+// history keyed exchanges and returns the rows and bytes each one that ran
+// wrote.
+func consoleSmallWriteCosts(t *testing.T, history int) map[string]consoleWriteCost {
+	t.Helper()
+	costs := map[string]consoleWriteCost{}
+	s, book := consoleRecordFixture(t, history)
 	for _, sql := range []string{
 		`CREATE TABLE console_write_audit(kind TEXT, id TEXT, bytes INTEGER)`,
 		`CREATE TRIGGER console_write_insert AFTER INSERT ON bindings BEGIN INSERT INTO console_write_audit VALUES(new.kind,new.id,length(CAST(new.data AS BLOB))); END`,
@@ -87,7 +125,7 @@ func TestConsoleTenThousandHistorySmallWritesHaveBoundedPayload(t *testing.T) {
 			return s.save()
 		}},
 	} {
-		t.Run(mutation.name, func(t *testing.T) {
+		t.Run(fmt.Sprintf("history=%d/%s", history, mutation.name), func(t *testing.T) {
 			if _, err := book.DB().Exec(`DELETE FROM console_write_audit`); err != nil {
 				t.Fatal(err)
 			}
@@ -101,9 +139,11 @@ func TestConsoleTenThousandHistorySmallWritesHaveBoundedPayload(t *testing.T) {
 			if rows == 0 || rows > 4 || payload > 4096 {
 				t.Fatalf("small write rewrote history: rows=%d payload=%d, want <=4 rows and <=4096 bytes", rows, payload)
 			}
-			t.Logf("history=10000 mutation=%s rows=%d payload=%d bytes", mutation.name, rows, payload)
+			t.Logf("history=%d mutation=%s rows=%d payload=%d bytes", history, mutation.name, rows, payload)
+			costs[mutation.name] = consoleWriteCost{rows, payload}
 		})
 	}
+	return costs
 }
 
 func TestConsoleRecordRejectedMetadataIsNotPublishedOrInstalled(t *testing.T) {
@@ -327,6 +367,7 @@ func TestConsoleRecordStoreDoesNotReadOrMigrateLegacyDocument(t *testing.T) {
 }
 
 func TestConsoleRecordsAndCompletionFailClosedOnCorruption(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, sql string
 	}{

@@ -15,6 +15,7 @@ import (
 )
 
 func TestStoppedChildCannotLandUnderParentLeaseOrFromPending(t *testing.T) {
+	t.Parallel()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "before")
 	s, p := newStore(t, &localNode{}, project.Home{Path: canonical})
@@ -89,6 +90,7 @@ func (n *stoppingNode) Artifact(ctx context.Context, node string, req ops.Reques
 }
 
 func TestCancellationBeforeApplyRefusesAndAfterApplySettlesWAL(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []ops.Kind{ops.Changed, ops.Apply} {
 		t.Run(string(phase), func(t *testing.T) {
 			canonical := t.TempDir()

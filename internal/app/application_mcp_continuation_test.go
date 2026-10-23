@@ -15,6 +15,7 @@ import (
 // ended. The grant moves to the next independently authorized attempt as soon
 // as the previous one can no longer act, and stays put while it might.
 func TestApplicationMCPNextTurnFollowsAnyEndedAndSettledPreviousTurn(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"completed", "resumed-context", "fresh-context", "cancelled-task", "paused-task", "failed-before-binding", "other-node", "still-running", "never-settled", "unsettled-writer", "superseded-elsewhere", "stopped-next-task"} {
 		t.Run(mode, func(t *testing.T) {
 			book, tasks := applicationGrantBook(t)
