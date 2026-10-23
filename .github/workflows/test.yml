@@ -97,6 +97,7 @@ jobs:
         run: |
           echo "node=$(node --version)" >> "$GITHUB_OUTPUT"
           echo "playwright=$(node -p "require('./web/console/package-lock.json').packages['node_modules/playwright-core'].version")" >> "$GITHUB_OUTPUT"
+          echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
       # node_modules exactly as `npm ci` leaves it for this lockfile and Node.
       - name: Restore web/console/node_modules
         id: modules
@@ -119,8 +120,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/playwright-debs
-          key: playwright-debs-${{ env.ImageOS }}-${{ env.ImageVersion }}-${{ steps.versions.outputs.playwright }}
-          restore-keys: playwright-debs-${{ env.ImageOS }}-
+          key: playwright-debs-${{ steps.versions.outputs.image }}-${{ steps.versions.outputs.playwright }}
+          restore-keys: playwright-debs-
       - name: Install Playwright Chromium with its system packages
         run: |
           debs="$RUNNER_TEMP/playwright-debs"
@@ -164,22 +165,6 @@ jobs:
         run: |
           node scripts/ci/console-shards.mjs all > "$RUNNER_TEMP/all.txt"
           node scripts/ci/console-shards.mjs verify "$RUNNER_TEMP/all.txt" "$RUNNER_TEMP"/shards/console-shard-*.txt
-  # TEMP: measure the official Playwright image as the alternative; removed before review.
-  playwright-image-probe:
-    runs-on: ubuntu-latest
-    container:
-      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - run: npm ci
-        working-directory: web/console
-      - run: node -e "require('./web/console/node_modules/playwright').chromium.launch().then(b=>{console.log('chromium', b.version());return b.close()})"
   desktop:
     runs-on: macos-latest
     steps:
