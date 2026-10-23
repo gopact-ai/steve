@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
@@ -182,7 +182,10 @@ try {
     assert.equal(await page.evaluate(()=>document.querySelector('.bus-flow-track').flowState().packets.length),0,"read recovery replayed old claims");
     assert.deepEqual(writes,[],"the animation invoked a consumer action");
     console.log("PASS overlapping real publication/claim, shared queue snapshots, secret-free stable claim timing, dashboard live updates/reduced motion and read recovery");
-    await checkQueueBurst(page, await observe());
+    // The burst cases run on fresh contexts in this browser, at the bus
+    // overview this page reached; they report page errors here too.
+    const openBurst=async(width)=>{const context=await browser.newContext({viewport:{width,height:900},colorScheme:"dark",reducedMotion:"no-preference"});const burst=await context.newPage();burst.setDefaultTimeout(10000);burst.on("pageerror",(e)=>errors.push(String(e)));await burst.addInitScript(()=>localStorage.setItem("steve.ui.locale","en"));return burst;};
+    await checkQueueBurst(openBurst, page.url(), await observe(), Math.max(1, Number(process.env.QUEUE_BURST_CONCURRENCY) || Math.min(4, Math.max(1, Math.floor(os.availableParallelism() / 2)))));
     console.log("PASS adaptive backlog density, honest grouping, local consumer exits and equal light dimensions during 32 rapid claims at wide and narrow widths");
     assert.deepEqual(errors,[]);console.log("PASS keyboard, narrow layout and read-failure recovery keep decisions grounded in committed facts");
 } finally {

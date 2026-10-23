@@ -2650,8 +2650,10 @@ checks["workbench-split"] = async (f) => {
     await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
     await inspector(f.page).waitFor();
     await pane.waitFor();
+    // The inspector clamps its width from a ResizeObserver after it mounts:
+    // read the columns once that measurement has been applied.
+    await eventually(async () => (await f.page.locator(".conversation-content").boundingBox()).width >= 480, "Three columns still leave the conversation its minimum");
     await noHorizontalOverflow(f.page);
-    assert.ok((await f.page.locator(".conversation-content").boundingBox()).width >= 480, "Three columns still leave the conversation its minimum");
     await f.page.screenshot({ path: path.join(output, "workbench-split.png"), fullPage: true });
     // Hiding keeps the tab; closing it gives the room back for good.
     await f.page.getByRole("button", { name: "收起分栏", exact: true }).first().click();
@@ -3789,24 +3791,35 @@ checks["project-drag-reorder"] = async (f) => {
 };
 
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);
+for (const name of selected) assert.ok(checks[name], `Unknown CHECK ${name}; choices: ${Object.keys(checks).join(",")}`);
+// Every check owns a fresh browser context, page, clock and mocked API, so
+// checks run on a bounded pool of concurrent contexts in the one browser.
+// INTERACTIONS_CONCURRENCY=1 restores strictly serial execution.
+const concurrency = Math.max(1, Number(process.env.INTERACTIONS_CONCURRENCY) || Math.min(4, Math.max(1, Math.floor(os.availableParallelism() / 2))));
 let failed = 0;
-try {
-    for (const name of selected) {
-        assert.ok(checks[name], `Unknown CHECK ${name}; choices: ${Object.keys(checks).join(",")}`);
-        const f = await fixture({ history: name.startsWith("scroll-"), running: name.startsWith("stop-") || name === "scroll-stream" || name === "preferences-during-a-turn", sandboxed: name.startsWith("preview-html-") || name === "preview-svg-scripts-disabled" });
-        try {
-            await checks[name](f);
-            assert.deepEqual(f.errors, [], "Browser and mocked API errors");
-            console.log(`PASS ${name}`);
-        } catch (error) {
-            failed++;
-            await f.page.screenshot({ path: path.join(output, `${name}.png`) });
-            console.error(`FAIL ${name}: ${error.message}`);
-        } finally {
+async function run(name) {
+    let f;
+    try {
+        f = await fixture({ history: name.startsWith("scroll-"), running: name.startsWith("stop-") || name === "scroll-stream" || name === "preferences-during-a-turn", sandboxed: name.startsWith("preview-html-") || name === "preview-svg-scripts-disabled" });
+        await checks[name](f);
+        assert.deepEqual(f.errors, [], "Browser and mocked API errors");
+        console.log(`PASS ${name}`);
+    } catch (error) {
+        failed++;
+        if (f) await f.page.screenshot({ path: path.join(output, `${name}.png`) }).catch(() => {});
+        console.error(`FAIL ${name}: ${error.message}`);
+    } finally {
+        if (f) {
             for (const release of f.releases) release();
             await f.context.close();
         }
     }
+}
+try {
+    const pending = [...selected];
+    await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, async () => {
+        while (pending.length) await run(pending.shift());
+    }));
 } finally {
     await browser.close();
     app.close();

@@ -1,7 +1,7 @@
 // Real consumers, synthetic data, a private Vite cache, and no live backend.
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "../node_modules/vite/dist/node/index.js";
@@ -143,7 +143,7 @@ try {
         await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity).map((animation) => animation.finished.catch(() => {}))));
         return { context, page, dialog, trigger, writes, release: operation.resolve };
     }
-    async function sample(f, mode, width, theme) {
+    async function sample(f, mode, width, theme, into) {
         const migrated = f.dialog.locator("[data-dialog-surface]");
         const surface = await migrated.count() ? migrated.first() : f.dialog.locator(":scope > div").first();
         const actual = await surface.evaluate((el) => {
@@ -152,7 +152,7 @@ try {
             const body = el.querySelector("[data-dialog-body]") || el;
             return { padding: getComputedStyle(body).padding, radius: s.borderRadius, background: s.backgroundColor, shadow: s.boxShadow, width: el.getBoundingClientRect().width };
         });
-        samples.push({ mode, theme, ...actual, surfaceWidth: actual.width, width });
+        into.push({ mode, theme, ...actual, surfaceWidth: actual.width, width });
         if (["projects", "fleet", "home", "settings", "services"].includes(mode)) {
             const heading = f.dialog.getByRole("heading", { level: 2 });
             if (await heading.count() !== 1) failures.push(`${mode}: ordinary dialog needs one semantic h2 title`);
@@ -167,31 +167,47 @@ try {
         assert.ok(actual.width <= width, `${mode}: surface stays within the viewport`);
         assert.equal(await f.dialog.evaluate((el) => el.scrollWidth <= el.clientWidth), true, `${mode}: no dialog horizontal overflow`);
     }
+    // Each case opens its own context, so the matrix runs on a bounded pool
+    // of concurrent contexts. Samples keep matrix order for the comparisons.
+    const concurrency = Math.max(1, Number(process.env.DIALOG_CONCURRENCY) || Math.min(6, Math.max(1, Math.floor(os.availableParallelism() / 2))));
+    async function pool(jobs) {
+        const queue = [...jobs];
+        await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, async () => { while (queue.length) await queue.shift()(); }));
+    }
+    const groups = [];
     for (const theme of (process.env.DIALOG_BEHAVIOR_ONLY ? [] : process.env.DIALOG_HEADERS_ONLY ? ["light"] : ["light", "dark"])) {
         for (const viewport of (process.env.DIALOG_HEADERS_ONLY ? [{ width: 1440, height: 1000 }] : [{ width: 1440, height: 1000 }, { width: 390, height: 844 }, { width: 844, height: 390 }])) {
-            for (const mode of (process.env.DIALOG_HEADERS_ONLY ? ["projects", "fleet", "home", "settings", "services"] : process.env.DIALOG_CORE_ONLY ? ["projects", "fleet", "confirm"] : ["projects", "fleet", "confirm", "home", "settings", "services", "ssh", "desktop", "enrollment", "upgrade"])) {
-                const f = await open(mode, viewport, theme);
-                await sample(f, mode, viewport.width, theme);
-                if (process.env.DIALOG_SCREENSHOTS && theme === "light" && viewport.width === 390 && ["projects", "confirm", "desktop", "services"].includes(mode)) {
-                    await mkdir(process.env.DIALOG_SCREENSHOTS, { recursive: true });
-                    await f.page.screenshot({ animations: "disabled", path: path.join(process.env.DIALOG_SCREENSHOTS, `${mode}-390.png`) });
-                }
-                for (let i = 0; i < 5; i++) {
-                    await f.page.keyboard.press("Tab");
-                    assert.equal(await f.dialog.evaluate((el) => el.contains(document.activeElement)), true, `${mode}: keyboard focus stays in dialog`);
-                }
-                await f.page.keyboard.press("Escape");
-                await f.dialog.waitFor({ state: "hidden" });
-                await f.page.waitForFunction((el) => el === document.activeElement, await f.trigger.elementHandle());
-                await f.context.close();
-            }
-            const matching = samples.filter((s) => s.width === viewport.width && s.theme === theme);
-            for (const s of matching.slice(1)) {
-                if (s.background !== matching[0].background) failures.push(`${s.mode}/${s.width}: surface color differs`);
-                if (s.shadow !== matching[0].shadow) failures.push(`${s.mode}/${s.width}: surface elevation differs`);
-            }
+            const modes = process.env.DIALOG_HEADERS_ONLY ? ["projects", "fleet", "home", "settings", "services"] : process.env.DIALOG_CORE_ONLY ? ["projects", "fleet", "confirm"] : ["projects", "fleet", "confirm", "home", "settings", "services", "ssh", "desktop", "enrollment", "upgrade"];
+            groups.push({ theme, viewport, results: modes.map((mode) => ({ mode, samples: [] })) });
         }
     }
+    await pool(groups.flatMap(({ theme, viewport, results }) => results.map((result) => async () => {
+        const { mode } = result;
+        const f = await open(mode, viewport, theme);
+        await sample(f, mode, viewport.width, theme, result.samples);
+        if (process.env.DIALOG_SCREENSHOTS && theme === "light" && viewport.width === 390 && ["projects", "confirm", "desktop", "services"].includes(mode)) {
+            await mkdir(process.env.DIALOG_SCREENSHOTS, { recursive: true });
+            await f.page.screenshot({ animations: "disabled", path: path.join(process.env.DIALOG_SCREENSHOTS, `${mode}-390.png`) });
+        }
+        for (let i = 0; i < 5; i++) {
+            await f.page.keyboard.press("Tab");
+            assert.equal(await f.dialog.evaluate((el) => el.contains(document.activeElement)), true, `${mode}: keyboard focus stays in dialog`);
+        }
+        await f.page.keyboard.press("Escape");
+        await f.dialog.waitFor({ state: "hidden" });
+        await f.page.waitForFunction((el) => el === document.activeElement, await f.trigger.elementHandle());
+        await f.context.close();
+    })));
+    for (const { results } of groups) {
+        const matching = results.flatMap((result) => result.samples);
+        samples.push(...matching);
+        for (const s of matching.slice(1)) {
+            if (s.background !== matching[0].background) failures.push(`${s.mode}/${s.width}: surface color differs`);
+            if (s.shadow !== matching[0].shadow) failures.push(`${s.mode}/${s.width}: surface elevation differs`);
+        }
+    }
+    // The behavior cases below are independent contexts too.
+    const behavior = [async () => {
     const f = await open("confirm", { width: 390, height: 844 });
     await f.dialog.getByRole("button", { name: "Confirm fixture", exact: true }).click();
     await f.page.keyboard.press("Escape");
@@ -205,8 +221,9 @@ try {
     await f.dialog.waitFor({ state: "hidden" });
     assert.equal(await f.page.evaluate(() => window.confirmCalls), 2);
     await f.context.close();
+    }];
     if (!process.env.DIALOG_CORE_ONLY && !process.env.DIALOG_HEADERS_ONLY) {
-        for (const [mode, scenario, entity, title] of [["projects", "entities", "fixture-project", "fixture-project"], ["fleet", "entities-agents", "fixture-agent", "fixture-agent"], ["fleet", "entities", "Fixture machine", "Fixture machine"]]) {
+        for (const [mode, scenario, entity, title] of [["projects", "entities", "fixture-project", "fixture-project"], ["fleet", "entities-agents", "fixture-agent", "fixture-agent"], ["fleet", "entities", "Fixture machine", "Fixture machine"]]) behavior.push(async () => {
             const d = await open(mode, { width: 1440, height: 1000 }, "light", scenario);
             await d.page.keyboard.press("Escape"); await d.dialog.waitFor({ state: "hidden" });
             const row = d.page.getByRole("row").filter({ hasText: entity }).first();
@@ -223,12 +240,15 @@ try {
             const drawer = d.page.getByRole("dialog", { name: title, exact: true });
             await drawer.waitFor();
             assert.equal(await drawer.getByRole("heading", { level: 2, name: title, exact: true }).count(), 1);
+            // Escape belongs to the drawer once its focus scope has taken focus.
+            await d.page.waitForFunction((el) => el.contains(document.activeElement), await drawer.elementHandle());
             await d.page.keyboard.press("Escape");
             await drawer.waitFor({ state: "hidden" });
             assert.equal(d.writes.length, 0);
             await d.context.close();
-        }
+        });
         // Existing heading refs must still focus the next stage; no native picker runs.
+        behavior.push(async () => {
         const desktop = await open("desktop", { width: 390, height: 844 });
         await desktop.dialog.getByRole("button", { name: "Next", exact: true }).click();
         const heading = desktop.dialog.getByRole("heading", { name: "Working directory", exact: true });
@@ -236,8 +256,10 @@ try {
         await desktop.page.waitForFunction((el) => el === document.activeElement, await heading.elementHandle());
         assert.deepEqual(desktop.writes, ["/console/desktop/setup"]);
         await desktop.context.close();
+        });
 
         // Real nested Desktop -> SSH overlays, not an imitation of their lifecycle.
+        behavior.push(async () => {
         const nested = await open("desktop", { width: 390, height: 844 }, "light", "nested");
         const connect = nested.dialog.getByRole("button", { name: "Connect a machine over SSH", exact: true });
         await connect.focus(); await connect.press("Enter");
@@ -250,8 +272,9 @@ try {
         await nested.page.waitForFunction((el) => el === document.activeElement, await connect.elementHandle());
         assert.equal(await nested.dialog.isVisible(), true, "closing SSH retains desktop guide");
         await nested.context.close();
+        });
 
-        for (const mode of ["ssh", "enrollment", "upgrade"]) {
+        for (const mode of ["ssh", "enrollment", "upgrade"]) behavior.push(async () => {
             const w = await open(mode, { width: 390, height: 844 });
             if (mode === "ssh") await w.dialog.getByRole("radio").first().press("Space");
             if (mode === "enrollment") {
@@ -279,9 +302,10 @@ try {
                 assert.equal(await w.dialog.locator("[data-dialog-body]").evaluate((el) => el.scrollTop), 0, "SSH stage ref resets original scroll body");
             } else await w.dialog.getByRole("alert").filter({ hasText: "Synthetic operation rejected" }).waitFor();
             await w.context.close();
-        }
+        });
 
         // Home uses DialogTrigger: cancellation must not discard its local draft.
+        behavior.push(async () => {
         const home = await open("home", { width: 390, height: 844 });
         await home.page.keyboard.press("Escape"); await home.dialog.waitFor({ state: "hidden" });
         await home.page.getByRole("button", { name: "Edit", exact: true }).click();
@@ -291,7 +315,9 @@ try {
         assert.equal(await home.page.getByRole("textbox", { name: "SOUL.md", exact: true }).inputValue(), "Synthetic edited draft");
         assert.equal(home.writes.length, 0);
         await home.context.close();
+        });
     }
+    await pool(behavior);
     console.log(JSON.stringify({ samples, failures, errors }, null, 2));
     assert.deepEqual(errors, []);
     assert.deepEqual(failures, [], "standard dialog surfaces share chrome across consumers and viewports");
