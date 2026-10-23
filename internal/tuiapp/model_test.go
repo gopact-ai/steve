@@ -3,6 +3,8 @@ package tuiapp
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +27,10 @@ type fakeAPI struct {
 	answers    []clientapi.QuestionAnswer
 	reads      int
 	failStart  error
+	// failReads and failProjects fail that many calls before answering.
+	failReads    int
+	failProjects int
+	others       map[string]clientapi.ThreadDetail
 }
 
 func newFake() *fakeAPI {
@@ -35,6 +41,12 @@ func (f *fakeAPI) Initialize(context.Context) (clientapi.Initialize, error) {
 	return clientapi.Initialize{Protocol: clientapi.Protocol}, nil
 }
 func (f *fakeAPI) Projects(context.Context) ([]clientapi.Project, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failProjects > 0 {
+		f.failProjects--
+		return nil, errors.New("connection refused")
+	}
 	return []clientapi.Project{{ID: "scratch", Default: true}}, nil
 }
 func (f *fakeAPI) Agents(context.Context) ([]clientapi.Agent, error) {
@@ -43,12 +55,23 @@ func (f *fakeAPI) Agents(context.Context) ([]clientapi.Agent, error) {
 func (f *fakeAPI) Threads(context.Context) ([]clientapi.Thread, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return []clientapi.Thread{f.detail.Thread}, nil
+	out := []clientapi.Thread{f.detail.Thread}
+	for _, d := range f.others {
+		out = append(out, d.Thread)
+	}
+	return out, nil
 }
 func (f *fakeAPI) Thread(_ context.Context, id string, _ clientsdk.Page) (clientapi.ThreadDetail, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reads++
+	if f.failReads > 0 {
+		f.failReads--
+		return clientapi.ThreadDetail{}, errors.New("connection reset")
+	}
+	if d, ok := f.others[id]; ok {
+		return d, nil
+	}
 	if id != f.detail.Thread.ID {
 		return clientapi.ThreadDetail{}, &clientsdk.Error{Status: 404, Code: clientapi.CodeNotFound}
 	}
@@ -58,7 +81,14 @@ func (f *fakeAPI) Thread(_ context.Context, id string, _ clientsdk.Page) (client
 	return d, nil
 }
 func (f *fakeAPI) CreateThread(_ context.Context, req clientapi.CreateThread) (clientapi.ThreadDetail, error) {
-	return clientapi.ThreadDetail{Thread: clientapi.Thread{ID: "console:" + req.ID, Transport: "console", Project: req.Project}}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d := clientapi.ThreadDetail{Thread: clientapi.Thread{ID: "console:" + req.ID, Transport: "console", Project: req.Project}}
+	if f.others == nil {
+		f.others = map[string]clientapi.ThreadDetail{}
+	}
+	f.others[d.Thread.ID] = d
+	return d, nil
 }
 func (f *fakeAPI) StartTurn(_ context.Context, req clientapi.StartTurn) (clientapi.Turn, error) {
 	f.mu.Lock()
@@ -138,7 +168,7 @@ func (h *harness) run(cmd tea.Cmd) {
 		switch msg.(type) {
 		case tea.QuitMsg:
 			h.quit = true
-		case bootMsg, detailMsg, sentMsg, interruptedMsg, answeredMsg, threadsMsg:
+		case bootMsg, bootRetryMsg, detailMsg, sentMsg, interruptedMsg, answeredMsg, threadsMsg:
 			h.send(msg)
 		}
 	}
@@ -418,5 +448,307 @@ func TestThreadPickerSwitchesThreads(t *testing.T) {
 	h.press(tea.KeyEnter, 0)
 	if !strings.HasPrefix(h.model.thread.ID, "console:tui-") || h.model.thread.Project != "scratch" || h.model.focus != focusInput {
 		t.Fatalf("new thread = %+v", h.model.thread)
+	}
+}
+
+// A send whose answer is lost belongs to its thread: it is not restored
+// into another thread's input, and retrying it in its own thread repeats
+// the original request.
+func TestLostSendStaysWithItsThread(t *testing.T) {
+	api := newFake()
+	h := start(t, api)
+	api.failStart = errors.New("connection reset")
+	h.typeText("deploy")
+	// The answer to thread A's send is held while the user moves on.
+	next, held := h.model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	h.model = next.(Model)
+	h.press('t', tea.ModCtrl)
+	h.press(tea.KeyUp, 0)
+	h.press(tea.KeyEnter, 0)
+	other := h.model.thread.ID
+	if other == "console:main" {
+		t.Fatal("did not switch threads")
+	}
+	h.run(held)
+	original := api.turns[0]
+	if h.model.input.Value() != "" || strings.Contains(h.screen(), "not sent") {
+		t.Fatalf("thread A's lost send leaked into thread B: %q\n%s", h.model.input.Value(), h.screen())
+	}
+	api.failStart = nil
+	h.typeText("deploy")
+	h.press(tea.KeyEnter, 0)
+	last := api.turns[len(api.turns)-1]
+	if last.Thread != other || last.CommandID == original.CommandID {
+		t.Fatalf("a send in thread B reused thread A's request: %+v", last)
+	}
+	// Back in thread A the unsent input is offered again, and Enter
+	// repeats the original request.
+	h.model.switchToNow(t, h, "console:main")
+	if h.model.input.Value() != "deploy" {
+		t.Fatalf("thread A's input = %q", h.model.input.Value())
+	}
+	h.press(tea.KeyEnter, 0)
+	if last := api.turns[len(api.turns)-1]; !reflect.DeepEqual(last, original) {
+		t.Fatalf("retry = %+v, want %+v", last, original)
+	}
+}
+
+// switchToNow opens thread id through the picker.
+func (m Model) switchToNow(t *testing.T, h *harness, id string) {
+	t.Helper()
+	h.press('t', tea.ModCtrl)
+	for i, th := range h.model.picker.threads {
+		if th.ID == id {
+			h.model.picker.selected = i + 1
+		}
+	}
+	h.press(tea.KeyEnter, 0)
+	if h.model.thread.ID != id {
+		t.Fatalf("thread = %q, want %q", h.model.thread.ID, id)
+	}
+}
+
+// Two sends in flight whose answers are both lost keep their own
+// command_ids: each retry repeats its own request.
+func TestTwoLostSendsRetryWithTheirOwnCommandIDs(t *testing.T) {
+	api := newFake()
+	h := start(t, api)
+	api.failStart = errors.New("connection reset")
+	var held []tea.Cmd
+	for _, text := range []string{"first", "second"} {
+		h.typeText(text)
+		next, cmd := h.model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		h.model = next.(Model)
+		held = append(held, cmd)
+	}
+	for _, cmd := range held {
+		h.run(cmd)
+	}
+	if len(api.turns) != 2 {
+		t.Fatalf("turns = %+v", api.turns)
+	}
+	sentFirst, sentSecond := api.turns[0], api.turns[1]
+	api.failStart = nil
+	if h.model.input.Value() != "first" {
+		t.Fatalf("input = %q, want the oldest unsent input", h.model.input.Value())
+	}
+	h.press(tea.KeyEnter, 0)
+	if h.model.input.Value() != "second" {
+		t.Fatalf("after retrying the first, input = %q", h.model.input.Value())
+	}
+	h.press(tea.KeyEnter, 0)
+	if len(api.turns) != 4 || !reflect.DeepEqual(api.turns[2], sentFirst) || !reflect.DeepEqual(api.turns[3], sentSecond) {
+		t.Fatalf("retries = %+v, want %+v then %+v", api.turns[2:], sentFirst, sentSecond)
+	}
+}
+
+// Opening an existing thread from the picker does not crash.
+func TestThreadPickerOpensAnExistingThread(t *testing.T) {
+	api := newFake()
+	api.others = map[string]clientapi.ThreadDetail{"console:other": {Thread: clientapi.Thread{ID: "console:other", Transport: "console", Project: "scratch"},
+		Items: []clientapi.Item{{ID: "u1", Kind: clientapi.ItemMessage, Role: "user", Text: "from the other thread"}}}}
+	h := start(t, api)
+	h.press('t', tea.ModCtrl)
+	// The current thread is preselected: Enter reopens it.
+	h.press(tea.KeyEnter, 0)
+	if h.model.thread.ID != "console:main" || h.model.focus != focusInput {
+		t.Fatalf("reopened thread = %+v", h.model.thread)
+	}
+	h.model.switchToNow(t, h, "console:other")
+	if !strings.Contains(h.screen(), "from the other thread") {
+		t.Fatalf("the other thread is not shown:\n%s", h.screen())
+	}
+}
+
+// A question that only takes text can still be declined or cancelled:
+// the first Esc leaves the answer field.
+func TestFreeTextQuestionCanBeDeclinedOrCancelled(t *testing.T) {
+	for _, tc := range []struct{ key, decision string }{{"d", "decline"}, {"c", "cancel"}} {
+		api := newFake()
+		api.detail.Items = []clientapi.Item{{ID: "question:q2", Kind: clientapi.ItemQuestion, Thread: "console:main", Question: &clientapi.Question{
+			ID: "q2", Thread: "console:main", Message: "Name the branch", State: questionPending, AllowFreeText: true}}}
+		h := start(t, api)
+		if !h.model.question.writing || h.model.focus != focusQuestion {
+			t.Fatalf("a text-only question should open its answer field: %+v", h.model.question)
+		}
+		h.press(tea.KeyEscape, 0)
+		if h.model.question.writing || h.model.focus != focusQuestion {
+			t.Fatalf("the first Esc should leave the answer field and keep the question: writing=%v focus=%v", h.model.question.writing, h.model.focus)
+		}
+		h.typeText(tc.key)
+		if len(api.answers) != 1 || api.answers[0].Decision != tc.decision || api.answers[0].Text != "" {
+			t.Fatalf("%s: answers = %+v", tc.key, api.answers)
+		}
+	}
+	// A second Esc puts the question off.
+	api := newFake()
+	api.detail.Items = []clientapi.Item{{ID: "question:q2", Kind: clientapi.ItemQuestion, Thread: "console:main", Question: &clientapi.Question{
+		ID: "q2", Thread: "console:main", Message: "Name the branch", State: questionPending, AllowFreeText: true}}}
+	h := start(t, api)
+	h.press(tea.KeyEscape, 0)
+	h.press(tea.KeyEscape, 0)
+	if h.model.focus != focusInput || len(api.answers) != 0 {
+		t.Fatalf("second Esc: focus=%v answers=%+v", h.model.focus, api.answers)
+	}
+}
+
+// A bootstrap that fails is retried, after its pause and on the next
+// connection, and the error goes once it succeeds.
+func TestFailedBootstrapIsRetried(t *testing.T) {
+	api := newFake()
+	api.failProjects = 2
+	h := start(t, api)
+	if h.model.loaded || !strings.Contains(h.screen(), "could not open a thread") {
+		t.Fatalf("the failure should be shown:\n%s", h.screen())
+	}
+	// The pause elapsed; the server is still unreachable.
+	h.send(bootRetryMsg{})
+	if h.model.loaded || h.model.booting {
+		t.Fatalf("second attempt: loaded=%v booting=%v", h.model.loaded, h.model.booting)
+	}
+	// The stream reconnects: the client boots without waiting.
+	h.send(StreamMsg{Link: clientsdk.Connected})
+	if !h.model.loaded || strings.Contains(h.screen(), "could not open") {
+		t.Fatalf("the client did not recover:\n%s", h.screen())
+	}
+	h.typeText("hello")
+	h.press(tea.KeyEnter, 0)
+	if len(api.turns) != 1 {
+		t.Fatalf("sending after recovery: %+v", api.turns)
+	}
+}
+
+// A bootstrap attempt is not started while one is running.
+func TestBootstrapAttemptsDoNotOverlap(t *testing.T) {
+	m := New(t.Context(), newFake(), Options{})
+	next, cmd := m.Update(bootRetryMsg{})
+	if cmd != nil {
+		t.Fatal("a retry started a second bootstrap while the first was running")
+	}
+	next, cmd = next.(Model).Update(StreamMsg{Link: clientsdk.Connected})
+	if cmd != nil || !next.(Model).booting {
+		t.Fatal("a connection started a second bootstrap while the first was running")
+	}
+}
+
+// An event that arrives while the bootstrap reads is not lost: the thread
+// is read again once the first snapshot is installed.
+func TestEventsDuringBootstrapAreNotLost(t *testing.T) {
+	api := newFake()
+	h := &harness{t: t, model: New(t.Context(), api, Options{})}
+	h.send(tea.WindowSizeMsg{Width: 120, Height: 50})
+	boot := collect(h.model.Init())
+	// The server records a question after the snapshot was read; its event
+	// reaches the client before the snapshot does.
+	api.mu.Lock()
+	api.detail.Items = append(api.detail.Items, pendingQuestion())
+	api.mu.Unlock()
+	h.event(clientapi.Event{Type: clientapi.EventQuestionUpdated, Thread: "console:main", Question: "q1"})
+	for _, msg := range boot {
+		h.send(msg)
+	}
+	if !strings.Contains(h.screen(), "Run a command") {
+		t.Fatalf("the question recorded during bootstrap is missing:\n%s", h.screen())
+	}
+}
+
+// A failed read is shown until a read succeeds, without erasing a send
+// error that is still true.
+func TestRecoveredReadClearsItsError(t *testing.T) {
+	api := newFake()
+	h := start(t, api)
+	api.failReads = 1
+	h.event(clientapi.Event{Type: clientapi.EventThreadUpdated, Thread: "console:main"})
+	if !strings.Contains(h.screen(), "could not read the thread") {
+		t.Fatalf("read error not shown:\n%s", h.screen())
+	}
+	h.event(clientapi.Event{Type: clientapi.EventThreadUpdated, Thread: "console:main"})
+	if strings.Contains(h.screen(), "could not read the thread") {
+		t.Fatalf("a successful read left the error:\n%s", h.screen())
+	}
+	api.failStart = errors.New("connection refused")
+	h.typeText("deploy")
+	h.press(tea.KeyEnter, 0)
+	h.event(clientapi.Event{Type: clientapi.EventThreadUpdated, Thread: "console:main"})
+	if !strings.Contains(h.screen(), "not sent") {
+		t.Fatalf("a successful read erased the send error:\n%s", h.screen())
+	}
+}
+
+// A delegated step that finishes after its parent turn ended updates the
+// recorded reply: the client re-reads the thread.
+func TestStepProgressForARecordedReplyRefreshesItems(t *testing.T) {
+	api := newFake()
+	api.detail.Turns = []clientapi.Turn{{ID: "t1", State: clientapi.TurnDone, ReplyItem: "r1"}}
+	step := func(status string) []clientapi.Item {
+		return []clientapi.Item{
+			{ID: "r1", Kind: clientapi.ItemMessage, Role: "assistant", Text: "Delegated.", Turn: "t1"},
+			{ID: "r1#step-s1", Kind: clientapi.ItemToolCall, Turn: "t1", Tool: &clientapi.ToolCall{ID: "s1", Kind: "step", Name: "run the tests", Status: status}},
+		}
+	}
+	api.detail.Items = step("running")
+	h := start(t, api)
+	if !strings.Contains(h.screen(), "… run the tests") {
+		t.Fatalf("step not shown:\n%s", h.screen())
+	}
+	api.mu.Lock()
+	api.detail.Items = step("completed")
+	api.mu.Unlock()
+	h.event(clientapi.Event{Type: clientapi.EventTurnProgress, Thread: "console:main", Turn: "t1", Item: "r1", Task: "s1", Progress: &clientapi.Progress{Phase: "completed"}})
+	if !strings.Contains(h.screen(), "✓ run the tests") {
+		t.Fatalf("the finished step is not shown:\n%s", h.screen())
+	}
+}
+
+// A question larger than the terminal is shown in a bounded, scrollable
+// region that keeps the selected option and the controls on screen.
+func TestLargeQuestionFitsTheTerminal(t *testing.T) {
+	api := newFake()
+	q := pendingQuestion()
+	q.Question.Message = strings.Repeat("A long explanation line.\n", 40)
+	q.Question.Options = nil
+	for i := range 64 {
+		q.Question.Options = append(q.Question.Options, clientapi.QuestionOption{ID: fmt.Sprint(i), Label: fmt.Sprintf("Option %02d", i)})
+	}
+	api.detail.Items = []clientapi.Item{q}
+	h := start(t, api)
+	h.send(tea.WindowSizeMsg{Width: 80, Height: 24})
+	check := func(want string) {
+		t.Helper()
+		screen := h.screen()
+		if n := strings.Count(screen, "\n") + 1; n > 24 {
+			t.Fatalf("the screen is %d rows on a 24-row terminal:\n%s", n, screen)
+		}
+		if !strings.Contains(screen, "› "+want) || !strings.Contains(screen, "decline") || !strings.Contains(screen, "cancel") {
+			t.Fatalf("the selection %q or the controls are off screen:\n%s", want, screen)
+		}
+	}
+	check("Option 00")
+	for range 63 {
+		h.press(tea.KeyDown, 0)
+	}
+	check("Option 63")
+	h.press(tea.KeyEnter, 0)
+	if len(api.answers) != 1 || api.answers[0].Choice != "63" {
+		t.Fatalf("answers = %+v", api.answers)
+	}
+}
+
+// PgUp scrolls the question to its message.
+func TestQuestionScrollsWithPaging(t *testing.T) {
+	api := newFake()
+	q := pendingQuestion()
+	q.Question.Message = "TOP OF MESSAGE\n" + strings.Repeat("filler\n", 30)
+	api.detail.Items = []clientapi.Item{q}
+	h := start(t, api)
+	h.send(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if strings.Contains(h.screen(), "│ TOP OF MESSAGE") || !strings.Contains(h.screen(), "› Allow") {
+		t.Fatalf("the selected option should be scrolled into view first:\n%s", h.screen())
+	}
+	for range 10 {
+		h.press(tea.KeyPgUp, 0)
+	}
+	if !strings.Contains(h.screen(), "│ TOP OF MESSAGE") {
+		t.Fatalf("PgUp did not reach the top of the question:\n%s", h.screen())
 	}
 }

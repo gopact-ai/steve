@@ -45,6 +45,7 @@ func (m *Model) layout() {
 	width := max(m.width, 20)
 	m.input.SetWidth(width)
 	m.question.text.SetWidth(max(width-14, 10))
+	m.clampQuestion()
 	used := lipgloss.Height(m.header()) + lipgloss.Height(m.statusLine()) + m.input.Height()
 	if overlay := m.overlay(); overlay != "" {
 		used += lipgloss.Height(overlay)
@@ -120,11 +121,11 @@ func (m Model) statusLine() string {
 		}
 		parts = append(parts, warnStyle.Render("◐ "+phase))
 	}
-	if n := m.queuedTurns() + len(m.outbox); n > 0 {
+	if n := m.queuedTurns() + len(m.sending()); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d queued", n))
 	}
-	if m.err != "" {
-		parts = append(parts, errStyle.Render(m.err))
+	if problem := m.problem(); problem != "" {
+		parts = append(parts, errStyle.Render(problem))
 	} else if m.status != "" {
 		parts = append(parts, m.status)
 	}
@@ -138,7 +139,7 @@ func (m Model) statusLine() string {
 // turn reports, then input sent but not yet acknowledged.
 func (m Model) render(width int) string {
 	if !m.loaded {
-		if m.err != "" {
+		if m.problem() != "" {
 			return ""
 		}
 		return faint.Render("Connecting to Steve…")
@@ -157,8 +158,8 @@ func (m Model) render(width int) string {
 			b.WriteString("\n\n")
 		}
 	}
-	for _, s := range m.outbox {
-		b.WriteString(wrap.Render(userStyle.Render("you") + faint.Render(" (sending)") + "\n" + s.input))
+	for _, s := range m.sending() {
+		b.WriteString(wrap.Render(userStyle.Render("you") + faint.Render(" (sending)") + "\n" + s.req.Input))
 		b.WriteString("\n\n")
 	}
 	if b.Len() == 0 {
@@ -311,16 +312,54 @@ func (m Model) overlay() string {
 	if q == nil {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString(headerStyle.Render(questionTitle(q)))
-	if q.Agent != "" {
-		b.WriteString(faint.Render("  from " + q.Agent))
+	lines, _ := m.questionBody()
+	rows := m.questionRows()
+	start := min(m.question.scroll, max(len(lines)-rows, 0))
+	end := min(len(lines), start+rows)
+	shown := append([]string(nil), lines[start:end]...)
+	if last, ok := m.answers[q.ID]; ok && !last.failed {
+		shown = append(shown, faint.Render("sending answer…"))
 	}
-	if msg := trimmed(q.Message); msg != "" {
-		b.WriteString("\n" + msg)
-	}
-	b.WriteString("\n")
 	focused := m.focus == focusQuestion
+	hint := "↑/↓ choose · Enter accept · d decline · c cancel · Esc later"
+	if focused && m.question.writing {
+		hint = "Enter send · Esc leave the answer"
+	}
+	if len(lines) > rows {
+		hint = fmt.Sprintf("lines %d-%d of %d · PgUp/PgDn scroll · ", start+1, end, len(lines)) + hint
+	}
+	if !focused {
+		hint = "Tab to answer"
+	}
+	shown = append(shown, faint.Render(hint))
+	return boxStyle.Width(max(m.width, 20)).Render(strings.Join(shown, "\n"))
+}
+
+// questionRows is how many lines of the question the overlay shows; the
+// rest scrolls. It leaves room for the transcript, status and input.
+func (m Model) questionRows() int {
+	return max(m.height/2-4, 3)
+}
+
+// questionBody is the question as wrapped lines and the line of the
+// selected choice.
+func (m Model) questionBody() ([]string, int) {
+	q := m.currentQuestion()
+	if q == nil {
+		return nil, 0
+	}
+	wrap := lipgloss.NewStyle().Width(max(m.width-4, 10))
+	head := headerStyle.Render(questionTitle(q))
+	if q.Agent != "" {
+		head += faint.Render("  from " + q.Agent)
+	}
+	lines := strings.Split(wrap.Render(head), "\n")
+	if msg := trimmed(q.Message); msg != "" {
+		lines = append(lines, strings.Split(wrap.Render(msg), "\n")...)
+	}
+	lines = append(lines, "")
+	focused := m.focus == focusQuestion
+	at := len(lines)
 	for i, o := range q.Options {
 		row := "  " + o.Label
 		if o.Description != "" {
@@ -329,28 +368,42 @@ func (m Model) overlay() string {
 		if focused && !m.question.writing && i == m.question.selected {
 			row = selected.Render("› " + o.Label)
 		}
-		b.WriteString("\n" + row)
+		if i == m.question.selected {
+			at = len(lines)
+		}
+		lines = append(lines, strings.Split(wrap.Render(row), "\n")...)
 	}
 	if q.AllowFreeText {
+		if m.question.writing || m.question.selected == len(q.Options) {
+			at = len(lines)
+		}
 		if m.question.writing {
-			b.WriteString("\n" + m.question.text.View())
+			lines = append(lines, m.question.text.View())
 		} else {
 			row := "  Write an answer…"
 			if focused && m.question.selected == len(q.Options) {
 				row = selected.Render("› Write an answer…")
 			}
-			b.WriteString("\n" + row)
+			lines = append(lines, row)
 		}
 	}
-	if last, ok := m.answers[q.ID]; ok && !last.failed {
-		b.WriteString("\n" + faint.Render("sending answer…"))
+	return lines, at
+}
+
+// clampQuestion keeps the question's scroll in range and, after the
+// selection moved, the selected choice in view.
+func (m *Model) clampQuestion() {
+	lines, at := m.questionBody()
+	rows := m.questionRows()
+	if m.question.pin {
+		if at < m.question.scroll {
+			m.question.scroll = at
+		} else if at >= m.question.scroll+rows {
+			m.question.scroll = at - rows + 1
+		}
+		m.question.pin = false
 	}
-	hint := "↑/↓ choose · Enter accept · d decline · c cancel · Esc later"
-	if !focused {
-		hint = "Tab to answer"
-	}
-	b.WriteString("\n" + faint.Render(hint))
-	return boxStyle.Width(max(m.width, 20)).Render(b.String())
+	m.question.scroll = max(0, min(m.question.scroll, len(lines)-rows))
 }
 
 func (m Model) pickerView() string {

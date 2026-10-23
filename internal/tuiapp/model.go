@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
@@ -79,16 +80,22 @@ type Model struct {
 	turns    []clientapi.Turn
 	items    []clientapi.Item
 	loaded   bool
+	// booting is set while the bootstrap reads are in flight, so a retry
+	// timer and a reconnect cannot start a second one.
+	booting bool
 
 	link clientsdk.Link
 	// refreshing is set while a thread read is in flight; dirty asks for
 	// another once it returns, so a burst of events costs two reads.
 	refreshing, dirty bool
 
-	progress   map[string]*clientapi.Progress
-	steps      map[string]map[string]*clientapi.Progress
-	outbox     []pendingSend
-	failedSend *pendingSend
+	progress map[string]*clientapi.Progress
+	steps    map[string]map[string]*clientapi.Progress
+	outbox   []pendingSend
+	// unsent holds, per thread, the sends whose answer was lost. Each keeps
+	// its original request, so a retry names the same command_id in the
+	// same thread and the server answers it from its receipt.
+	unsent     map[string][]pendingSend
 	interrupts map[string]*pendingInterrupt
 	answers    map[string]pendingAnswer
 	question   questionState
@@ -97,10 +104,14 @@ type Model struct {
 	quitArmed bool
 	status    string
 	err       string
+	// readErr is a failed read of the thread or the bootstrap; the next
+	// successful read clears it without touching err.
+	readErr string
 }
 
+// pendingSend is one submitted input and the exact request that carries it.
 type pendingSend struct {
-	input, commandID string
+	req clientapi.StartTurn
 }
 
 type pendingInterrupt struct {
@@ -118,6 +129,10 @@ type questionState struct {
 	selected int
 	writing  bool
 	text     textinput.Model
+	// scroll is the first shown line of the question body; pin asks the
+	// next layout to scroll the selected option into view.
+	scroll int
+	pin    bool
 }
 
 type pickerState struct {
@@ -145,6 +160,12 @@ type detailMsg struct {
 	// opened is a thread the client just created and switches to.
 	opened bool
 }
+
+// bootRetryMsg retries a bootstrap that failed.
+type bootRetryMsg struct{}
+
+// bootRetry is how long a failed bootstrap waits before trying again.
+const bootRetry = 2 * time.Second
 
 type sentMsg struct {
 	send pendingSend
@@ -183,8 +204,8 @@ func New(ctx context.Context, api API, opts Options) Model {
 	return Model{
 		ctx: ctx, api: api, opts: opts, input: input, transcript: viewport.New(), follow: true,
 		progress: map[string]*clientapi.Progress{}, steps: map[string]map[string]*clientapi.Progress{},
-		interrupts: map[string]*pendingInterrupt{}, answers: map[string]pendingAnswer{},
-		question: questionState{text: text}, status: opts.Notice, width: 80, height: 24,
+		interrupts: map[string]*pendingInterrupt{}, answers: map[string]pendingAnswer{}, unsent: map[string][]pendingSend{},
+		question: questionState{text: text}, status: opts.Notice, width: 80, height: 24, booting: true,
 	}
 }
 
@@ -264,6 +285,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.question.pin = true
 		return m, nil
 	case tea.KeyPressMsg:
 		return m.key(msg)
@@ -276,6 +298,8 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, cmd
 	case bootMsg:
 		return m.booted(msg)
+	case bootRetryMsg:
+		return m.reboot()
 	case StreamMsg:
 		return m.stream(clientsdk.Update(msg))
 	case detailMsg:
@@ -292,14 +316,32 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	return m.typed(msg)
 }
 
+// booted installs the first thread. A failure is retried after a pause
+// and on the next connection. Events that arrived while the bootstrap
+// read were dropped, so the thread is read once more.
 func (m Model) booted(msg bootMsg) (Model, tea.Cmd) {
-	if msg.err != nil {
-		m.err = "could not open a thread: " + msg.err.Error()
+	m.booting = false
+	if m.loaded {
 		return m, nil
 	}
+	if msg.err != nil {
+		m.readErr = "could not open a thread: " + msg.err.Error() + " (retrying)"
+		return m, tea.Tick(bootRetry, func(time.Time) tea.Msg { return bootRetryMsg{} })
+	}
+	m.readErr = ""
 	m.server, m.projects, m.agents = msg.server, msg.projects, msg.agents
 	m.show(msg.detail)
-	return m, nil
+	m.restoreUnsent()
+	return m, m.refresh()
+}
+
+// reboot starts the bootstrap again unless it succeeded or is running.
+func (m Model) reboot() (Model, tea.Cmd) {
+	if m.loaded || m.booting {
+		return m, nil
+	}
+	m.booting = true
+	return m, m.boot()
 }
 
 // show replaces what the client displays of the current thread with a
@@ -353,16 +395,19 @@ func (m Model) detailed(msg detailMsg) (Model, tea.Cmd) {
 		}
 		clear(m.progress)
 		clear(m.steps)
-		m.follow, m.err, m.status = true, "", ""
+		m.leaveThread()
+		m.follow, m.err, m.readErr, m.status = true, "", "", ""
 		m.show(msg.detail)
+		m.restoreUnsent()
 		return m, nil
 	}
 	if msg.thread != m.thread.ID {
 		return m, m.refresh()
 	}
 	if msg.err != nil {
-		m.err = "could not read the thread: " + msg.err.Error()
+		m.readErr = "could not read the thread: " + msg.err.Error()
 	} else {
+		m.readErr = ""
 		m.show(msg.detail)
 	}
 	if m.dirty {
@@ -388,6 +433,9 @@ func (m Model) stream(u clientsdk.Update) (Model, tea.Cmd) {
 		m.status = ""
 	}
 	m.link = u.Link
+	if !m.loaded {
+		return m.reboot()
+	}
 	if u.Event == nil {
 		if u.Reset {
 			clear(m.progress)
@@ -402,6 +450,10 @@ func (m Model) stream(u clientsdk.Update) (Model, tea.Cmd) {
 	switch ev.Type {
 	case clientapi.EventTurnProgress:
 		m.progressed(ev)
+		if m.persisted(ev) {
+			// A step of a reply already recorded changed that item.
+			return m, m.refresh()
+		}
 		return m, nil
 	case clientapi.EventThreadDeleted:
 		m.err = "this thread was deleted; press Ctrl-T to open another"
@@ -424,6 +476,24 @@ func (m *Model) progressed(ev *clientapi.Event) {
 		m.steps[ev.Turn] = map[string]*clientapi.Progress{}
 	}
 	m.steps[ev.Turn][ev.Item] = ev.Progress
+}
+
+// persisted reports whether a progress event names a reply the thread
+// already holds, or a turn that is no longer running, so its change is in
+// the items and not only in the live progress.
+func (m Model) persisted(ev *clientapi.Event) bool {
+	if ev.Progress == nil || ev.Item == "" {
+		return false
+	}
+	for _, item := range m.items {
+		if item.ID == ev.Item {
+			return true
+		}
+	}
+	if running := m.runningTurn(); running != nil && running.ID == ev.Turn {
+		return false
+	}
+	return true
 }
 
 // runningTurn is the turn of the current thread that is running, if any.
@@ -468,6 +538,7 @@ func (m *Model) pickQuestion() {
 		}
 	}
 	m.question.id, m.question.selected, m.question.writing = "", 0, false
+	m.question.scroll, m.question.pin = 0, true
 	m.question.text.SetValue("")
 	m.question.text.Blur()
 	if len(pending) == 0 {
@@ -499,6 +570,15 @@ func (m Model) currentQuestion() *clientapi.Question {
 func (m *Model) focusInput() {
 	m.focus = focusInput
 	m.input.Focus()
+}
+
+// problem is the error the status line shows: a failed action first, then
+// a failed read.
+func (m Model) problem() string {
+	if m.err != "" {
+		return m.err
+	}
+	return m.readErr
 }
 
 func trimmed(s string) string { return strings.TrimSpace(s) }

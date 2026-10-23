@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gopact-ai/steve/internal/clientapi"
 	"github.com/gopact-ai/steve/internal/clientsdk"
@@ -351,4 +352,27 @@ func expectEvent(t *testing.T, updates <-chan clientsdk.Update) clientapi.Event 
 		t.Fatalf("update = %+v, want an event", u)
 	}
 	return *u.Event
+}
+
+// A refusal that is not a v1 error body, such as a proxy's error page, is
+// kept as one bounded line, so it cannot fill a status line or memory.
+func TestNonProtocolRefusalIsTruncatedToOneLine(t *testing.T) {
+	page := strings.Repeat("<p>Bad gateway\r\n</p>\n", 1<<20)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(page))
+	}))
+	defer proxy.Close()
+	_, err := clientsdk.New(proxy.URL, token, nil).Initialize(ctx(t))
+	var refused *clientsdk.Error
+	if !errors.As(err, &refused) || refused.Status != http.StatusBadGateway {
+		t.Fatalf("err = %v", err)
+	}
+	if len(refused.Message) > 4<<10 || strings.ContainsAny(refused.Message, "\r\n") || !strings.HasPrefix(refused.Message, "<p>Bad gateway </p>") || !strings.HasSuffix(refused.Message, "…") {
+		t.Fatalf("message is %d bytes: %.120q", len(refused.Message), refused.Message)
+	}
+	if !utf8.ValidString(refused.Message) {
+		t.Fatal("the message was cut inside a character")
+	}
 }

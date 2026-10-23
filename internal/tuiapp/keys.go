@@ -22,6 +22,16 @@ func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case "ctrl+t":
 		return m.openPicker()
 	case "pgup", "pgdown":
+		if m.focus == focusQuestion {
+			// The question has the keyboard, so paging scrolls it.
+			step := max(m.questionRows()-1, 1)
+			if press == "pgup" {
+				step = -step
+			}
+			m.question.scroll += step
+			m.question.pin = false
+			return m, nil
+		}
 		if press == "pgup" {
 			m.transcript.PageUp()
 		} else {
@@ -111,8 +121,9 @@ func (m Model) interrupted(msg interruptedMsg) (Model, tea.Cmd) {
 }
 
 // send submits the input box as a turn. Input starting with / is a Steve
-// command and goes to the server like any other input. A send that failed
-// is retried with its command_id, so it cannot run twice.
+// command and goes to the server like any other input. Input whose send
+// failed in this thread is retried with its original request, so the
+// server answers it from its receipt and it cannot run twice.
 func (m Model) send() (Model, tea.Cmd) {
 	text := trimmed(m.input.Value())
 	if text == "" {
@@ -126,16 +137,21 @@ func (m Model) send() (Model, tea.Cmd) {
 		m.err = "this thread belongs to a chat channel and is read-only; press Ctrl-T to open a console thread"
 		return m, nil
 	}
-	send := pendingSend{input: text, commandID: clientsdk.NewCommandID("tui-")}
-	if m.failedSend != nil && m.failedSend.input == text {
-		send.commandID = m.failedSend.commandID
+	send := pendingSend{req: clientapi.StartTurn{Thread: m.thread.ID, Input: text, CommandID: clientsdk.NewCommandID("tui-"), ExpectedProject: m.thread.Project}}
+	unsent := m.unsent[m.thread.ID]
+	for i, u := range unsent {
+		if u.req.Input == text {
+			send = u
+			m.unsent[m.thread.ID] = append(unsent[:i:i], unsent[i+1:]...)
+			break
+		}
 	}
-	m.failedSend, m.err, m.status = nil, "", ""
+	m.err, m.status = "", ""
 	m.outbox = append(m.outbox, send)
 	m.input.Reset()
 	m.follow = true
-	ctx, api := m.ctx, m.api
-	req := clientapi.StartTurn{Thread: m.thread.ID, Input: text, CommandID: send.commandID, ExpectedProject: m.thread.Project}
+	m.restoreUnsent()
+	ctx, api, req := m.ctx, m.api, send.req
 	return m, func() tea.Msg {
 		turn, err := api.StartTurn(ctx, req)
 		return sentMsg{send: send, turn: turn, err: err}
@@ -144,21 +160,47 @@ func (m Model) send() (Model, tea.Cmd) {
 
 func (m Model) sent(msg sentMsg) (Model, tea.Cmd) {
 	for i, s := range m.outbox {
-		if s.commandID == msg.send.commandID {
+		if s.req.CommandID == msg.send.req.CommandID {
 			m.outbox = append(m.outbox[:i:i], m.outbox[i+1:]...)
 			break
 		}
 	}
+	thread := msg.send.req.Thread
 	if msg.err != nil {
-		failed := msg.send
-		m.failedSend = &failed
-		if trimmed(m.input.Value()) == "" {
-			m.input.SetValue(msg.send.input)
+		m.unsent[thread] = append(m.unsent[thread], msg.send)
+		if thread == m.thread.ID {
+			m.restoreUnsent()
+			m.err = "not sent: " + msg.err.Error() + " (Enter retries)"
 		}
-		m.err = "not sent: " + msg.err.Error() + " (Enter retries)"
+		return m, nil
+	}
+	if thread != m.thread.ID {
 		return m, nil
 	}
 	return m, m.refresh()
+}
+
+// restoreUnsent puts the oldest unsent input of the current thread back
+// into an empty input box.
+func (m *Model) restoreUnsent() {
+	if trimmed(m.input.Value()) != "" {
+		return
+	}
+	for _, u := range m.unsent[m.thread.ID] {
+		m.input.SetValue(u.req.Input)
+		return
+	}
+}
+
+// sending is what the current thread has sent and not yet had answered.
+func (m Model) sending() []pendingSend {
+	var out []pendingSend
+	for _, s := range m.outbox {
+		if s.req.Thread == m.thread.ID {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // questionKey answers the question on screen. Enter takes the selected
@@ -172,7 +214,9 @@ func (m Model) questionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 	press := msg.String()
 	if press == "esc" {
-		if m.question.writing && len(q.Options) > 0 {
+		// The first Esc leaves the answer field, so d and c work on a
+		// question that only takes text; the next returns to the input.
+		if m.question.writing {
 			m.question.writing = false
 			m.question.text.Blur()
 			return m, nil
@@ -196,8 +240,10 @@ func (m Model) questionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch press {
 	case "up", "k":
 		m.question.selected = (m.question.selected + choices - 1) % max(choices, 1)
+		m.question.pin = true
 	case "down", "j":
 		m.question.selected = (m.question.selected + 1) % max(choices, 1)
+		m.question.pin = true
 	case "enter":
 		if m.question.selected < len(q.Options) {
 			return m.answer(q, clientapi.QuestionAnswer{Decision: "accept", Choice: q.Options[m.question.selected].ID})
@@ -298,12 +344,12 @@ func (m Model) pickerKey(press string) (Model, tea.Cmd) {
 		if m.picker.loading {
 			return m, nil
 		}
-		selected := m.picker.selected
+		selected, threads := m.picker.selected, m.picker.threads
 		m.closePicker()
-		if selected == 0 {
+		if selected == 0 || selected > len(threads) {
 			return m.newThread()
 		}
-		return m.switchTo(m.picker.threads[selected-1].ID)
+		return m.switchTo(threads[selected-1].ID)
 	}
 	return m, nil
 }
@@ -315,13 +361,28 @@ func (m *Model) closePicker() {
 	m.pickQuestion()
 }
 
+// leaveThread takes the current thread's restored unsent input out of the
+// input box, so it cannot be sent into the thread opened next. Text the
+// user typed stays.
+func (m *Model) leaveThread() {
+	text := trimmed(m.input.Value())
+	for _, u := range m.unsent[m.thread.ID] {
+		if u.req.Input == text {
+			m.input.Reset()
+			return
+		}
+	}
+}
+
 func (m Model) switchTo(id string) (Model, tea.Cmd) {
+	m.leaveThread()
 	m.thread = clientapi.Thread{ID: id}
 	m.turns, m.items = nil, nil
 	clear(m.progress)
 	clear(m.steps)
 	m.follow, m.refreshing, m.dirty = true, false, false
-	m.err, m.status = "", ""
+	m.err, m.readErr, m.status = "", "", ""
+	m.restoreUnsent()
 	return m, m.refresh()
 }
 

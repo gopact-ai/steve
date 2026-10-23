@@ -49,7 +49,7 @@ func (c *Client) Events(ctx context.Context, thread, after string) (*Stream, err
 	}
 	if res.StatusCode != http.StatusOK {
 		defer res.Body.Close()
-		raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
+		raw, _ := io.ReadAll(io.LimitReader(res.Body, maxRefusal))
 		return nil, refusal(res, raw)
 	}
 	if !strings.HasPrefix(res.Header.Get("Content-Type"), "text/event-stream") {

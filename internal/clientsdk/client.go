@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gopact-ai/steve/internal/clientapi"
 )
@@ -25,6 +26,9 @@ import (
 // maxBody bounds a JSON response. The largest is a thread page of 500
 // items, well under this.
 const maxBody = 32 << 20
+
+// maxRefusal bounds the body read from a refusal.
+const maxRefusal = 64 << 10
 
 // Client calls one Steve server. It is safe for concurrent use.
 type Client struct {
@@ -117,12 +121,14 @@ func (c *Client) call(ctx context.Context, method, path string, body, out any) e
 		return err
 	}
 	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		// A refusal is a short v1 error body; anything longer is not one.
+		raw, _ := io.ReadAll(io.LimitReader(res.Body, maxRefusal))
+		return refusal(res, raw)
+	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxBody))
 	if err != nil {
 		return err
-	}
-	if res.StatusCode != http.StatusOK {
-		return refusal(res, raw)
 	}
 	if !isJSON(res) {
 		return ErrNotV1
@@ -146,7 +152,28 @@ func refusal(res *http.Response, raw []byte) error {
 	if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusMethodNotAllowed {
 		return fmt.Errorf("%w (HTTP %d)", ErrNotV1, res.StatusCode)
 	}
-	return &Error{Status: res.StatusCode, Message: strings.TrimSpace(string(raw))}
+	return &Error{Status: res.StatusCode, Message: plainMessage(raw)}
+}
+
+// maxPlainMessage bounds the message kept from a refusal that is not a v1
+// error body, such as a proxy's HTML page.
+const maxPlainMessage = 4 << 10
+
+// plainMessage is a non-protocol error body as one line of at most
+// maxPlainMessage bytes, cut on a character boundary.
+func plainMessage(raw []byte) string {
+	if len(raw) > 4*maxPlainMessage {
+		raw = raw[:4*maxPlainMessage]
+	}
+	s := strings.Join(strings.Fields(strings.ToValidUTF8(string(raw), "")), " ")
+	if len(s) <= maxPlainMessage {
+		return s
+	}
+	cut := maxPlainMessage - len("…")
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 // Initialize reads the protocol, server version and capabilities. It
