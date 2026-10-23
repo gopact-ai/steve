@@ -1,0 +1,68 @@
+# seconds<TAB>command: per test command on the CI console job (master run 39887089823;
+# chained commands share their script's time). Regenerate from shard logs with
+# scripts/ci/shard.py console-weights <logs>; unlisted commands go to the lightest shard.
+100.1	node scripts/schedules-browser.test.mjs
+72.2	node ../../e2e/console/task-completion.mjs
+44.0	node ../../e2e/console/interactions.mjs
+44.0	node --test scripts/sessions-attention-browser.test.mjs
+44.0	node ../../e2e/console/recovery-workspace-ui.mjs
+44.0	node ../../e2e/console/assistant-services.mjs
+32.3	node scripts/style-contract-browser.test.mjs
+32.3	node scripts/style-controls-browser.test.mjs
+32.3	node scripts/dialog-surface-browser.test.mjs
+32.3	node scripts/conversation-typography-browser.test.mjs
+31.5	node ../../e2e/console/settings-page.mjs
+31.5	node scripts/approval-defaults-browser.test.mjs
+27.5	node ../../e2e/console/ssh-connect-ui.mjs
+26.9	node ../../e2e/console/mail-ui.mjs
+26.9	node ../../e2e/console/desktop-onboarding-ui.mjs
+23.4	node ../../e2e/console/node-agents-ui.mjs
+23.4	node ../../e2e/console/command-first-ui.mjs
+23.4	node ../../e2e/console/typed-options-enrollment.mjs
+23.3	node scripts/wire-contract.test.mjs
+23.3	node scripts/typed-options-wire.test.mjs
+22.2	node scripts/channel-history-refresh-browser.test.mjs
+22.2	node scripts/channel-conversation-browser.test.mjs
+17.8	node scripts/management-browser.test.mjs
+17.4	node scripts/composer-actions-browser.test.mjs
+14.8	node ../../e2e/console/architecture.mjs
+14.1	node ../../e2e/console/streaming-ui.mjs
+12.8	node ../../e2e/console/questions-ui.mjs
+12.8	node ../../e2e/console/question-permission-overflow.mjs
+12.8	node ../../e2e/console/machine-restart-ui.mjs
+12.6	node ../../e2e/console/materials-ui.mjs
+12.6	node ../../e2e/console/material-thumbnails.mjs
+12.6	node scripts/work-history-browser.test.mjs
+12.5	node scripts/composer-agent-browser.test.mjs
+12.5	node ../../e2e/console/typed-options-ui.mjs
+12.5	node ../../e2e/console/typed-options-fleet.mjs
+12.5	node ../../e2e/console/typed-options-context.mjs
+12.4	node ../../e2e/console/coordination-ui.mjs
+12.4	node scripts/coordination-poll-browser.test.mjs
+12.1	node scripts/conversation-browser.test.mjs
+11.8	node ../../e2e/console/selection.mjs
+11.8	node ../../e2e/console/selection-ui.mjs
+11.8	node ../../e2e/console/side-chat-ui.mjs
+11.8	node ../../e2e/console/changes-card.mjs
+10.4	node ../../e2e/console/durable-drafts.mjs
+10.0	node ../../e2e/console/performance-ui.mjs
+10.0	node ../../e2e/console/deferred-details.mjs
+10.0	node scripts/lazy-region-browser.test.mjs
+10.0	node scripts/locale-lazy-browser.test.mjs
+10.0	node scripts/fleet-render-browser.test.mjs
+10.0	node scripts/sessions-render-browser.test.mjs
+9.6	node ../../e2e/console/plugins-ui.mjs
+9.1	node scripts/task-transport-browser.test.mjs
+6.3	node ../../e2e/console/close-layers-ui.mjs
+6.0	node ../../e2e/console/delete-ui.mjs
+5.9	node ../../e2e/console/history-pagination-ui.mjs
+5.5	node ../../e2e/console/projects-directory-ui.mjs
+5.0	node ../../e2e/console/usage-demand.mjs
+4.6	node scripts/generate-palettes.mjs --check
+4.6	node scripts/appearance-browser.test.mjs
+3.5	node ../../e2e/console/conflicts-ui.mjs
+2.5	node scripts/route-lazy.test.mjs
+1.9	node --test scripts/event-definition.test.mjs scripts/event-activity-groups.test.mjs scripts/fleet-agent-create.test.mjs scripts/session-options.test.mjs scripts/session-options-p2.test.mjs scripts/appearance.test.mjs ../../e2e/console/diff-parser.mjs ../../e2e/console/settings-draft.mjs ../../e2e/console/i18n.mjs ../../e2e/console/project-order.mjs ../../e2e/console/live.mjs ../../e2e/console/history-lines.mjs ../../e2e/console/plain-text.mjs scripts/conversation-projection.test.mjs scripts/conversation-controller.test.mjs scripts/choice-types.test.mjs scripts/management-refresh.test.mjs scripts/channel-poll.test.mjs scripts/delegations.test.mjs scripts/format-cache.test.mjs scripts/service-watch.test.mjs scripts/state-poll.test.mjs scripts/event-cursor.test.mjs scripts/work-list-index.test.mjs scripts/task-transport.test.mjs scripts/channel-history.test.mjs scripts/machine-restart.test.mjs ../../e2e/console/history-pagination.mjs
+1.9	PURE_ONLY=1 node ../../e2e/console/settings-page.mjs
+1.9	node ../../e2e/console/material-drafts.mjs
+1.7	node --test ../../e2e/console/architecture-boundaries.mjs scripts/style-boundaries.test.mjs
