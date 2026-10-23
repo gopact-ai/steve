@@ -65,7 +65,6 @@ func nodeRuntimeFixture(t *testing.T, s *Server, endpoint string) plugins.Select
 }
 
 func TestPluginBrokerRetainsRouteAndSecretVersionAcrossRestart(t *testing.T) {
-	t.Parallel()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer LOCAL_SECRET" {
 			t.Error("wrong node credential")

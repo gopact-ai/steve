@@ -434,7 +434,6 @@ func TestRecoveryFaultCombinationFinalPendingResultHoldRollback(t *testing.T) {
 }
 
 func TestRecoveryFaultCombinationAbandonDescendantTreeRollback(t *testing.T) {
-	t.Parallel()
 	for _, refused := range []string{"abandon-record", "descendant-record", "accounting-cutoff", "last-control-record"} {
 		for _, restart := range []bool{false, true} {
 			storeName := "hot-original"

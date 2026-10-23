@@ -58,7 +58,6 @@ func TestInlineCancelledChildIsNotDeliveredAgain(t *testing.T) {
 }
 
 func TestPausedParentKeepsUnreportedResultsUntilResumed(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	child := completedChild(t, w, parent, "implementation ready")
@@ -178,7 +177,6 @@ func TestAsynchronousReceiptCanArriveBeforeDispatchReturns(t *testing.T) {
 }
 
 func TestFailedParentRetainsChildResult(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	completedChild(t, w, parent, "result")

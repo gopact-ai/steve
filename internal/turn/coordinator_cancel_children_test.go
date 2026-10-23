@@ -277,7 +277,6 @@ func TestPrefaceIsToldAgainWhenTheTurnNeverSettled(t *testing.T) {
 // message, so that message must not be swallowed by the window a stop
 // arms against a turn that was just starting.
 func TestCancelStopsDelegatedChildrenWhenNoTurnIsRunning(t *testing.T) {
-	t.Parallel()
 	runner := &fakeRunner{reply: "ok"}
 	coordinator, tasks := taskCoordinator(t, runner)
 	if _, err := handle(coordinator, t.Context(), "start it"); err != nil {
@@ -432,7 +431,6 @@ func (m *composingRuntime) OpenSession(ctx context.Context, at harness.Placement
 // end must not lift the stop's hold: the children are stopped next, and
 // what they leave waits for the user.
 func TestATurnStoppedWhileComposingDoesNotLiftTheStopsHold(t *testing.T) {
-	t.Parallel()
 	runner := &composingRunner{fakeRunner: &fakeRunner{reply: "ok", cancelSettles: true}}
 	rt := &composingRuntime{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"codex": runner.fakeRunner}}, runner: runner}
 	afterTurn := func(string) {}
@@ -528,7 +526,6 @@ func TestAPrefaceLiftsOnlyTheHoldItWasComposedUnder(t *testing.T) {
 // reply leads with why, as it always did, and the children stopped after
 // it are named below. The error alone does not reach the transcript.
 func TestCancelReplyLeadsWithTheTurnsErrorBeforeTheStoppedChildren(t *testing.T) {
-	t.Parallel()
 	refused := errors.New("agent refused the stop")
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{}), cancelErr: refused}
 	coordinator, tasks := taskCoordinator(t, runner)

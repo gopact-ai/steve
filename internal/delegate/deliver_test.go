@@ -161,7 +161,6 @@ func TestAChildEndingMidTurnWaitsForTheTurnToEnd(t *testing.T) {
 }
 
 func TestAResultCollectedByAwaitIsNotDeliveredAgain(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}

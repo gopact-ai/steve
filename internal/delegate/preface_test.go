@@ -52,7 +52,6 @@ func TestFlushDeliversNothingWhileTheParentIsHeld(t *testing.T) {
 // it was held; and the ones a pause left paused, which are closed for
 // good here — nothing resumes a delegation. Each is told once.
 func TestPrefaceReportsStoppedChildrenOnceAndClosesPausedOnes(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}

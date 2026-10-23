@@ -61,7 +61,6 @@ func TestNodeProgressBurstCoalescesDurableWrites(t *testing.T) {
 	}
 }
 func TestNodeTerminalCommitIncludesPendingProgress(t *testing.T) {
-	t.Parallel()
 	one := progressSession(t)
 	for _, text := range []string{"first", "full final output"} {
 		if err := one.updateProgress("input", view.Progress{Answer: text}); err != nil {

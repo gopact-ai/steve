@@ -53,7 +53,6 @@ func TestSessionRecordsMissingConsumedInputIsNotFresh(t *testing.T) {
 }
 
 func TestSessionRecordsCloseDrainsTimerAndCannotReopen(t *testing.T) {
-	t.Parallel()
 	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}}
 	server := NewServer(cfg)
 	if err := server.startSessions(t.Context()); err != nil {
