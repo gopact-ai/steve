@@ -8,6 +8,7 @@ Steve 把你使用的 AI agent、项目和机器放在一个工作台中。首�
 | --- | --- |
 | [入门](getting-started.md) | 安装、登记 agent、打开第一个项目 |
 | [日常使用](guide.md) | 会话、任务、文件审阅、权限和用量 |
+| [终端客户端](tui.md) | 在终端里用 `steve` 对话、回答提问和切换会话 |
 | [桌面与多机协作](desktop.md) | macOS App、SSH 接入、协调交接与恢复 |
 | [连接外部事件](events.md) | 邮件、GitHub、订阅和待处理 |
 | [能力包](plugins.md) | 技能、MCP、agent 预设和会话版本 |

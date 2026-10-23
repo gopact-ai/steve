@@ -9,7 +9,7 @@ import (
 
 func TestDesktopApplicationReadsDoNotFallBackToHTML(t *testing.T) {
 	peer := &Peer{UIToken: "isolated-ui-token"}
-	for _, path := range []string{"/state", "/usage", "/events", "/history", "/console/tasks", "/bootstrap/node", "/dist/steve-node"} {
+	for _, path := range []string{"/state", "/usage", "/events", "/history", "/console/tasks", "/bootstrap/node", "/dist/steve-node", "/v1/initialize", "/v1/threads/console:main", "/v1/events"} {
 		t.Run(path, func(t *testing.T) {
 			for _, authorized := range []bool{false, true} {
 				request := httptest.NewRequest(http.MethodGet, path, nil)

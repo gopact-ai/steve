@@ -47,10 +47,16 @@ func main() {
 var commands = map[string]func(args []string) error{
 	"init": app.InitCommand, "version": app.VersionCommand, "--version": app.VersionCommand,
 	"setup": setup, "doctor": doctor, "top": consoleclient.Top, "dash": consoleclient.Dash, "desktop": desktopCmd, "peer": peerCmd, "peer-stop": app.PeerStopCommand, "--peer-stop-protocol": app.PeerStopProtocolCommand, "peer-import": peerImportCmd, "peer-init": app.InitClusterCommand, "link": app.LinkCommand,
-	"ledger": ledgerCmd, "migrate": migrateCmd, "say": consoleclient.Say, "plugins": app.PluginsCommand, "mcp-launch": app.MCPLaunchCommand,
+	"ledger": ledgerCmd, "migrate": migrateCmd, "say": consoleclient.Say, "tui": consoleclient.Terminal, "plugins": app.PluginsCommand, "mcp-launch": app.MCPLaunchCommand,
 }
 
 func run(args []string) error {
+	// A bare `steve` typed at a terminal opens the client. Services are
+	// started with `run` or flags, and without a terminal, so they still
+	// reach serve.
+	if len(args) == 0 && isTerminal() && term.IsTerminal(int(os.Stdout.Fd())) {
+		return consoleclient.Terminal(nil)
+	}
 	if len(args) > 0 {
 		if command, ok := commands[args[0]]; ok {
 			return command(args[1:])
