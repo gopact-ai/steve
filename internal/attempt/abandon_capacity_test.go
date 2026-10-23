@@ -9,6 +9,7 @@ import (
 )
 
 func TestAbandonedCapacityReleasePreservesAReplacementAndItsWriterLeases(t *testing.T) {
+	t.Parallel()
 	for _, replaced := range []bool{false, true} {
 		t.Run(map[bool]string{false: "original capacity", true: "replacement"}[replaced], func(t *testing.T) {
 			s, r, _, _ := abandonedRecord(t)
@@ -68,6 +69,7 @@ func TestAbandonedCapacityReleasePreservesAReplacementAndItsWriterLeases(t *test
 }
 
 func TestLateUsageNeverChangesTheAbandonmentSnapshot(t *testing.T) {
+	t.Parallel()
 	s, r, proof, tasks := abandonedRecord(t)
 	before, _ := tasks.Get(r.TaskID)
 	if err := s.MarkUnsettled(t.Context(), r.ID, "late", errForceStopUnchanged, &Usage{Input: 700, Output: 900, Reported: true}); err != nil {

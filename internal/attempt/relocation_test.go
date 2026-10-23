@@ -25,6 +25,7 @@ func relocationFixture(t *testing.T) (*Service, *clock, Record, RelocationIntent
 }
 
 func TestRelocationPreparationFreezesMCPConfigurationBeforeAnUncertainOpen(t *testing.T) {
+	t.Parallel()
 	s, _, _, plan, _, _ := relocationFixture(t)
 	r, err := s.OpenRelocation(t.Context(), plan.ID, manualRelocation(plan))
 	if err != nil {
@@ -68,6 +69,7 @@ func manualRelocation(p RelocationIntent) RelocationApproval {
 }
 
 func TestRelocationApprovalIsBoundToExactPlanAndKeepsLogicalTurn(t *testing.T) {
+	t.Parallel()
 	s, _, old, p, _, _ := relocationFixture(t)
 	if _, err := s.OpenRelocation(t.Context(), p.ID, RelocationApproval{}); err == nil {
 		t.Fatal("absence of effects was treated as approval")
@@ -102,6 +104,7 @@ func TestRelocationApprovalIsBoundToExactPlanAndKeepsLogicalTurn(t *testing.T) {
 }
 
 func TestApprovedRelocationPreparationSurvivesCoordinatorLossWithoutNewAttempt(t *testing.T) {
+	t.Parallel()
 	s, now, _, p, _, _ := relocationFixture(t)
 	created, err := s.OpenRelocation(t.Context(), p.ID, manualRelocation(p))
 	if err != nil {
@@ -156,6 +159,7 @@ func TestRelocationRollsBackOldRetirementWhenReplacementLeaseCannotBeAcquired(t 
 }
 
 func TestRelocationRequiresTaskAuthorizationAndRealUndispatchedProof(t *testing.T) {
+	t.Parallel()
 	t.Run("task stopped", func(t *testing.T) {
 		s, _, old, p, _, tasks := relocationFixture(t)
 		if _, err := tasks.SetAside(old.TaskID, task.StatePaused); err != nil {
@@ -167,6 +171,8 @@ func TestRelocationRequiresTaskAuthorizationAndRealUndispatchedProof(t *testing.
 	})
 	for _, marker := range []string{"", "dispatched", "not-dispatched"} {
 		t.Run(marker, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			s, _, _, p, proof, _ := relocationFixture(t)
 			p.ID = ""
 			p.UnknownActions = nil

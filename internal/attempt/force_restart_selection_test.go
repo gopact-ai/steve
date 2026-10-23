@@ -6,6 +6,7 @@ import (
 )
 
 func TestForceRestartSelectedPlanIsPartOfTheClaimIdentity(t *testing.T) {
+	t.Parallel()
 	s, r := restartFixture(t)
 	selection := ForceRestartSelection{MembershipRevision: 4, JoinPlanID: "existing-upgrade", JoinKind: "upgrade"}
 	op, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder", selection)
@@ -28,6 +29,7 @@ func TestForceRestartSelectedPlanIsPartOfTheClaimIdentity(t *testing.T) {
 }
 
 func TestForceRestartWithoutAnExactSelectionCannotClaimOrVerify(t *testing.T) {
+	t.Parallel()
 	for _, selection := range []ForceRestartSelection{{}, {MembershipRevision: 1, JoinKind: "restart"}, {MembershipRevision: 1, JoinPlanID: "plan"}, {MembershipRevision: 1, JoinPlanID: "plan", JoinKind: "unknown"}} {
 		s, r := restartFixture(t)
 		op := ForceRestart{ID: "incomplete-selection", ClusterID: "cluster", NodeID: r.Node, Holder: "holder", By: "owner", RequestedAt: r.ForceStop.LevelSince, Selection: selection}

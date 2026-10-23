@@ -11,6 +11,7 @@ import (
 )
 
 func TestFirstConversationContinuesAfterIdentityGeneration(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "owner"); err != nil {
 		t.Fatal(err)

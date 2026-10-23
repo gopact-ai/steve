@@ -8,6 +8,7 @@ import (
 )
 
 func TestStartupRecoveryQuarantinesUnknownAndPreservesBoundOutput(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	open := func(id, taskID string) Record {
 		r, err := s.Open(t.Context(), Spec{ID: id, TaskID: taskID, Kind: KindStep, Project: "p", Workspace: worktree("wt-"+id, "p"), Scope: ScopePathSet})
@@ -81,6 +82,7 @@ func TestStartupRecoveryQuarantinesUnknownAndPreservesBoundOutput(t *testing.T) 
 }
 
 func TestSessionEvidenceArmsBeforeWorkAndRequiresExplicitSettlement(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	r, err := s.Open(t.Context(), Spec{ID: "work", Kind: KindStep, Project: "p", Workspace: worktree("wt", "p"), Scope: ScopePathSet})
 	if err != nil {
@@ -121,6 +123,7 @@ func TestSessionEvidenceArmsBeforeWorkAndRequiresExplicitSettlement(t *testing.T
 }
 
 func TestStartupRecoveryFailureDoesNotReleaseUnknownWriter(t *testing.T) {
+	t.Parallel()
 	s, clock := newService(t)
 	r := readyAttempt(t, s, "unknown")
 	if err := s.ArmSession(t.Context(), r.ID, "verification started"); err != nil {
@@ -181,6 +184,7 @@ func TestSupersedeCannotTreatTTLAsStopEvidence(t *testing.T) {
 }
 
 func TestExpiryRechecksSettlementInsideItsTransaction(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	r := readyAttempt(t, s, "between-sessions")
 	if r.SessionSettled == nil || !*r.SessionSettled {

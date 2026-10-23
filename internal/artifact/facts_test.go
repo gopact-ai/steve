@@ -77,6 +77,7 @@ func TestAttestationsAreDurableFacts(t *testing.T) {
 }
 
 func TestLandUnderTheParentsLeaseIsFencedOnIt(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "a0")
@@ -118,6 +119,7 @@ func TestLandUnderTheParentsLeaseIsFencedOnIt(t *testing.T) {
 }
 
 func TestSealedLandingOnOldGitUsesTheLegacyMerge(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	node := &localNode{root: t.TempDir(), state: t.TempDir(), level: "sealed"}
 	canonical := filepath.Join(node.root, "vault")
@@ -160,6 +162,7 @@ func TestSealedLandingOnOldGitUsesTheLegacyMerge(t *testing.T) {
 }
 
 func TestDeriveLowersALabelOnlyWithApprovalAndNewContent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "secret")
@@ -192,6 +195,7 @@ func TestDeriveLowersALabelOnlyWithApprovalAndNewContent(t *testing.T) {
 }
 
 func TestLandUnderLiveParentRequiresItsExactLeaseNotSourceMetadata(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "before")

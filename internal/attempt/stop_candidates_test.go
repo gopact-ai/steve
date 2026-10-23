@@ -36,6 +36,7 @@ func stopCandidateIDs(t *testing.T, s *Service) []string {
 }
 
 func TestStopCandidatesSelectOnlyExecutionsAStopPassActsOn(t *testing.T) {
+	t.Parallel()
 	yes, no := true, false
 	base := func(id string, state State) Record {
 		return Record{Spec: Spec{ID: id, TaskID: "t-" + id, Kind: KindChat, Node: "n1", Execution: &task.ExecutionToken{TaskID: "t-" + id, Epoch: 1}},
@@ -81,6 +82,7 @@ func TestStopCandidatesSelectOnlyExecutionsAStopPassActsOn(t *testing.T) {
 // The index selects exactly the records TaskStopOwed accepts: every
 // combination the stop pass acts on, and nothing it would skip.
 func TestStopCandidatesMatchTheStopPassOverRandomHistory(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	random := rand.New(rand.NewSource(7))
 	states := []State{Leased, Prepared, Running, BindReady, Bound, Failed, Expired, BindConflict, Superseded}
@@ -131,6 +133,7 @@ func TestStopCandidatesMatchTheStopPassOverRandomHistory(t *testing.T) {
 }
 
 func TestStopCandidatesFailOnMalformedHistory(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{`{`, `[]`, `null`, `{"usage":{"input":"unknown"}}`, `{"id":"other","state":"bound"}`, `{"state":"bound"}`} {
 		s, _ := newService(t)
 		insertAttemptRow(t, s, "bad", "bound", raw)
@@ -141,6 +144,7 @@ func TestStopCandidatesFailOnMalformedHistory(t *testing.T) {
 }
 
 func TestStopCandidatesUseBoundedIndex(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	book, err := ledger.Open(dir, ledger.Options{})
 	if err != nil {
@@ -190,6 +194,7 @@ func queryPlan(t *testing.T, db *sql.DB, query string, args ...any) string {
 }
 
 func TestRestoredReplicaKeepsStopCandidateIndex(t *testing.T) {
+	t.Parallel()
 	source, _ := newService(t)
 	settled := false
 	r := Record{Spec: Spec{ID: "candidate", Node: "n1", Execution: &task.ExecutionToken{TaskID: "t", Epoch: 1}}, State: Failed, Session: "ns_1", SessionSettled: &settled}

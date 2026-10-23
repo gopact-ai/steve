@@ -64,6 +64,7 @@ func saveSessionRecordsFixture(t *testing.T, store *sessionRecords, record sessi
 }
 
 func TestSettledNativeContextResumesOnceAndPreservesOriginalReceipts(t *testing.T) {
+	t.Parallel()
 	cfg, req, old := resumedFixture(t, buildMockAgent(t))
 	saveResumeFixture(t, cfg, old)
 	s := NewServer(cfg)
@@ -153,8 +154,11 @@ func TestSettledNativeContextResumesOnceAndPreservesOriginalReceipts(t *testing.
 }
 
 func TestNativeResumeRejectsUncertainSourcesAndChangedAuthorityBeforeStart(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"process", "receipt", "uncertain-input", "unknown-question", "missing-answer", "native-id", "project", "conversation", "workdir", "policy", "mcp-binding", "coordinator", "start", "cancelled-open"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			cfg, req, record := resumedFixture(t, "/must-not-start")
 			switch mode {
 			case "process":
@@ -222,6 +226,7 @@ func TestNativeResumeRejectsUncertainSourcesAndChangedAuthorityBeforeStart(t *te
 // died with the process. Both are settled outcomes, so the conversation
 // must keep its native context instead of being stranded on this node.
 func TestCancelledTurnStillResumesItsNativeContext(t *testing.T) {
+	t.Parallel()
 	cfg, req, old := resumedFixture(t, buildMockAgent(t))
 	cancelled := old.Commands["old-input"]
 	cancelled.State, cancelled.Error = nodewire.SessionCommandCancelled, "agent canceled the turn: context canceled"
@@ -270,6 +275,7 @@ func TestOpenRefusedBeforeReservingSaysNothingStarted(t *testing.T) {
 }
 
 func TestNativeResumeDoesNotFallBackToANewConversation(t *testing.T) {
+	t.Parallel()
 	cfg, req, record := resumedFixture(t, buildMockAgent(t))
 	spec := cfg.Harnesses["mock"]
 	spec.Env = []string{"MOCKAGENT_REJECT_LOAD=1"}
@@ -297,6 +303,7 @@ func TestNativeResumeDoesNotFallBackToANewConversation(t *testing.T) {
 }
 
 func TestNativeResumePreparationHasACancellableStoppedReceipt(t *testing.T) {
+	t.Parallel()
 	cfg, req, source := resumedFixture(t, buildMockAgent(t))
 	source = saveResumeFixture(t, cfg, source)
 	s := NewServer(cfg)

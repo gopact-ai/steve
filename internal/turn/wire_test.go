@@ -49,6 +49,7 @@ func TestWireTwicePanics(t *testing.T) {
 // Each callback Callbacks.required lists is refused alone, and the panic
 // names it.
 func TestWireRefusesEachRequiredCallbackAlone(t *testing.T) {
+	t.Parallel()
 	full := fillCallbacks(Callbacks{})
 	required := full.required()
 	if len(required) == 0 {

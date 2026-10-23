@@ -280,6 +280,7 @@ func TestEnrollmentInstallsOnlySelectedPinnedAdapterThenPublishes(t *testing.T) 
 }
 
 func TestEnrollmentRejectsFailedWrongVersionAndStaleInstallWithoutPublishing(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"failed", "wrong-version", "stale"} {
 		t.Run(kind, func(t *testing.T) {
 			s, deps := enrollmentFixture(t)

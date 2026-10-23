@@ -9,6 +9,7 @@ import (
 )
 
 func TestTaskControlRequiresMatchingTransport(t *testing.T) {
+	t.Parallel()
 	for _, explicit := range []bool{false, true} {
 		for _, verb := range []string{"pause", "cancel", "resume", "complete", "handled", "ignore", "reopen", "show"} {
 			t.Run(verb+map[bool]string{false: "/implicit", true: "/explicit"}[explicit], func(t *testing.T) {

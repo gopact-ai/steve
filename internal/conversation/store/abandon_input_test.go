@@ -48,6 +48,7 @@ func abandonDeliveryFixture(t *testing.T, kind attempt.Kind) (*Service, attempt.
 	return s, r, old, newer
 }
 func TestAbandonmentDeliveryChecksItsImmutableInput(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []attempt.Kind{attempt.KindChat, attempt.KindPlan} {
 		t.Run(string(kind), func(t *testing.T) {
 			s, r, old, newer := abandonDeliveryFixture(t, kind)
@@ -69,6 +70,7 @@ func TestAbandonmentDeliveryChecksItsImmutableInput(t *testing.T) {
 	}
 }
 func TestAbandonmentOfATerminalInputDoesNotMoveToTheNextInput(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []attempt.Kind{attempt.KindChat, attempt.KindPlan} {
 		t.Run(string(kind), func(t *testing.T) {
 			s, r, old, newer := abandonDeliveryFixture(t, kind)

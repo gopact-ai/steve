@@ -182,6 +182,7 @@ func TestTerminalOwnerRejectsWrongAgentGroupPlaceAndInput(t *testing.T) {
 }
 
 func TestTerminalOwnerSaveCannotForgetOrRewriteLiveFacts(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"drop-and-downgrade", "drop", "rewrite-command", "rewrite-generation", "rewrite-authority", "wrong-split"} {
 		t.Run(kind, func(t *testing.T) {
 			dir := t.TempDir()

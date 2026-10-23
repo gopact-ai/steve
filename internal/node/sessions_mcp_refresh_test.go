@@ -26,6 +26,7 @@ func mcpRefreshFixture(t *testing.T, command string) (ServerConfig, nodewire.Ses
 }
 
 func TestMCPAuthorizationRefreshColdResumeAndReplay(t *testing.T) {
+	t.Parallel()
 	var accepted, rejected atomic.Int32
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer fresh-test-token" {
@@ -110,9 +111,12 @@ func TestMCPAuthorizationRefreshColdResumeAndReplay(t *testing.T) {
 }
 
 func TestMCPAuthorizationRefreshRefusalsBeforeReservation(t *testing.T) {
+	t.Parallel()
 	cases := []string{"nil-proof", "wrong-proof", "wrong-server", "sse", "duplicate-server", "duplicate-authorization", "missing-authorization", "empty-bearer", "invalid-bearer", "same-bearer", "endpoint", "tools", "other-server", "header-name", "workdir", "permission", "plugin", "import", "process", "receipt", "question", "stale-authority", "stale-writer", "unauthenticated", "start", "same-execution", "fresh-open"}
 	for _, mode := range cases {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			cfg, req, old := mcpRefreshFixture(t, "/must-not-start")
 			principal := "cluster-1"
 			switch mode {
@@ -199,6 +203,7 @@ func TestMCPAuthorizationRefreshRefusalsBeforeReservation(t *testing.T) {
 }
 
 func TestMCPAuthorizationRefreshCannotReuseLiveSession(t *testing.T) {
+	t.Parallel()
 	cfg, req, old := mcpRefreshFixture(t, buildMockAgent(t))
 	// First open uses the original credential; only the next cold open may rotate.
 	original := req
@@ -281,6 +286,7 @@ func TestMCPAuthorizationRefreshDoesNotWeakenConfigHash(t *testing.T) {
 // Even when the ordinary full config hash matches (e.g. a later handoff in a
 // chain), the proof is part of the immutable open command identity.
 func TestMCPAuthorizationRefreshProofIsBoundToReservedOpen(t *testing.T) {
+	t.Parallel()
 	cfg, req, old := mcpRefreshFixture(t, buildMockAgent(t))
 	old.ConfigHash = sessionConfigHash(req)
 	saveResumeFixture(t, cfg, old)
@@ -373,6 +379,7 @@ func TestMCPAuthorizationRefreshBearerValidation(t *testing.T) {
 }
 
 func TestMCPAuthorizationRefreshRestartRequiresReconciliation(t *testing.T) {
+	t.Parallel()
 	cfg, req, old := mcpRefreshFixture(t, buildMockAgent(t))
 	saveResumeFixture(t, cfg, old)
 	s := NewServer(cfg)

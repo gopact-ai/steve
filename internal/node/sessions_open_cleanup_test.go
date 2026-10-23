@@ -25,8 +25,11 @@ func (t receiptFailureTransport) Start(ctx context.Context) (acphost.Process, er
 }
 
 func TestOpenReceiptFailureReleasesProvenStoppedPluginUse(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"before-start", "after-start", "cancelled-before-start"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			cfg, req, _ := resumedFixture(t, buildMockAgent(t))
 			req.ID = ""
 			s := NewServer(cfg)

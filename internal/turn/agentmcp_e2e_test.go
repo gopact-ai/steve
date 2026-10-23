@@ -61,6 +61,7 @@ func (f *e2eSender) DeleteMessage(_ context.Context, messageID string) error {
 // delivery is a tool the agent may use, while the final answer's delivery
 // stays with the platform.
 func TestAgentSendPrimitiveE2E(t *testing.T) {
+	t.Parallel()
 	bin := filepath.Join(t.TempDir(), "mockagent")
 	cmd := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
 	cmd.Dir = "../.."

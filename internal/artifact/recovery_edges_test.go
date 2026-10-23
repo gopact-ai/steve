@@ -39,6 +39,7 @@ func nodeLanding(t *testing.T) (*Store, project.Project, *failingNode, string, s
 // An apply that fails part-way has written some paths and not others. It
 // is not a conflict: the landing is finished path by path, at once.
 func TestApplyThatFailsPartWayIsFinished(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, nodes, canonical, artifact := nodeLanding(t)
 	// The node writes a, then refuses the rest of the apply.
@@ -65,6 +66,7 @@ func TestApplyThatFailsPartWayIsFinished(t *testing.T) {
 // node went away — what it holds is unknown. The landing waits for
 // recovery, and until then no new landing merges onto that workspace.
 func TestApplyFailureThatCannotBeInspectedWaitsForRecovery(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, nodes, canonical, artifact := nodeLanding(t)
 	nodes.before = func(req ops.Request) {
@@ -168,6 +170,7 @@ func TestRecoveryEndsALandingWhoseProjectMoved(t *testing.T) {
 // A result that has since stopped somewhere else, or one stopped on a
 // merge that is resolved rather than retried, is not unblocked blindly.
 func TestUnblockOnlyClearsTheStopTheCallerSaw(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, _, _, _, artifact := applyConflicted(t)
 	stuck, _ := store.Stuck(ctx, "p")
@@ -192,6 +195,7 @@ func TestUnblockOnlyClearsTheStopTheCallerSaw(t *testing.T) {
 // parent is queued by the delegation afterwards. Queuing it again must not
 // forget why it is stuck, or the next pass lands it into the same wall.
 func TestDeferringAStuckResultKeepsItBlocked(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, _, _, artifact := applyConflicted(t)
 	before, _ := store.Stuck(ctx, "p")
@@ -237,6 +241,7 @@ func TestPathsInsideNestedIgnoreCase(t *testing.T) {
 // finds the lock held and leaves the landing alone: two recoveries of one
 // landing never run at once, and the lock is not released under it.
 func TestRetryLeavesARecoveryInProgressAlone(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, nodes, canonical, artifact := nodeLanding(t)
 	nodes.fail = ops.Apply
@@ -271,6 +276,7 @@ func TestRetryLeavesARecoveryInProgressAlone(t *testing.T) {
 // reason, instead of waiting for a recovery that can never succeed while
 // the project refuses every other landing.
 func TestFailedApplyThatTurnsAFileIntoADirectoryEnds(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, nodes, canonical, result := fileBecomesDirectory(t)
 	// Someone edits x as the apply starts, and git refuses it.
@@ -297,6 +303,7 @@ func TestFailedApplyThatTurnsAFileIntoADirectoryEnds(t *testing.T) {
 // reported failing has nothing left to write: it is finished, not called
 // a conflict.
 func TestFailedApplyThatFinishedTurningAFileIntoADirectoryIsCommitted(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, nodes, canonical, result := fileBecomesDirectory(t)
 	nodes.fail = ops.Apply
@@ -342,6 +349,7 @@ func fileBecomesDirectory(t *testing.T) (*Store, project.Project, *failingNode, 
 // other: it does not stay applying, where nothing would keep the next
 // landing off the half-written workspace.
 func TestDurableApplyFailureIsRecovered(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, nodes, canonical, artifact := nodeLanding(t)
 	nodes.fail = ops.Apply

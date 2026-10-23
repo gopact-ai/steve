@@ -13,6 +13,7 @@ import (
 // entry each, with branch, last commit, dirtiness and whether an
 // AGENTS.md is there; a directory that is not there says so.
 func TestInspectReposSeesWhatADirectoryHolds(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on PATH")
 	}

@@ -113,8 +113,11 @@ func TestSessionRecordsColdReceiptKeepsOriginalBindingAndNativeIdentity(t *testi
 }
 
 func TestSessionRecordsQuotaIncludesColdAndUnknown(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"commands", "questions", "bytes"} {
 		t.Run(kind, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			store, first := recordsFixture(t)
 			full := (&ownedSession{record: first}).copyLocked()
 			full.State.Sequence++

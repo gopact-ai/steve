@@ -11,6 +11,7 @@ import (
 )
 
 func TestLocalArtifactEndpointSharesItsGenerationContract(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry("hub", nil)
 	t.Cleanup(r.Close)
 	generation, err := r.Generation(t.Context(), "")

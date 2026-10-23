@@ -140,6 +140,7 @@ func abandonDeliverySQL(t *testing.T, book *ledger.Ledger, statement string) {
 	}
 }
 func TestAbandonmentDeliveryIsRetriedAfterSessionProjectionCommitted(t *testing.T) {
+	t.Parallel()
 	for _, restart := range []bool{false, true} {
 		t.Run(map[bool]string{false: "same process", true: "restart"}[restart], func(t *testing.T) {
 			s, book, d, r := durableAbandonFixture(t)

@@ -211,6 +211,7 @@ func TestAClosedParentGetsNoContinuation(t *testing.T) {
 // A result its parent never received before ending is suppressed with a
 // reason in the Hub's language: the parent ended, or its record is gone.
 func TestASuppressedResultSaysWhyItsParentNeverReceivedIt(t *testing.T) {
+	t.Parallel()
 	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
 		for _, end := range []task.State{task.StateDone, task.StateCancelled} {
 			t.Run(string(locale)+"/"+string(end), func(t *testing.T) {

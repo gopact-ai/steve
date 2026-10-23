@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/coordination"
@@ -49,6 +50,25 @@ func (p *Peer) MemberRestarts(active Activation) MemberRestarts {
 type restartDiscovery struct {
 	mu    sync.Mutex
 	after string
+	// passBudget and probeTimeout bound one discovery pass and one probe
+	// in it. Zero means the defaults; only tests set them.
+	passBudget, probeTimeout time.Duration
+}
+
+const (
+	defaultRestartPassBudget   = 19 * time.Second
+	defaultRestartProbeTimeout = 3 * time.Second
+)
+
+func (d *restartDiscovery) budgets() (pass, probe time.Duration) {
+	pass, probe = defaultRestartPassBudget, defaultRestartProbeTimeout
+	if d.passBudget > 0 {
+		pass = d.passBudget
+	}
+	if d.probeTimeout > 0 {
+		probe = d.probeTimeout
+	}
+	return pass, probe
 }
 
 func (d *restartDiscovery) next(ids []string, tried map[string]bool) string {

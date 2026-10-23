@@ -283,6 +283,14 @@ func TestSameHarnessConcurrentSessionsSurviveReconnectAndOneCancellation(t *test
 		}
 		return p != nil
 	})
+	// Both sessions are open, so every line written so far has been
+	// answered; the two prompts are the next two input lines.
+	inputLines := func() uint64 {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return p.haveIn
+	}
+	opened := inputLines()
 	childCtx, stopChild := context.WithCancel(ctx)
 	first := make(chan error, 1)
 	go func() { _, _, err := host.Prompt(childCtx, a, generation, "slow work", nil); first <- err }()
@@ -302,7 +310,7 @@ func TestSameHarnessConcurrentSessionsSurviveReconnectAndOneCancellation(t *test
 	}()
 	<-permissionAsked
 	// Wait until both prompt lines reached the one shared process.
-	time.Sleep(20 * time.Millisecond)
+	waitFor(t, func() bool { return inputLines() >= opened+2 })
 	_ = c.mux.Close()
 	stopChild()
 	connectMemory(t, m, r)

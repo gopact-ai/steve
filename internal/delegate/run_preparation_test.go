@@ -24,6 +24,7 @@ func (g *preparationGate) Revoke(token string) { g.revoked = append(g.revoked, t
 // Capability/context preparation owns the token even when no attempt ever
 // opens; prompt failure and success must both release it after settlement.
 func TestRunPreparationAndTokenLifetime(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, goal, promptError, wantError string
 		opens                              int

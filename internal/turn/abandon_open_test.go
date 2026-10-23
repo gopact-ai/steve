@@ -56,6 +56,7 @@ func importedAbandonFixture(t *testing.T, present bool) (*Coordinator, attempt.R
 }
 
 func TestAbandonLostOpenRetiresItsPreinstalledImportedContext(t *testing.T) {
+	t.Parallel()
 	c, r, original := importedAbandonFixture(t, true)
 	control := NewAbandonControl(c)
 	if _, err := control.AbandonAttempt(t.Context(), r.ID, "owner", 1); err != nil {
@@ -90,8 +91,11 @@ func TestAbandonLostOpenRetiresItsPreinstalledImportedContext(t *testing.T) {
 }
 
 func TestAbandonLostOpenDoesNotRetireANewEmptySlot(t *testing.T) {
+	t.Parallel()
 	for _, present := range []bool{false, true} {
 		t.Run(map[bool]string{false: "originally absent", true: "replaced after decision"}[present], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, r, original := importedAbandonFixture(t, present)
 			control := NewAbandonControl(c)
 			if _, err := control.AbandonAttempt(t.Context(), r.ID, "owner", 1); err != nil {
@@ -122,6 +126,7 @@ func TestAbandonLostOpenDoesNotRetireANewEmptySlot(t *testing.T) {
 }
 
 func TestAbandonLostOpenSourceCaptureRollsBackWithTheCoreDecision(t *testing.T) {
+	t.Parallel()
 	c, r, original := importedAbandonFixture(t, true)
 	forceStopTrigger(t, c, `CREATE TRIGGER refuse_core BEFORE UPDATE ON operations WHEN NEW.id='open-without-receipt' AND json_extract(NEW.data,'$.abandoned') IS NOT NULL BEGIN SELECT RAISE(ABORT,'core refused'); END`)
 	if _, err := NewAbandonControl(c).AbandonAttempt(t.Context(), r.ID, "owner", 1); err == nil {

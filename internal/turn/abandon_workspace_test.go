@@ -72,6 +72,7 @@ func recoveryCopyFixture(t *testing.T, snapshot bool) (*Coordinator, project.Pro
 }
 
 func TestAbandonCanonicalPinsItsNamedBaseAndKeepsAnIndependentHold(t *testing.T) {
+	t.Parallel()
 	c, p, source, base := recoveryCopyFixture(t, true)
 	before, _, err := c.artifacts.Resolve(t.Context(), artifact.CanonicalRef(p.ID))
 	if err != nil {
@@ -120,6 +121,7 @@ func TestAbandonCanonicalPinsItsNamedBaseAndKeepsAnIndependentHold(t *testing.T)
 }
 
 func TestAbandonCanonicalWithoutANamedBaseDoesNotReadTheOldDirectory(t *testing.T) {
+	t.Parallel()
 	c, p, source, _ := recoveryCopyFixture(t, false)
 	before, _ := c.tasks.Get(source.TaskID)
 	if _, err := NewAbandonControl(c).AbandonAttempt(t.Context(), source.ID, "owner", 1); err == nil {
@@ -136,6 +138,7 @@ func TestAbandonCanonicalWithoutANamedBaseDoesNotReadTheOldDirectory(t *testing.
 }
 
 func TestAbandonCanonicalRecoverySharesTheCoreCommit(t *testing.T) {
+	t.Parallel()
 	c, p, source, _ := recoveryCopyFixture(t, true)
 	book := ledgerOf(t, c)
 	forceStopTrigger(t, c, `CREATE TRIGGER refuse_workspace_recovery BEFORE INSERT ON operations WHEN NEW.kind='workspace-recovery' BEGIN SELECT RAISE(ABORT,'recovery refused'); END`)
@@ -233,6 +236,7 @@ func TestCanonicalRecoveryAndItsHoldShareTheReplicatedAbandonDecision(t *testing
 }
 
 func TestRecoveryHoldSurvivesConcurrentStopSnapshotLandingAndAdmission(t *testing.T) {
+	t.Parallel()
 	c, p, source, base := recoveryCopyFixture(t, true)
 	r, err := NewAbandonControl(c).AbandonAttempt(t.Context(), source.ID, "owner", 1)
 	if err != nil {
@@ -354,8 +358,11 @@ func TestRecoveryDeletionAndSweepKeepSourceAndAcceptedProducerAuthority(t *testi
 }
 
 func TestRecoveryCopyRejectsOverlappingProjectDeclarationsWithoutALiveWriter(t *testing.T) {
+	t.Parallel()
 	for _, shape := range []string{"work", "container", "ancestor", "descendant", "copy"} {
 		t.Run(shape, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, _, _, ws := sharedCopy(t)
 			projects := project.Open(ledgerOf(t, c), artifact.CheckDeclarationsTx, attempt.CheckDeclarationsTx)
 			other := project.Project{ID: "other", Home: project.Home{Node: ws.Node, Path: ws.Path}}
@@ -381,6 +388,7 @@ func TestRecoveryCopyRejectsOverlappingProjectDeclarationsWithoutALiveWriter(t *
 }
 
 func TestRecoveryCopyDeclarationGuardAllowsAnotherNodeAndAdjacentNames(t *testing.T) {
+	t.Parallel()
 	c, _, source, ws := sharedCopy(t)
 	projects := project.Open(ledgerOf(t, c), artifact.CheckDeclarationsTx, attempt.CheckDeclarationsTx)
 	for _, p := range []project.Project{{ID: "neighbor", Home: project.Home{Node: ws.Node, Path: filepath.Dir(ws.Path) + "-neighbor"}}, {ID: "elsewhere", Home: project.Home{Node: "elsewhere", Path: ws.Path}}} {
@@ -400,6 +408,7 @@ func TestRecoveryCopyDeclarationGuardAllowsAnotherNodeAndAdjacentNames(t *testin
 }
 
 func TestRecoveryCopySelectionRejectsAnEarlierProjectDeclaration(t *testing.T) {
+	t.Parallel()
 	c, _, source, _ := recoveryCopyFixture(t, true)
 	r, err := NewAbandonControl(c).AbandonAttempt(t.Context(), source.ID, "owner", 1)
 	if err != nil {

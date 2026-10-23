@@ -12,6 +12,7 @@ import (
 )
 
 func TestRequestLocalesShareExecutionStateWithoutChangingDefault(t *testing.T) {
+	t.Parallel()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Default: true}})
 	if err != nil {
 		t.Fatal(err)

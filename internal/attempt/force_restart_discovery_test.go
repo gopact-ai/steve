@@ -34,6 +34,7 @@ func TestForceRestartReservationRetainsTheDiscoveryBudget(t *testing.T) {
 }
 
 func TestForceRestartDiscoveryCannotReserveAfterItsDeadline(t *testing.T) {
+	t.Parallel()
 	s, r := restartFixture(t)
 	s.now = func() time.Time { return r.ForceStop.LevelSince.Add(7 * time.Minute) }
 	if _, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1}); err == nil || fresh {
@@ -103,6 +104,7 @@ func TestForceRestartJoiningKeepsTheEarlierDeadline(t *testing.T) {
 }
 
 func TestForceRestartEarlyDiscoveryDoesNotExtendWhenJoiningALaterOperation(t *testing.T) {
+	t.Parallel()
 	s, r := restartFixture(t)
 	start := r.ForceStop.LevelSince
 	op := ForceRestart{Selection: ForceRestartSelection{MembershipRevision: 1}, ID: "shared-operation", ClusterID: "cluster", NodeID: r.Node, Holder: "holder", By: "owner", RequestedAt: start.Add(time.Minute)}

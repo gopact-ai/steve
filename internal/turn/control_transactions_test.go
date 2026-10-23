@@ -34,6 +34,7 @@ func (r *closeHookRuntime) CloseSession(ctx context.Context, at harness.Placemen
 }
 
 func TestResetDoesNotReauthorizeAnAlreadyCommittedClose(t *testing.T) {
+	t.Parallel()
 	c, sessions, req, _ := retirementCoordinator(t)
 	revoked := false
 	ctx := control.WithMutationGuard(t.Context(), func(*ledger.Tx) error {
@@ -59,8 +60,11 @@ func TestResetDoesNotReauthorizeAnAlreadyCommittedClose(t *testing.T) {
 }
 
 func TestResetPersistsItsFenceBeforeCloseAndRecoversFailedFinalization(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"intent write", "final write", "lost reply"} {
 		t.Run(failure, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, sessions, req, _ := retirementCoordinator(t)
 			book := ledgerOf(t, c)
 			before := c.store.Conversation(req.Source.ConversationID).Sessions["codex"]
@@ -125,6 +129,7 @@ func TestResetPersistsItsFenceBeforeCloseAndRecoversFailedFinalization(t *testin
 }
 
 func TestResetRetryFinishesOnlyItsApprovedIntentAfterProjectRevocation(t *testing.T) {
+	t.Parallel()
 	c, sessions, req, _ := retirementCoordinator(t)
 	accounts := &identity.Accounts{Book: ledgerOf(t, c)}
 	config := c.owners.Configuration()
@@ -185,8 +190,11 @@ func TestResetRetryFinishesOnlyItsApprovedIntentAfterProjectRevocation(t *testin
 }
 
 func TestProjectSwitchRollsBackBindingAndEveryArchiveTogether(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"conversation-project", "document"} {
 		t.Run(kind, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, _, req, _ := retirementCoordinator(t)
 			book := ledgerOf(t, c)
 			if err := c.projects.Declare(t.Context(), []project.Project{{ID: "next", Home: project.Home{Path: t.TempDir()}}}); err != nil {
@@ -237,6 +245,7 @@ func TestProjectSwitchRollsBackBindingAndEveryArchiveTogether(t *testing.T) {
 }
 
 func TestCoveredHoldRefusalLeavesEveryPriorStampIntact(t *testing.T) {
+	t.Parallel()
 	c, _, req, _ := retirementCoordinator(t)
 	var covered []task.Task
 	for _, origin := range []string{"chat", "schedule"} {
@@ -278,8 +287,11 @@ func TestCoveredHoldRefusalLeavesEveryPriorStampIntact(t *testing.T) {
 }
 
 func TestModelPreferenceRefusalDoesNotChangeTheNativeModel(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"authority", "write", "native update", "ignored update", "empty readback"} {
 		t.Run(failure, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			book := testLedger(t)
 			store, err := state.OpenLedger(book)
 			if err != nil {

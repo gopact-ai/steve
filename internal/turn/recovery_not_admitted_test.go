@@ -116,8 +116,11 @@ func TestConfirmNeverAdmittedRequiresPositiveEndedAccounting(t *testing.T) {
 }
 
 func TestConfirmNeverAdmittedRejectsUnrelatedIdentityAndActiveObserver(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{"channel", "conversation", "message", "exchange", "requester", "project", "task", "origin", "active"} {
 		t.Run(field, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, _, _, req := neverAdmittedFixture(t, true)
 			switch field {
 			case "channel":
@@ -165,6 +168,7 @@ func TestConfirmNeverAdmittedDoesNotUseLegacyAnchorOrMissingAccounting(t *testin
 }
 
 func TestConfirmNeverAdmittedRejectsAnyAdmittedAttemptEvenOutsideRetainedView(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"leased", "prepared", "running", "bound", "failed", "expired", "superseded"} {
 		t.Run(phase, func(t *testing.T) {
 			c, book, tracked, req := neverAdmittedFixture(t, true)
@@ -180,6 +184,7 @@ func TestConfirmNeverAdmittedRejectsAnyAdmittedAttemptEvenOutsideRetainedView(t 
 }
 
 func TestConfirmNeverAdmittedRejectsCorruptOrAmbiguousEvidence(t *testing.T) {
+	t.Parallel()
 	for _, fault := range []string{"attempt-json", "attempt-envelope", "attempt-no-turn", "accounting-json", "accounting-key", "duplicate", "interrupted"} {
 		t.Run(fault, func(t *testing.T) {
 			c, book, tracked, req := neverAdmittedFixture(t, true)

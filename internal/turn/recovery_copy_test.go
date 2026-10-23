@@ -43,6 +43,7 @@ func sharedCopy(t *testing.T) (*Coordinator, project.Project, attempt.Record, pr
 }
 
 func TestAbandonmentCopyIsSharedAndNeverReadsTheUnsettledDirectory(t *testing.T) {
+	t.Parallel()
 	c, p, r, ws := sharedCopy(t)
 	if err := os.WriteFile(filepath.Join(p.Home.Path, "original"), []byte("old writer changed this\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -119,6 +120,7 @@ func runCopyAttempt(t *testing.T, c *Coordinator, spec attempt.Spec) attempt.Rec
 }
 
 func TestSharedRecoveryCopyPinsTheLatestHeadAfterTakingItsLease(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	firstSpec := recoveryCopySpec(t, c, p, ws, "copy-first")
 	queuedSpec := recoveryCopySpec(t, c, p, ws, "copy-next")
@@ -167,6 +169,7 @@ func TestSharedRecoveryCopyPinsTheLatestHeadAfterTakingItsLease(t *testing.T) {
 }
 
 func TestUnpublishedRecoveryOutputBlocksReplacementEvenAfterAttemptFailure(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	first := runCopyAttempt(t, c, recoveryCopySpec(t, c, p, ws, "copy-first"))
 	if err := os.WriteFile(filepath.Join(ws.Path, "result"), []byte("must survive\n"), 0600); err != nil {
@@ -215,6 +218,7 @@ func TestUnpublishedRecoveryOutputBlocksReplacementEvenAfterAttemptFailure(t *te
 }
 
 func TestRecoveryRetryUsesThePinnedArtifactRatherThanALaterCanonicalRef(t *testing.T) {
+	t.Parallel()
 	c, p, source, base := recoveryCopyFixture(t, true)
 	r, err := NewAbandonControl(c).AbandonAttempt(t.Context(), source.ID, "owner", 1)
 	if err != nil {
@@ -308,8 +312,11 @@ func setRecoveryDraining(t *testing.T, c *Coordinator, id string) {
 }
 
 func TestDrainingRecoveryKeepsItsReservedProducerAndNeverReopensTheCopy(t *testing.T) {
+	t.Parallel()
 	for _, changed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unchanged", true: "changed"}[changed], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, source, ws := sharedCopy(t)
 			writer, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "draining-writer"))
 			if err != nil {
@@ -356,6 +363,7 @@ func TestDrainingRecoveryKeepsItsReservedProducerAndNeverReopensTheCopy(t *testi
 }
 
 func TestDrainingRecoveryReplaysOnlyItsExactRejectedOutput(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	writer := runCopyAttempt(t, c, recoveryCopySpec(t, c, p, ws, "draining-replay"))
 	if err := os.WriteFile(filepath.Join(ws.Path, "drained-output"), []byte("accepted candidate\n"), 0600); err != nil {
@@ -397,6 +405,7 @@ func TestDrainingRecoveryReplaysOnlyItsExactRejectedOutput(t *testing.T) {
 }
 
 func TestDrainingRecoveryReleasesOnlyAnExactlyUnusedReservation(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	writer, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "draining-unused"))
 	if err != nil {
@@ -413,6 +422,7 @@ func TestDrainingRecoveryReleasesOnlyAnExactlyUnusedReservation(t *testing.T) {
 }
 
 func TestRecoveryUnchangedNativeContextRetainsTaskAndRequiresExactMachineExit(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	writer, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "idle-copy"))
 	if err != nil {
@@ -494,8 +504,11 @@ func TestRecoveryUnchangedNativeContextRetainsTaskAndRequiresExactMachineExit(t 
 }
 
 func TestRecoveryDrainWaitsForEveryOriginalAndEveryPhysicalWriter(t *testing.T) {
+	t.Parallel()
 	for _, bothSources := range []bool{false, true} {
 		t.Run(map[bool]string{false: "other physical writer", true: "two original sources"}[bothSources], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, first, second, episode := twoOriginalRecoverySources(t, bothSources)
 			if err := NewAbandonControl(c).ProjectAbandoned(t.Context(), first.ID); err != nil {
 				t.Fatal(err)
@@ -558,8 +571,11 @@ func enrollStoppedOriginals(t *testing.T, ctx context.Context, c *Coordinator, i
 }
 
 func TestRecoveryDrainSerializesBothOrdersWithProducerReservation(t *testing.T) {
+	t.Parallel()
 	for _, reserveFirst := range []bool{false, true} {
 		t.Run(map[bool]string{false: "drain first", true: "reservation first"}[reserveFirst], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, source, ws := sharedCopy(t)
 			source = retireOriginalRecoverySource(t, c, source)
 			spec := recoveryCopySpec(t, c, p, ws, "reserved-at-boundary")

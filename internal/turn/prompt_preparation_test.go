@@ -14,6 +14,7 @@ import (
 // Multiple simultaneous drifts must report the same first refusal, before
 // opening a session. Rejection must still release the conversation's turn.
 func TestPromptPreparationRefusalPrecedence(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                string
 		tainted, capability bool

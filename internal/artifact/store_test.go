@@ -100,6 +100,7 @@ func newStoreWith(t *testing.T, node *localNode, home project.Home, opts ledger.
 }
 
 func TestIsolatedWorkspacesOnTheHubFromBaseWithInputsAndPublish(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	canonical := t.TempDir()
 	write(t, canonical, "README", "hello")

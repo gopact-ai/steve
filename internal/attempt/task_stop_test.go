@@ -12,8 +12,11 @@ import (
 )
 
 func TestConfirmedTaskStopRequiresRevocationAndExactNativeEvidence(t *testing.T) {
+	t.Parallel()
 	for _, changed := range []string{"live-task", "session", "command", "binding", "stale-proof", "unknown-stop", "settled", "process-exit"} {
 		t.Run(changed, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			s, now, old, proof, tasks := retainedFixture(t)
 			proof.Session.Command.State, proof.Session.Command.Settled = "cancelled", true
 			proof.Session.State = "idle"
@@ -97,6 +100,7 @@ func TestTaskStopAfterResumeDoesNotUpgradeOrFinishTheNewTaskTurn(t *testing.T) {
 // cancel is recorded. Checking again adds no event, even after the Hub
 // changed language and so words the same explanation differently.
 func TestTaskStopPendingIsRecordedOnce(t *testing.T) {
+	t.Parallel()
 	zh := i18n.New(i18n.LocaleZH).T(i18n.AppStopPending)
 	for _, quarantined := range []bool{false, true} {
 		t.Run(fmt.Sprintf("quarantined=%t", quarantined), func(t *testing.T) {
@@ -136,6 +140,7 @@ func taskStopPending(t *testing.T, s *Service, id string, locale i18n.Locale) er
 }
 
 func TestTaskStopRejectsKnownContextAndImportedIdentityMismatches(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"context", "native-import"} {
 		t.Run(mode, func(t *testing.T) {
 			s, _, original, proof, tasks := retainedFixture(t)

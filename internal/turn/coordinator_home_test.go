@@ -38,6 +38,7 @@ func TestInjectionMode(t *testing.T) {
 }
 
 func TestOwnerFirstTurnInjectsMemoryThenStops(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "ou_me"); err != nil {
 		t.Fatal(err)
@@ -86,6 +87,7 @@ func TestOwnerFirstTurnInjectsMemoryThenStops(t *testing.T) {
 }
 
 func TestNewReloadsMemory(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "ou_me"); err != nil {
 		t.Fatal(err)
@@ -143,6 +145,7 @@ func TestNewReloadsMemory(t *testing.T) {
 }
 
 func TestOwnerP2POpensHomeWorkspace(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "ou_me"); err != nil {
 		t.Fatal(err)
@@ -170,6 +173,7 @@ func TestOwnerP2POpensHomeWorkspace(t *testing.T) {
 // the conversation's project binding. One that was opened somewhere else is
 // not silently continued there; the person is asked for /new.
 func TestExistingOwnerSessionInAnotherDirectoryIsStale(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "ou_me"); err != nil {
 		t.Fatal(err)
@@ -206,6 +210,7 @@ func TestExistingOwnerSessionInAnotherDirectoryIsStale(t *testing.T) {
 }
 
 func TestOwnerFollowUpWritesPortrait(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "ou_me"); err != nil {
 		t.Fatal(err)
@@ -243,6 +248,7 @@ func TestOwnerFollowUpWritesPortrait(t *testing.T) {
 }
 
 func TestOwnerCanChatBeforeProvidingProfile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "ou_me"); err != nil {
 		t.Fatal(err)
@@ -331,6 +337,7 @@ func TestOwnerFollowUpDoesNotScanLocalHistory(t *testing.T) {
 }
 
 func TestGuestOmitsMemoryAndPath(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "ou_me"); err != nil {
 		t.Fatal(err)
@@ -371,6 +378,7 @@ func TestGuestOmitsMemoryAndPath(t *testing.T) {
 }
 
 func TestGroupSendersShareFingerprint(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "ou_me"); err != nil {
 		t.Fatal(err)
@@ -408,6 +416,7 @@ func TestGroupSendersShareFingerprint(t *testing.T) {
 }
 
 func TestUnmentionedGroupAsksAgentToStaySilent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "ou_me"); err != nil {
 		t.Fatal(err)
