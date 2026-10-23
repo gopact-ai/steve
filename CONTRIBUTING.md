@@ -47,6 +47,17 @@ The live check creates a conversation and a unique file through remote delegatio
 
 `go run ./e2e/fleet -scenario autonomous` requires `kvtool/main.go` in the project's main directory, a remote `build` node, suitable agents, and `sha256sum`/`file` on the Hub. It checks fleet discovery, overlapping children, remote build artifacts, handoff and usage. Its maximum deadline is twenty minutes; include output through `AUTONOMOUS PASS`.
 
+## Merging
+
+`master` requires branches to be up to date, so every merge after the first needs a branch update and a fresh CI run. Merge an owner-approved list with the merge train, which handles them one at a time:
+
+```sh
+go run ./scripts/merge-train 367 369 370          # plan: order, shared files, next action
+go run ./scripts/merge-train -apply 367 369 370   # update, wait for checks, merge
+```
+
+The train merges only the listed pull requests, always with a merge commit of the head whose checks it read, and never bypasses branch protection. Pull requests that share no files with the others go first. Ones that share files keep the listed order. It stops at the first red check with that job's URL, and at drafts, unresolved review threads or requested changes. It reports conflicts and leaves them for the branch author. Progress is kept in `.git/merge-train.json`, so rerunning with the same list resumes and skips what is already merged. Use `-reset` to plan a different list.
+
 ## Documentation
 
 The [documentation index](docs/README.md) separates user guides, deployment and protocol references. Public documents describe supported behavior and actual limitations. Keep design exploration, rollout notes and work logs outside the public source tree. Chinese and English READMEs share the same capabilities and naming: “You” is the person, “Me” is the agent, Steve is their collaboration companion.
