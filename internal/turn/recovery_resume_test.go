@@ -388,7 +388,6 @@ func (r reportingRetainedRunner) ResumeTurn(ctx context.Context, _ permission.As
 // prompt's: progress resets it, so a command that keeps reporting runs past
 // the timeout, and the clock is registered with the command's node.
 func TestRetainedChatProgressKeepsItsPromptTimeoutAway(t *testing.T) {
-	t.Parallel()
 	c, runner, _, old, req := retainedChatFixture(t)
 	const timeout = 400 * time.Millisecond
 	c.promptClock.timeout = timeout
