@@ -1,4 +1,7 @@
 import { workState, workDetail, nativeHistory } from "./work-fixture.mjs";
+// TASK_COMPLETION_CONCURRENCY: contexts run at once. Unset: min(6, cores/2); 1: serial; 0 or
+// a non-integer is an error (see concurrency.mjs).
+import { concurrency as poolSize } from "./concurrency.mjs";
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
@@ -26,7 +29,7 @@ const root = () => ({ id: "148", goal: "Accepted root task with a long title 验
 // Every session owns its context, page and mocked task, so the locales and
 // the per-override probes run concurrently in the one browser and server.
 const errors = [];
-async function session(locale) {
+async function session(locale, name) {
         const fixture = { task: root(), calls: [], errors, mode: "success", release: null, onHold: null, expect: "/tasks complete 148" };
         const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
         const page = await context.newPage();
@@ -77,13 +80,13 @@ async function session(locale) {
             await page.goto(`${url}console`);
             await page.getByRole("button", { name: locale === "en" ? "Board" : "看板", exact: true }).click();
             try { await page.getByRole("button", { name: /148.*Accepted root task/ }).first().click(); }
-            catch (error) { await page.screenshot({ path: path.join(artifacts, "fixture-error.png") }); console.error(await page.locator("body").innerText(), fixture.errors); throw error; }
+            catch (error) { await page.screenshot({ path: path.join(artifacts, `fixture-error-${locale}-${name}.png`) }); console.error(await page.locator("body").innerText(), fixture.errors); throw error; }
             return page.getByRole("dialog");
         };
         return { fixture, context, page, open };
 }
 async function check(locale) {
-        const { fixture, context, page, open } = await session(locale);
+        const { fixture, context, page, open } = await session(locale, "workflow");
         const completeName = locale === "en" ? "Complete task" : "完成任务";
         for (const width of [1440, 390]) {
             fixture.task = root();
@@ -208,13 +211,13 @@ async function check(locale) {
 // A task that cannot be completed offers no Complete button.
 const overrides = [{ can_complete: false }, { parent: "147" }, { execution: "running" }, { execution: "unknown" }, { attention: 1 }, { pending_results: 1 }, { uncertain_results: 1 }, { origin: "plan" }, { plan_id: "p1" }, { lifecycle: "paused" }, { lifecycle: "failed" }, { lifecycle: "cancelled" }];
 async function probe(locale, override) {
-    const { fixture, context, open } = await session(locale);
+    const { fixture, context, open } = await session(locale, Object.entries(override).map(([k, v]) => `${k}-${v}`).join("_"));
     fixture.task = { ...root(), ...override };
     const dialog = await open();
     assert.equal(await dialog.getByRole("button", { name: locale === "en" ? "Complete task" : "完成任务", exact: true }).count(), 0, JSON.stringify(override));
     await context.close();
 }
-const concurrency = Math.max(1, Number(process.env.TASK_COMPLETION_CONCURRENCY) || Math.min(6, Math.max(1, Math.floor(os.availableParallelism() / 2))));
+const concurrency = poolSize("TASK_COMPLETION_CONCURRENCY", 6);
 async function pool(jobs) {
     const queue = [...jobs];
     await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, async () => { while (queue.length) await queue.shift()(); }));

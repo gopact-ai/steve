@@ -1,13 +1,16 @@
+// QUEUE_BURST_CONCURRENCY: queue-burst contexts run at once. Unset: min(4,
+// cores/2); 1: serial; 0 or a non-integer is an error (see concurrency.mjs).
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import os, { tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { createServer } from "../../web/console/node_modules/vite/dist/node/index.js";
 import { chromium } from "../../web/console/node_modules/playwright/index.mjs";
 import { checkQueueBurst } from "./queue-motion.mjs";
+import { concurrency as poolSize } from "./concurrency.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const web = path.join(root, "web/console");
@@ -185,7 +188,7 @@ try {
     // The burst cases run on fresh contexts in this browser, at the bus
     // overview this page reached; they report page errors here too.
     const openBurst=async(width)=>{const context=await browser.newContext({viewport:{width,height:900},colorScheme:"dark",reducedMotion:"no-preference"});const burst=await context.newPage();burst.setDefaultTimeout(10000);burst.on("pageerror",(e)=>errors.push(String(e)));await burst.addInitScript(()=>localStorage.setItem("steve.ui.locale","en"));return burst;};
-    await checkQueueBurst(openBurst, page.url(), await observe(), Math.max(1, Number(process.env.QUEUE_BURST_CONCURRENCY) || Math.min(4, Math.max(1, Math.floor(os.availableParallelism() / 2)))));
+    await checkQueueBurst(openBurst, page.url(), await observe(), poolSize("QUEUE_BURST_CONCURRENCY", 4));
     console.log("PASS adaptive backlog density, honest grouping, local consumer exits and equal light dimensions during 32 rapid claims at wide and narrow widths");
     assert.deepEqual(errors,[]);console.log("PASS keyboard, narrow layout and read-failure recovery keep decisions grounded in committed facts");
 } finally {

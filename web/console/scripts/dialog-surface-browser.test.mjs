@@ -1,12 +1,15 @@
 // Real consumers, synthetic data, a private Vite cache, and no live backend.
+// DIALOG_CONCURRENCY: contexts run at once. Unset: min(6, cores/2); 1: serial; 0 or
+// a non-integer is an error (see e2e/console/concurrency.mjs).
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import os, { tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "../node_modules/vite/dist/node/index.js";
 import { chromium } from "../node_modules/playwright/index.mjs";
 import { workState } from "../../../e2e/console/work-fixture.mjs";
+import { concurrency as poolSize } from "../../../e2e/console/concurrency.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const scratch = await mkdtemp(path.join(tmpdir(), "steve-dialog-browser-"));
@@ -169,7 +172,7 @@ try {
     }
     // Each case opens its own context, so the matrix runs on a bounded pool
     // of concurrent contexts. Samples keep matrix order for the comparisons.
-    const concurrency = Math.max(1, Number(process.env.DIALOG_CONCURRENCY) || Math.min(6, Math.max(1, Math.floor(os.availableParallelism() / 2))));
+    const concurrency = poolSize("DIALOG_CONCURRENCY", 6);
     async function pool(jobs) {
         const queue = [...jobs];
         await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, async () => { while (queue.length) await queue.shift()(); }));

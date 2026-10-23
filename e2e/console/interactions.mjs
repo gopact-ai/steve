@@ -2,12 +2,15 @@ import { workState, workDetail, nativeHistory } from "./work-fixture.mjs";
 // Build web/console first. Uses an existing Playwright installation;
 // PLAYWRIGHT_MODULE accepts its absolute module path. CHECK selects comma-
 // separated scenarios. Every API is mocked; no request reaches a real hub.
+// INTERACTIONS_CONCURRENCY: contexts run at once. Unset: min(4, cores/2); 1: serial; 0 or
+// a non-integer is an error (see concurrency.mjs).
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { draftOf } from "./composer.mjs";
+import { concurrency as poolSize } from "./concurrency.mjs";
 import { preview } from "../childcard/preview.mjs";
 import { usageDurationFixture, usageFixture, usageState, usageResponse } from "./usage-fixture.mjs";
 
@@ -3799,8 +3802,7 @@ const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(
 for (const name of selected) assert.ok(checks[name], `Unknown CHECK ${name}; choices: ${Object.keys(checks).join(",")}`);
 // Every check owns a fresh browser context, page, clock and mocked API, so
 // checks run on a bounded pool of concurrent contexts in the one browser.
-// INTERACTIONS_CONCURRENCY=1 restores strictly serial execution.
-const concurrency = Math.max(1, Number(process.env.INTERACTIONS_CONCURRENCY) || Math.min(4, Math.max(1, Math.floor(os.availableParallelism() / 2))));
+const concurrency = poolSize("INTERACTIONS_CONCURRENCY", 4);
 let failed = 0;
 async function run(name) {
     let f;
