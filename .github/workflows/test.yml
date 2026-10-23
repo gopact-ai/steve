@@ -13,9 +13,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5]
+        shard: [0, 1, 2, 3, 4, 5, 6]
     env:
-      SHARDS: 6
+      SHARDS: 7
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

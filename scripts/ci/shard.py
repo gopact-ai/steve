@@ -83,6 +83,7 @@ def verify(all_path, shard_paths):
 
 
 def go_weights(paths):
+    """Mean elapsed per package over every log given (one run, or several)."""
     seconds = {}
     for p in paths:
         with open(p) as f:
@@ -93,11 +94,11 @@ def go_weights(paths):
                     e = json.loads(line)
                 except ValueError:
                     if plain:
-                        seconds[plain.group(1)] = float(plain.group(2))
+                        seconds.setdefault(plain.group(1), []).append(float(plain.group(2)))
                     continue
                 if e.get("Test") is None and e.get("Action") in ("pass", "fail", "skip") and "Elapsed" in e:
-                    seconds[e["Package"]] = e["Elapsed"]
-    print_weights(seconds)
+                    seconds.setdefault(e["Package"], []).append(e["Elapsed"])
+    print_weights({pkg: sum(v) / len(v) for pkg, v in seconds.items()})
 
 
 
