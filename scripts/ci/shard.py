@@ -1,29 +1,24 @@
 #!/usr/bin/env python3
-"""Split the CI test gates into balanced shards and prove nothing was dropped.
+"""Split `go test -race` into balanced CI shards and prove nothing was dropped.
 
   shard.py go-plan N I [ALL]       Go packages for shard I of N (from `go list`)
-  shard.py console-plan N I [ALL]  console test commands for shard I of N
-  shard.py console-run FILE        run the commands in FILE, timing each
   shard.py verify ALL SHARD...     fail unless the shards cover ALL exactly once
   shard.py go-weights LOG...       print go-weights.txt from `go test` (-json) output
-  shard.py console-weights LOG...  print console-weights.txt from console-run logs
 
 Work is placed longest-first onto the least-loaded shard using the measured
-seconds in go-weights.txt / console-weights.txt. Anything without a weight
-(a new package or test command) then goes to the lightest shard, so it is
-never skipped; `verify` checks the union against the full list.
+seconds in go-weights.txt. Anything without a weight (a new package) then
+goes to the lightest shard, so it is never skipped; `verify` checks the union
+against the full list.
 """
 import json
 import os
 import re
 import subprocess
 import sys
-import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 GO_PATTERNS = ["./cmd/...", "./internal/...", "./e2e/..."]
-MAIL_SETUP = "npm --prefix providers/mail ci --ignore-scripts --no-audit --no-fund"
 
 
 def load_weights(name):
@@ -54,52 +49,6 @@ def go_packages():
     return subprocess.check_output(["go", "list", *GO_PATTERNS], cwd=ROOT, text=True).split()
 
 
-def make_recipe(target):
-    lines, inside = [], False
-    with open(os.path.join(ROOT, "Makefile")) as f:
-        for line in f:
-            if line.startswith(target + ":"):
-                inside = True
-            elif inside and line.startswith("\t"):
-                lines.append(line.strip())
-            elif inside:
-                break
-    if not lines:
-        sys.exit(f"Makefile has no recipe for {target}")
-    return lines
-
-
-def console_commands():
-    """Expand `make test-console` into the single commands its npm scripts chain."""
-    with open(os.path.join(ROOT, "web/console/package.json")) as f:
-        scripts = json.load(f)["scripts"]
-
-    def expand(name):
-        out = []
-        for part in scripts[name].split(" && "):
-            part = part.strip()
-            nested = re.fullmatch(r"npm run (\S+)", part)
-            if nested:
-                out += expand(nested.group(1))
-            elif re.fullmatch(r"([A-Z_]+=\S+ )*node [^&|;]+", part):
-                out.append(part)
-            else:
-                sys.exit(f"console script {name!r}: cannot shard command {part!r}")
-        return out
-
-    commands = []
-    for line in make_recipe("test-console"):
-        if line == MAIL_SETUP:
-            continue  # setup; every shard runs it
-        m = re.fullmatch(r"npm --prefix web/console run (\S+)", line)
-        if not m:
-            sys.exit(f"test-console: cannot shard recipe line {line!r}")
-        if m.group(1) == "build":
-            continue  # every shard builds the console before its tests
-        commands += expand(m.group(1))
-    if len(commands) != len(set(commands)):
-        sys.exit("test-console: a command appears twice; shards key on the command text")
-    return commands
 
 
 def plan(items, weights, shards, index, all_out):
@@ -117,19 +66,6 @@ def read_lines(path):
         return [l.rstrip("\n") for l in f if l.strip()]
 
 
-def console_run(path):
-    env = dict(os.environ)
-    console = os.path.join(ROOT, "web/console")
-    # What `npm run` would add, so a command behaves as it does in its script.
-    env["PATH"] = os.path.join(console, "node_modules/.bin") + os.pathsep + env["PATH"]
-    for command in read_lines(path):
-        print(f"::group::{command}", flush=True)
-        start = time.monotonic()
-        code = subprocess.call(["sh", "-c", command], cwd=console, env=env)
-        print("::endgroup::", flush=True)
-        print(f"TIMING\t{time.monotonic() - start:.1f}\t{command}", flush=True)
-        if code:
-            sys.exit(f"FAILED (exit {code}): {command}")
 
 
 def verify(all_path, shard_paths):
@@ -164,15 +100,6 @@ def go_weights(paths):
     print_weights(seconds)
 
 
-def console_weights(paths):
-    seconds = {}
-    for p in paths:
-        with open(p, errors="replace") as f:
-            for line in f:
-                m = re.search(r"TIMING\t([\d.]+)\t(.+)$", line.rstrip("\n"))
-                if m:
-                    seconds[m.group(2)] = float(m.group(1))
-    print_weights(seconds)
 
 
 def print_weights(seconds):
@@ -184,16 +111,10 @@ def main(argv):
     cmd = argv[1] if len(argv) > 1 else ""
     if cmd == "go-plan":
         plan(go_packages(), load_weights("go-weights.txt"), int(argv[2]), int(argv[3]), argv[4] if len(argv) > 4 else None)
-    elif cmd == "console-plan":
-        plan(console_commands(), load_weights("console-weights.txt"), int(argv[2]), int(argv[3]), argv[4] if len(argv) > 4 else None)
-    elif cmd == "console-run":
-        console_run(argv[2])
     elif cmd == "verify":
         verify(argv[2], argv[3:])
     elif cmd == "go-weights":
         go_weights(argv[2:])
-    elif cmd == "console-weights":
-        console_weights(argv[2:])
     else:
         sys.exit(__doc__)
 
