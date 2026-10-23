@@ -43,5 +43,28 @@ func envForPolicy(env []string, harnessID, policy string) ([]string, error) {
 	if harnessID != Pi {
 		return env, nil
 	}
-	return pihome.Select(env, policy)
+	return pihome.Launch(env, policy)
+}
+
+// ContextResetPolicy is a resume Steve started afresh because the session
+// was opened under another permission class: pi would restore the tools
+// recorded in it.
+const ContextResetPolicy = "permission_class_changed"
+
+// ContextResetter is a Runner that can report it started a new native
+// session in place of the one asked for.
+type ContextResetter interface {
+	ContextReset() string
+}
+
+// localPi is the environment and policy of a pi started on this host, and
+// whether at is one.
+func (m *Manager) localPi(at Placement) ([]string, string, bool) {
+	if at.Harness != Pi || at.Node != "" {
+		return nil, "", false
+	}
+	m.mu.Lock()
+	cfg := m.configs[at.Harness]
+	m.mu.Unlock()
+	return cfg.Env, cfg.Permission, true
 }

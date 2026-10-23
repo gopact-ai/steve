@@ -8,10 +8,16 @@ import (
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
+	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 )
 
 func (r *Registry) PluginTransport(node, harnessID string, ref plugins.RuntimeRef) acphost.Transport {
 	return remoteTransport{registry: r, node: node, harness: harnessID, plugin: ref.Clone()}
+}
+
+// PolicyPluginTransport is PluginTransport for a process run under policy.
+func (r *Registry) PolicyPluginTransport(node, harnessID string, ref plugins.RuntimeRef, policy string) acphost.Transport {
+	return remoteTransport{registry: r, node: node, harness: harnessID, plugin: ref.Clone(), permission: policy}
 }
 
 func (s *Server) pluginProcessConfig(ctx context.Context, req nodewire.OpenRequest) (acphost.LocalTransport, error) {
@@ -32,5 +38,9 @@ func (s *Server) pluginProcessConfig(ctx context.Context, req nodewire.OpenReque
 		return acphost.LocalTransport{}, err
 	}
 	cfg := runtime.Config
-	return acphost.LocalTransport{Command: cfg.Command, Args: cfg.Args, Env: cfg.Env, ProcessDir: cfg.ProcessDir}, nil
+	env, err := steveruntime.ForPolicy(cfg.Env, req.Harness, streamPolicy(req))
+	if err != nil {
+		return acphost.LocalTransport{}, err
+	}
+	return acphost.LocalTransport{Command: cfg.Command, Args: cfg.Args, Env: env, ProcessDir: cfg.ProcessDir}, nil
 }

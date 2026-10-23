@@ -93,11 +93,23 @@ pi 不为工具调用请求授权，`pi-acp` 也不把文件读写和终端交�
 | `read`、`deny` | 只有 `read`、`grep`、`find`、`ls`；不能写文件或运行命令 |
 | `write`、`auto`、`always_allow` | pi 默认工具（`read`、`bash`、`edit`、`write`），执行前不询问 |
 
-Steve 在 `<state>/runtimes/pi/` 下为 pi 准备 `read-only` 与 `full` 两个隔离目录（`PI_CODING_AGENT_DIR`），按会话的策略选用。两者都从 `~/.pi/agent/settings.json` 继承模型选择（`defaultProvider`、`defaultModel`、`defaultThinkingLevel`、`enabledModels`、`modelThinkingLevels`），不继承扩展、包、主题和技能路径；`auth.json` 与 `models.json` 以符号链接指向原文件，不复制密钥。两者都设置 `defaultProjectTrust: "never"`，工作目录里的 `.pi` 设置、MCP 与扩展不会加载。Steve 下发的技能放在两者共用的 `skills/` 目录。
+Steve 在 `<state>/runtimes/pi/` 下为 pi 准备 `read-only` 与 `full` 两个隔离目录（`PI_CODING_AGENT_DIR`），按会话的策略选用；本机会话、节点托管会话和节点进程流都按 hub 下发的策略选，策略缺省为 `read`。两者都从 `~/.pi/agent/settings.json` 继承模型选择（`defaultProvider`、`defaultModel`、`defaultThinkingLevel`、`enabledModels`、`modelThinkingLevels`），不继承扩展、包、主题和技能路径；`auth.json` 与 `models.json` 以符号链接指向原文件，不复制密钥。两者都设置 `defaultProjectTrust: "never"`，pi 不加载工作目录 `.pi` 里的设置、扩展与 MCP。Steve 下发的技能放在两者共用的 `skills/` 目录。
 
-`harnesses.pi.env` 里的 `PI_ACP_PI_COMMAND` 是登记时检测到的 `pi` 路径。自己设置了 `PI_CODING_AGENT_DIR` 时，Steve 不替换它；该目录不是 Steve 准备的只读目录时，只读策略下 pi 不会启动。
+每次启动 pi 时 Steve 会：
 
-`pi-acp` 不接 Steve 提供的 MCP 服务（包括 Steve 自己的协作工具），pi 的会话不会被提供这些工具；pi 的历史会话也不能导入。`pi-acp` 固定把会话索引写在运行用户的 `~/.pi/pi-acp/session-map.json`，只记录会话 ID、工作目录和会话文件路径，不含凭据；会话内容本身在 Steve 的隔离目录里。
+- 重写所选目录的 `settings.json`，清空 `extensions/`，再检查内容（工具列表、项目信任、启动脚本、扩展目录为空）；检查不通过就不启动。
+- 让 `pi-acp` 通过该目录里的 `steve-pi` 启动 pi（`PI_ACP_PI_COMMAND`）。`steve-pi` 总是加 `--no-extensions`，只读目录里再加 `--tools read,grep,find,ls`；即使恢复的会话记录了别的工具，也只有这四个。会话文件不在本目录 `sessions/` 下时，`steve-pi` 拒绝恢复。
+- 记录每个 pi 会话是在哪一档创建的（`<state>/runtimes/pi/classes.json`）。策略换档后，原会话不再恢复，本轮在新会话中开始，回复开头会说明之前的上下文没有带入。
+
+`harnesses.pi.env` 里的 `PI_ACP_PI_COMMAND` 是检测到的 `pi` 绝对路径（`steve setup` 与登记时写入；pi 换了位置时重新登记会更新它）。`env` 里自己设置的 `PI_CODING_AGENT_DIR` 不会被使用：目录总由策略决定，没有 Steve 准备的目录时 pi 不启动。
+
+仍然存在的限制：
+
+- 隔离靠工具列表，不是操作系统沙箱。以同一系统用户运行的其他进程（包括 `full` 档的 pi 自己）能在两次启动之间改动这些目录；下一次启动会重写并检查，但无法防止启动后的改动。
+- `pi-acp` 自己仍会读 `<cwd>/.pi/settings.json`（只看是否启用技能命令）、`<cwd>/.pi/prompts` 和 `~/.pi/agent/prompts`。这些只是提示词文本和开关，不会增加工具。
+- `pi-acp` 不接 Steve 提供的 MCP 服务（包括 Steve 自己的协作工具），pi 的会话不会被提供这些工具；pi 的历史会话也不能导入。
+- `pi-acp` 固定把会话索引写在运行用户的 `~/.pi/pi-acp/session-map.json`，只记录会话 ID、工作目录和会话文件路径，不含凭据；会话内容本身在 Steve 的隔离目录里。
+
 ## ACP 工作区文本文件
 
 Unix 的本机与节点托管会话支持 `fs/read_text_file`、`fs/write_text_file`。请求只在原活跃回合受理，路径固定在原工作区内，写入遵循工具审批。仅处理普通 UTF-8 文本，不跟随写入目标的符号链接，不覆盖多硬链接文件。

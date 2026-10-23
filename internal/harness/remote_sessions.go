@@ -96,7 +96,13 @@ type managedSession struct {
 	stopDone  chan struct{}
 	stopErr   error
 	stopState nodewire.SessionState
+	// contextReset is the node's word that this open started a new native
+	// session instead of resuming the one asked for.
+	contextReset string
 }
+
+// ContextReset is why the node started a new native session for this open.
+func (s *managedSession) ContextReset() string { return s.contextReset }
 
 // NativeContextSession exposes node-verified context continuity to the ledger.
 type NativeContextSession interface {
@@ -177,7 +183,7 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 	if state.State.Unavailable() {
 		return nil, true, fmt.Errorf("%w: native session is %s", ErrNodeSessionUnavailable, state.State)
 	}
-	session := &managedSession{at: Placement{Node: node, Harness: at.Harness}, transport: transport, base: binding, id: state.ID, state: state, observe: observe, answers: map[string]nodewire.SessionAnswer{}}
+	session := &managedSession{at: Placement{Node: node, Harness: at.Harness}, transport: transport, base: binding, id: state.ID, state: state, observe: observe, answers: map[string]nodewire.SessionAnswer{}, contextReset: state.ContextReset}
 	if err := m.registerSessionStop(ctx, session); err != nil {
 		return nil, true, err
 	}

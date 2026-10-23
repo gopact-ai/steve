@@ -221,9 +221,14 @@ func TestApplyEnvDoesNotOverrideExisting(t *testing.T) {
 	if !slices.Contains(pi, harness.EnvPiAgentDir+"="+filepath.Join(PiHome(stateDir), "read-only")) || !slices.Contains(pi, pihome.EnvHomes+"="+PiHome(stateDir)) {
 		t.Fatalf("pi env = %v", pi)
 	}
+	// An operator's own pi home never replaces Steve's: the policy decides.
 	own := []string{harness.EnvPiAgentDir + "=/operator/pi"}
-	if out := ApplyEnv(own, harness.Pi, stateDir); len(out) != 1 || out[0] != own[0] {
-		t.Fatalf("overrode the operator's pi home: %v", out)
+	out := ApplyEnv(own, harness.Pi, stateDir)
+	if env, err := ForPolicy(out, harness.Pi, "write"); err != nil || !slices.Contains(env, harness.EnvPiAgentDir+"="+filepath.Join(PiHome(stateDir), "full")) || slices.Contains(env, own[0]) {
+		t.Fatalf("operator pi home kept: %v, %v", env, err)
+	}
+	if env, err := ForPolicy(out, harness.Pi, "read"); err != nil || !slices.Contains(env, harness.EnvPiAgentDir+"="+filepath.Join(PiHome(stateDir), "read-only")) {
+		t.Fatalf("read policy env: %v, %v", env, err)
 	}
 	for _, retired := range []string{"kimi", "grok", "dsh"} {
 		if out := ApplyEnv(nil, retired, stateDir); out != nil {

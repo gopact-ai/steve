@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/pihome"
 	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -65,6 +66,13 @@ func (p Placement) String() string { return p.key() }
 // node registry implements it; a hub with no remote nodes needs none.
 type Transports interface {
 	Transport(node, harness string) acphost.Transport
+}
+
+// PolicyTransports is a Transports that tells the node the policy a
+// process runs under, so a harness whose isolation depends on it (pi) is
+// started in the matching home. The node registry implements it.
+type PolicyTransports interface {
+	PolicyTransport(node, harness, policy string) acphost.Transport
 }
 
 type Manager struct {
@@ -212,9 +220,22 @@ func (m *Manager) OpenSession(ctx context.Context, at Placement, upstreamID, wor
 	if err != nil {
 		return nil, err
 	}
+	// A pi session keeps the tools of the home it was opened under; one
+	// opened under the other policy class is not resumed but started anew.
+	piEnv, piPolicy, isPi := m.localPi(at)
+	reset := ""
+	if isPi && upstreamID != "" && !pihome.Resumable(piEnv, upstreamID, piPolicy) {
+		upstreamID, reset = "", ContextResetPolicy
+	}
 	id, generation, err := host.OpenSession(ctx, acp.SessionID(upstreamID), acphost.SessionConfig{Workdir: workdir, MCPServers: servers})
 	if err != nil {
 		return nil, err
+	}
+	if isPi {
+		if err := pihome.Remember(piEnv, string(id), piPolicy); err != nil {
+			_ = host.CloseSession(context.WithoutCancel(ctx), id)
+			return nil, fmt.Errorf("record pi session policy: %w", err)
+		}
 	}
 	m.mu.Lock()
 	stopped, observe := m.stopped, m.observe
@@ -223,7 +244,7 @@ func (m *Manager) OpenSession(ctx context.Context, at Placement, upstreamID, wor
 		host.Close()
 		return nil, fmt.Errorf("harness manager is stopped")
 	}
-	session := &Session{at: at, id: id, generation: generation, host: host, observe: observe}
+	session := &Session{at: at, id: id, generation: generation, host: host, observe: observe, contextReset: reset}
 	if observe != nil {
 		observe(at, session.Settings())
 	}
@@ -385,7 +406,11 @@ func (m *Manager) host(at Placement) (*acphost.Host, error) {
 		}
 		// The command line is the node's own fact; the hub only says which
 		// harness it wants, and the node starts it from its own config.
-		hostCfg = acphost.Config{Transport: m.remote.Transport(at.Node, at.Harness), Permission: broker}
+		transport := m.remote.Transport(at.Node, at.Harness)
+		if policied, ok := m.remote.(PolicyTransports); ok {
+			transport = policied.PolicyTransport(at.Node, at.Harness, broker.Policy())
+		}
+		hostCfg = acphost.Config{Transport: transport, Permission: broker}
 	}
 	host := acphost.New(hostCfg)
 	m.hosts[key] = host
@@ -558,7 +583,13 @@ type Session struct {
 	// observe is the manager's observer, kept so a session whose
 	// selectors were just pinned can report its settings again.
 	observe Observer
+	// contextReset says why a resume was started as a new native session.
+	contextReset string
 }
+
+// ContextReset is why this open started a new native session instead of
+// resuming the one asked for, or "" when it resumed or was new anyway.
+func (s *Session) ContextReset() string { return s.contextReset }
 
 // Stopped reports verified termination of this session's original process.
 func (s *Session) Stopped() bool { return s.host.ProcessStopped(s.generation) }

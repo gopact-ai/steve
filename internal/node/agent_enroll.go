@@ -106,12 +106,19 @@ func (s *Server) enrollAgentWith(ctx context.Context, req agenttools.InstallRequ
 		return agenttools.Enrollment{}, err
 	}
 	existing, exists := before.Harnesses[canonical.Harness]
-	if exists {
-		if !matchesEnrolledTool(existing, declared) {
+	// A tool enrolled before and found again at another path (pi moved or
+	// reinstalled) has its stored path updated; any other difference is the
+	// operator's own configuration and stays.
+	moved := false
+	if exists && !matchesEnrolledTool(existing, declared) {
+		if moved = toolMoved(existing, declared); !moved {
 			return agenttools.Enrollment{}, agenttools.ErrConfigured
 		}
 	}
 	h := HarnessSpec{Adapter: declared.Adapter, Command: declared.Command, Args: declared.Args, Env: declared.Env}
+	if moved {
+		h.Env = agenttools.WithToolEnv(existing.Env, declared.Env)
+	}
 	if declared.Adapter != "" {
 		installed, err := deps.installer.Ensure(ctx, declared.Adapter)
 		if err != nil {
@@ -126,7 +133,7 @@ func (s *Server) enrollAgentWith(ctx context.Context, req agenttools.InstallRequ
 			return agenttools.Enrollment{}, agenttools.ErrConfigured
 		}
 	}
-	if exists {
+	if exists && !moved {
 		s.settingsMu.Lock()
 		defer s.settingsMu.Unlock()
 		if err := s.checkEnrollmentRevision(req.ExpectedRevision); err != nil {
@@ -157,7 +164,7 @@ func (s *Server) enrollAgentWith(ctx context.Context, req agenttools.InstallRequ
 	if next.Harnesses == nil {
 		next.Harnesses = map[string]HarnessSpec{}
 	}
-	if _, exists := next.Harnesses[canonical.Harness]; exists {
+	if current, found := next.Harnesses[canonical.Harness]; found != exists || found && !slices.Equal(current.Env, existing.Env) {
 		return agenttools.Enrollment{}, nodewire.ErrSettingsRevisionConflict
 	}
 	// Local runtime and skill publication share the final settings boundary.
@@ -208,13 +215,19 @@ func verifyEnrollmentCandidate(selected agenttools.Candidate, discover func() []
 }
 
 func matchesEnrolledTool(existing HarnessSpec, declared agenttools.Declaration) bool {
-	if existing.Adapter != declared.Adapter || !slices.Equal(existing.Env, declared.Env) {
+	if existing.Adapter != declared.Adapter || !agenttools.ToolEnvCurrent(existing.Env, declared.Env) {
 		return false
 	}
 	if declared.Adapter != "" {
 		return len(existing.Args) == 0
 	}
 	return existing.Command == declared.Command && slices.Equal(existing.Args, declared.Args)
+}
+
+// toolMoved is an enrolled adapter tool whose only difference from what
+// discovery declares now is where the tool it drives lives.
+func toolMoved(existing HarnessSpec, declared agenttools.Declaration) bool {
+	return declared.Adapter != "" && existing.Adapter == declared.Adapter && len(existing.Args) == 0 && agenttools.ToolEnvMoved(existing.Env, declared.Env)
 }
 
 type agentToolsReply struct {

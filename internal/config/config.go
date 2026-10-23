@@ -372,7 +372,8 @@ func StarterFeishu(feishu Feishu) *Config {
 			"claude-code": {
 				Adapter: "claude-agent-acp", Permission: PermissionRead,
 			},
-			// pi-acp starts the pi on PATH unless PI_ACP_PI_COMMAND names one.
+			// pi-acp starts the pi on PATH unless PI_ACP_PI_COMMAND names
+			// one; setup pins the absolute pi it finds.
 			"pi": {
 				Adapter: "pi-acp", Permission: PermissionRead,
 			},

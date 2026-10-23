@@ -111,3 +111,26 @@ func TestPiRegistrationPassesTheDetectedExecutable(t *testing.T) {
 		t.Fatalf("pi without node: %v", err)
 	}
 }
+
+func TestToolEnvMovedOnlyForTheDeclaredPath(t *testing.T) {
+	declared := []string{PiCommandEnv + "=/new/pi"}
+	for _, tc := range []struct {
+		stored         []string
+		moved, current bool
+	}{
+		{[]string{"A=1", PiCommandEnv + "=/old/pi"}, true, false},
+		{[]string{"A=1", PiCommandEnv + "=/new/pi"}, false, true},
+		{[]string{"A=1"}, false, false},
+		{nil, false, false},
+	} {
+		if got := ToolEnvMoved(tc.stored, declared); got != tc.moved {
+			t.Fatalf("ToolEnvMoved(%v) = %v", tc.stored, got)
+		}
+		if got := ToolEnvCurrent(tc.stored, declared); got != tc.current {
+			t.Fatalf("ToolEnvCurrent(%v) = %v", tc.stored, got)
+		}
+	}
+	if got := WithToolEnv([]string{"A=1", PiCommandEnv + "=/old/pi", "B=2"}, declared); !slices.Equal(got, []string{"A=1", "B=2", PiCommandEnv + "=/new/pi"}) {
+		t.Fatalf("WithToolEnv = %v", got)
+	}
+}

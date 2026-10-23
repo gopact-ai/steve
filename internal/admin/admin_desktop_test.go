@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,11 +16,13 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/adapter"
+	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/runtime"
 	"github.com/gopact-ai/steve/internal/skills"
 )
@@ -389,5 +392,45 @@ func TestSetLocalWorkspaceRootIsNotSaved(t *testing.T) {
 	}
 	if string(after) != string(before) {
 		t.Fatal("recording the workspace root rewrote the configuration file")
+	}
+}
+
+// pi reinstalled at another path: choosing it again on the desktop updates
+// the stored path instead of reporting that the harness differs, whether
+// or not an agent already uses it.
+func TestDesktopPlanUpdatesAMovedPi(t *testing.T) {
+	pi := filepath.Join(t.TempDir(), "pi")
+	if err := os.WriteFile(pi, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	found := agenttools.FromPaths(map[string]string{"pi": pi, "node": pi, "npm": pi})
+	candidates := map[string]desktop.AgentCandidate{}
+	for _, c := range found {
+		candidates[c.ID] = c
+	}
+	want := []string{"KEEP=1", "PI_ACP_PI_COMMAND=" + pi}
+	stored := map[string]config.Harness{"pi": {Adapter: "pi-acp", Env: []string{"KEEP=1", "PI_ACP_PI_COMMAND=/old/pi"}, Permission: config.PermissionRead}}
+	for name, agents := range map[string]map[string]config.Agent{
+		"unused":     {},
+		"registered": {"pi": {Harness: "pi"}},
+	} {
+		plan, err := planDesktopAgents(i18n.New(i18n.LocaleEN), []consoleapi.DesktopEnrollAgent{{CandidateID: "pi"}}, candidates, agents, maps.Clone(stored))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := plan.harnesses["pi"]; got.Adapter != "pi-acp" || !slices.Equal(got.Env, want) || got.Permission != config.PermissionRead {
+			t.Fatalf("%s: planned pi = %+v", name, got)
+		}
+	}
+	// Same path: nothing to change for a registered pi.
+	current := map[string]config.Harness{"pi": {Adapter: "pi-acp", Env: want}}
+	plan, err := planDesktopAgents(i18n.New(i18n.LocaleEN), []consoleapi.DesktopEnrollAgent{{CandidateID: "pi"}}, candidates, map[string]config.Agent{"pi": {Harness: "pi"}}, current)
+	if err != nil || len(plan.harnesses) != 0 {
+		t.Fatalf("unchanged pi planned %+v, %v", plan.harnesses, err)
+	}
+	// An own pi-acp build still differs.
+	own := map[string]config.Harness{"pi": {Command: "/own/pi-acp", Env: []string{"PI_ACP_PI_COMMAND=/old/pi"}}}
+	if _, err := planDesktopAgents(i18n.New(i18n.LocaleEN), []consoleapi.DesktopEnrollAgent{{CandidateID: "pi"}}, candidates, map[string]config.Agent{}, own); err == nil {
+		t.Fatal("own pi-acp replaced")
 	}
 }

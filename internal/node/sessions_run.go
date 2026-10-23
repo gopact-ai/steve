@@ -13,9 +13,11 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/pihome"
 	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -151,6 +153,12 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	if upstream == "" && req.NativeImport != nil {
 		upstream = req.NativeImport.NativeID
 	}
+	// pi restores the tools a session recorded when it resumes; one opened
+	// under the other permission class starts anew instead.
+	policy, reset := piPolicy(req.Harness, hostCfg), ""
+	if policy != "" && upstream != "" && !pihome.Resumable(hostCfg.Env, upstream, policy) {
+		upstream, reset = "", harness.ContextResetPolicy
+	}
 	starting := one.copyLocked()
 	starting.State.ProcessStopped = false
 	err := one.commitLocked(starting)
@@ -171,10 +179,17 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	} else {
 		s.forgetCapabilities(req.Harness)
 	}
+	if openErr == nil && policy != "" {
+		openErr = pihome.Remember(hostCfg.Env, string(native), policy)
+	}
 	one.mu.Lock()
 	next := one.copyLocked()
 	if openErr == nil {
 		next.UpstreamID = string(native)
+		if reset != "" {
+			// The native context did not continue: this session is its own.
+			next.State.ContextReset, next.State.ContextID = reset, next.State.ID
+		}
 	}
 	next.Generation = generation
 	if openErr != nil {
@@ -621,4 +636,16 @@ func (s *SessionService) processesStopped() bool {
 		}
 	}
 	return true
+}
+
+// piPolicy is the permission policy a pi session runs under, or "" when the
+// harness is not pi.
+func piPolicy(harnessID string, cfg acphost.Config) string {
+	if harnessID != harness.Pi {
+		return ""
+	}
+	if cfg.Permission == nil {
+		return permission.PolicyRead
+	}
+	return cfg.Permission.Policy()
 }

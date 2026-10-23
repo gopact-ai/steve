@@ -216,3 +216,57 @@ func Registration(candidate Candidate) (Declaration, error) {
 
 // PiCommandEnv is the variable pi-acp reads for the pi executable.
 const PiCommandEnv = "PI_ACP_PI_COMMAND"
+
+// ToolEnvMoved reports whether stored names every variable a registration
+// declares (the tool's path) and at least one now has another value: the
+// tool moved or was reinstalled elsewhere.
+func ToolEnvMoved(stored, declared []string) bool {
+	if len(declared) == 0 {
+		return false
+	}
+	moved := false
+	for _, item := range declared {
+		key, value, _ := strings.Cut(item, "=")
+		current, ok := envValue(stored, key)
+		if !ok {
+			return false
+		}
+		moved = moved || current != value
+	}
+	return moved
+}
+
+// ToolEnvCurrent reports whether stored already gives every declared
+// variable its declared value; other variables are the operator's own.
+func ToolEnvCurrent(stored, declared []string) bool {
+	for _, item := range declared {
+		key, value, _ := strings.Cut(item, "=")
+		if current, ok := envValue(stored, key); !ok || current != value {
+			return false
+		}
+	}
+	return true
+}
+
+// WithToolEnv is stored with the declared variables set to their declared
+// values; everything else the operator set is kept.
+func WithToolEnv(stored, declared []string) []string {
+	out := make([]string, 0, len(stored)+len(declared))
+	for _, item := range stored {
+		key, _, _ := strings.Cut(item, "=")
+		if _, ok := envValue(declared, key); !ok {
+			out = append(out, item)
+		}
+	}
+	return append(out, declared...)
+}
+
+func envValue(env []string, key string) (string, bool) {
+	value, found := "", false
+	for _, item := range env {
+		if v, ok := strings.CutPrefix(item, key+"="); ok {
+			value, found = v, true
+		}
+	}
+	return value, found
+}

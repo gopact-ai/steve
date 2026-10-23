@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -130,45 +131,169 @@ func TestPrepareWithoutOperatorPi(t *testing.T) {
 	}
 }
 
-func TestSelectChoosesTheHomeThePolicyNeeds(t *testing.T) {
+func TestLaunchChoosesTheHomeThePolicyNeeds(t *testing.T) {
 	base := t.TempDir()
 	if err := Prepare(base, ""); err != nil {
 		t.Fatal(err)
 	}
-	start := []string{"OTHER=1", EnvHomes + "=" + base, EnvAgentDir + "=" + Dir(base, ReadOnly)}
+	start := []string{"OTHER=1", EnvHomes + "=" + base, EnvAgentDir + "=" + Dir(base, ReadOnly), EnvCommand + "=/opt/pi/bin/pi"}
 	for policy, want := range map[string]string{"read": ReadOnly, "deny": ReadOnly, "": ReadOnly, "write": Full, "auto": Full, "always_allow": Full} {
-		env, err := Select(start, policy)
+		env, err := Launch(start, policy)
 		if err != nil {
 			t.Fatalf("%q: %v", policy, err)
 		}
 		if got := lookup(env, EnvAgentDir); got != Dir(base, want) {
 			t.Fatalf("%q selected %s, want %s", policy, got, Dir(base, want))
 		}
+		// pi-acp starts the home's launcher, which runs the registered pi.
+		if lookup(env, EnvCommand) != filepath.Join(Dir(base, want), wrapper) || lookup(env, EnvReal) != "/opt/pi/bin/pi" {
+			t.Fatalf("%q launcher env = %v", policy, env)
+		}
 		if !slices.Contains(env, "OTHER=1") {
 			t.Fatalf("%q dropped the rest of the environment: %v", policy, env)
+		}
+		// Launching again from a launched env keeps the real pi.
+		again, err := Launch(env, policy)
+		if err != nil || lookup(again, EnvReal) != "/opt/pi/bin/pi" {
+			t.Fatalf("%q relaunch = %v, %v", policy, again, err)
 		}
 	}
 }
 
-func TestSelectRefusesReadOnlyWhereItIsNotEnforced(t *testing.T) {
-	own := t.TempDir() // an operator's PI_CODING_AGENT_DIR, not prepared by Steve
-	env := []string{EnvAgentDir + "=" + own}
-	if _, err := Select(env, "read"); !errors.Is(err, ErrUnenforced) {
-		t.Fatalf("read-only policy on an unenforced home: %v", err)
+func TestLaunchIgnoresAnOperatorAgentDir(t *testing.T) {
+	base := t.TempDir()
+	// An operator's own PI_CODING_AGENT_DIR after Steve's never wins.
+	env := []string{EnvHomes + "=" + base, EnvAgentDir + "=/home/op/.pi/agent"}
+	for policy, want := range map[string]string{"read": ReadOnly, "write": Full} {
+		got, err := Launch(env, policy)
+		if err != nil || lookup(got, EnvAgentDir) != Dir(base, want) {
+			t.Fatalf("%q = %v, %v", policy, got, err)
+		}
 	}
-	if got, err := Select(env, "write"); err != nil || !slices.Equal(got, env) {
-		t.Fatalf("write policy = %v, %v", got, err)
+	// Without Steve's homes no policy is started, a write one included.
+	own := []string{EnvAgentDir + "=" + t.TempDir()}
+	for _, policy := range []string{"read", "write"} {
+		if _, err := Launch(own, policy); !errors.Is(err, ErrUnenforced) {
+			t.Fatalf("%q without Steve's homes: %v", policy, err)
+		}
 	}
-	// A home Steve prepared read-only is accepted as is.
-	if err := PrepareHome(own, "", ReadOnly); err != nil {
+	if _, err := Launch(nil, "read"); !errors.Is(err, ErrUnenforced) {
+		t.Fatalf("no env: %v", err)
+	}
+}
+
+func TestEnforcedChecksContentNotJustTheMarker(t *testing.T) {
+	for name, tamper := range map[string]func(dir string) error{
+		"extension": func(dir string) error {
+			if err := os.MkdirAll(filepath.Join(dir, "extensions"), 0o700); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(dir, "extensions", "x.js"), []byte("export default () => {}"), 0o600)
+		},
+		"tools": func(dir string) error {
+			return os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"defaultTools":["read","bash"],"defaultProjectTrust":"never"}`), 0o600)
+		},
+		"trust": func(dir string) error {
+			return os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"defaultTools":["read","grep","find","ls"],"defaultProjectTrust":"always"}`), 0o600)
+		},
+		"launcher": func(dir string) error {
+			return os.WriteFile(filepath.Join(dir, wrapper), []byte("#!/bin/sh\nexec pi \"$@\"\n"), 0o700)
+		},
+	} {
+		base := t.TempDir()
+		if err := Prepare(base, ""); err != nil {
+			t.Fatal(err)
+		}
+		dir := Dir(base, ReadOnly)
+		if err := tamper(dir); err != nil {
+			t.Fatal(err)
+		}
+		if Enforced(dir) != "" {
+			t.Fatalf("%s: tampered home still reported enforced", name)
+		}
+		// Every start prepares the home again before it is used.
+		env, err := Launch([]string{EnvHomes + "=" + base}, "read")
+		if err != nil || Enforced(dir) != ReadOnly {
+			t.Fatalf("%s: launch did not repair the home: %v", name, err)
+		}
+		if entries, _ := os.ReadDir(filepath.Join(dir, "extensions")); len(entries) != 0 || lookup(env, EnvAgentDir) != dir {
+			t.Fatalf("%s: repaired home = %v, env %v", name, entries, env)
+		}
+	}
+}
+
+func TestLaunchKeepsTheOperatorSource(t *testing.T) {
+	src := operatorPi(t)
+	base := t.TempDir()
+	if err := Prepare(base, src); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Select(env, "read"); err != nil {
+	if _, err := Launch([]string{EnvHomes + "=" + base}, "write"); err != nil {
 		t.Fatal(err)
 	}
-	// The default ~/.pi/agent is refused too.
-	t.Setenv("HOME", t.TempDir())
-	if _, err := Select(nil, "read"); !errors.Is(err, ErrUnenforced) {
-		t.Fatalf("default pi home under read-only: %v", err)
+	if target, err := os.Readlink(filepath.Join(Dir(base, Full), "auth.json")); err != nil || target != filepath.Join(src, "auth.json") {
+		t.Fatalf("auth link after relaunch = %q, %v", target, err)
+	}
+}
+
+func TestResumeUnderAnotherClassStartsFresh(t *testing.T) {
+	base := t.TempDir()
+	env := []string{EnvHomes + "=" + base}
+	if !Resumable(env, "s-unknown", "read") {
+		t.Fatal("a session Steve has no record of must stay resumable")
+	}
+	if err := Remember(env, "s1", "write"); err != nil {
+		t.Fatal(err)
+	}
+	if !Resumable(env, "s1", "auto") {
+		t.Fatal("same class refused")
+	}
+	// The owner narrowed the policy: resuming would restore bash/edit/write.
+	if Resumable(env, "s1", "read") || Resumable(env, "s1", "deny") {
+		t.Fatal("write-class session resumable under read")
+	}
+	if err := Remember(env, "s2", "read"); err != nil {
+		t.Fatal(err)
+	}
+	if Resumable(env, "s2", "write") || !Resumable(env, "s2", "") {
+		t.Fatal("read-class session class mismatch not seen")
+	}
+}
+
+// The launcher, run with a fake pi, appends the read-only allowlist and
+// refuses a session file kept in the other home.
+func TestWrapperPinsToolsAndRefusesTheOtherHome(t *testing.T) {
+	base := t.TempDir()
+	if err := Prepare(base, ""); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(t.TempDir(), "pi")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	run := func(class string, args ...string) (string, error) {
+		env, err := Launch([]string{EnvHomes + "=" + base, EnvCommand + "=" + fake}, map[string]string{ReadOnly: "read", Full: "write"}[class])
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(lookup(env, EnvCommand), args...)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	ro := Dir(base, ReadOnly)
+	out, err := run(ReadOnly, "--mode", "rpc", "--session", filepath.Join(ro, "sessions", "a.jsonl"))
+	if err != nil || out != "--mode rpc --session "+filepath.Join(ro, "sessions", "a.jsonl")+" --no-extensions --tools read,grep,find,ls" {
+		t.Fatalf("read-only launch = %q, %v", out, err)
+	}
+	out, err = run(Full, "--mode", "rpc")
+	if err != nil || out != "--mode rpc --no-extensions" {
+		t.Fatalf("full launch = %q, %v", out, err)
+	}
+	// A session file from the full home under the read-only one.
+	out, err = run(ReadOnly, "--mode", "rpc", "--session", filepath.Join(Dir(base, Full), "sessions", "b.jsonl"))
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 || !strings.Contains(out, "another permission policy") {
+		t.Fatalf("cross-home resume = %q, %v", out, err)
 	}
 }

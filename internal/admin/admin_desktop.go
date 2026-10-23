@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -198,7 +199,7 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	addedAgents, addedHarnesses := plan.agents, plan.harnesses
 	selected, agentIDs, preferred := plan.tools, plan.order, plan.preferred
 	maps.Copy(agents, addedAgents)
-	if len(addedAgents) == 0 {
+	if len(addedAgents) == 0 && len(addedHarnesses) == 0 {
 		return a.DesktopStatus(ctx)
 	}
 	applyDefault(agents, preferred, agentIDs)
@@ -209,6 +210,12 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 		return consoleapi.DesktopStatus{}, err
 	}
 	return a.saveDesktopAgents(ctx, addedAgents, addedHarnesses, agentIDs, preferred)
+}
+
+// toolMoved is a configured adapter tool whose only difference from what
+// discovery declares now is the path of the tool it drives.
+func toolMoved(configured, tool config.Harness) bool {
+	return tool.Adapter != "" && configured.Adapter == tool.Adapter && len(configured.Args) == 0 && agenttools.ToolEnvMoved(configured.Env, tool.Env)
 }
 
 // desktopAgentPlan is what the owner's selection turns into once every
@@ -247,6 +254,14 @@ func planDesktopAgents(text i18n.Catalog, requested []consoleapi.DesktopEnrollAg
 			return desktopAgentPlan{}, text.Errorf(i18n.AdminAgentNameInvalidQuoted, name)
 		}
 		if localHarnessRegistered(agents, item.Harness) {
+			// Registered already; a tool found again at another path (pi
+			// reinstalled) has its stored path updated.
+			if configured, exists := harnesses[item.Harness]; exists {
+				if _, tool, err := desktop.Registration(item); err == nil && toolMoved(configured, tool) {
+					configured.Env = agenttools.WithToolEnv(configured.Env, tool.Env)
+					plan.harnesses[item.Harness] = configured
+				}
+			}
 			continue
 		}
 		if _, exists := agents[name]; exists || taken[name] {
@@ -258,7 +273,11 @@ func planDesktopAgents(text i18n.Catalog, requested []consoleapi.DesktopEnrollAg
 			return desktopAgentPlan{}, err
 		}
 		if configured, exists := harnesses[item.Harness]; exists {
-			if configured.Adapter != tool.Adapter || tool.Adapter == "" && (configured.Command != tool.Command || !slices.Equal(configured.Args, tool.Args)) || !slices.Equal(configured.Env, tool.Env) {
+			switch {
+			case toolMoved(configured, tool):
+				configured.Env = agenttools.WithToolEnv(configured.Env, tool.Env)
+				plan.harnesses[item.Harness] = configured
+			case configured.Adapter != tool.Adapter || tool.Adapter == "" && (configured.Command != tool.Command || !slices.Equal(configured.Args, tool.Args)) || !agenttools.ToolEnvCurrent(configured.Env, tool.Env):
 				return desktopAgentPlan{}, text.Errorf(i18n.AdminDesktopHarnessDiffers, item.Name)
 			}
 		} else {

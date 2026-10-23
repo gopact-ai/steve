@@ -86,6 +86,7 @@ const (
 	EffectsResolved           Key = "effects_resolved"
 	EffectsUsage              Key = "effects_usage"
 	StateSaveFailed           Key = "state_save_failed"
+	ContextResetPolicy        Key = "context_reset_policy"
 	Reset                     Key = "reset"
 	ResetCloseOwed            Key = "reset_close_owed"
 	NoRunningTurn             Key = "no_running_turn"

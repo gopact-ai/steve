@@ -32,6 +32,10 @@ type OpenRequest struct {
 	// status is the close reason.
 	Command string `json:"command,omitempty"`
 	Dir     string `json:"dir,omitempty"`
+	// Permission is the hub's policy for an ACP process stream. The node
+	// starts a harness whose isolation depends on it (pi) under that
+	// policy; empty means read.
+	Permission string `json:"permission,omitempty"`
 }
 
 const (

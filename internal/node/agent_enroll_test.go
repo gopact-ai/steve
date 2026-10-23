@@ -342,3 +342,51 @@ func cachedNodeAdapter(t *testing.T, dir, name, script string) string {
 	}
 	return command
 }
+
+// pi moved (reinstalled elsewhere): enrolling it again updates the stored
+// path instead of refusing, and keeps the operator's other variables.
+func TestEnrollmentUpdatesAMovedPi(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"pi", "node", "npm"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	piACP := filepath.Join(dir, "pi-acp")
+	pin := adapter.Catalog["pi-acp"]
+	start := func(t *testing.T, spec HarnessSpec) (*Server, enrollDependencies) {
+		cfg := ServerConfig{Name: "test", Token: "token", Source: filepath.Join(t.TempDir(), "node.json"), StateDir: t.TempDir(), Harnesses: map[string]HarnessSpec{"pi": spec}}
+		if err := writeConfig(cfg); err != nil {
+			t.Fatal(err)
+		}
+		deps := enrollDependencies{discover: func() []agenttools.Candidate { return agenttools.Discover(agenttools.Options{Path: dir}) }, prepare: func(string, []string) error { return nil }, installer: fakeAgentInstaller{ensure: func(context.Context, string) (adapter.Installed, error) {
+			return adapter.Installed{Name: "pi-acp", Package: pin.Package, Version: pin.Version, Command: piACP}, nil
+		}}}
+		if err := os.WriteFile(piACP, []byte("#!/bin/sh\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return NewServer(cfg), deps
+	}
+	s, deps := start(t, HarnessSpec{Adapter: "pi-acp", Command: piACP, Env: []string{"KEEP=1", "PI_ACP_PI_COMMAND=/old/place/pi"}})
+	got, err := s.enrollAgentWith(t.Context(), agenttools.InstallRequest{CandidateID: "pi", ExpectedRevision: s.settings().Revision}, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"KEEP=1", "PI_ACP_PI_COMMAND=" + filepath.Join(dir, "pi")}
+	if env := s.conf().Harnesses["pi"].Env; !slices.Equal(env, want) || got.Harness != "pi" {
+		t.Fatalf("moved pi = %v (%+v)", env, got)
+	}
+	stored, _ := os.ReadFile(s.conf().Source)
+	if !strings.Contains(string(stored), want[1]) {
+		t.Fatalf("moved pi not saved: %s", stored)
+	}
+	// Same path again is a no-op.
+	if _, err := s.enrollAgentWith(t.Context(), agenttools.InstallRequest{CandidateID: "pi", ExpectedRevision: s.settings().Revision}, deps); err != nil {
+		t.Fatal(err)
+	}
+	// An own pi-acp build stays the operator's.
+	own, deps := start(t, HarnessSpec{Command: "/own/pi-acp", Env: []string{"PI_ACP_PI_COMMAND=/old/pi"}})
+	if _, err := own.enrollAgentWith(t.Context(), agenttools.InstallRequest{CandidateID: "pi", ExpectedRevision: own.settings().Revision}, deps); !errors.Is(err, agenttools.ErrConfigured) {
+		t.Fatalf("own pi-acp replaced: %v", err)
+	}
+}

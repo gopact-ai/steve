@@ -109,13 +109,9 @@ func ApplyEnv(env []string, harnessID, stateDir string) []string {
 	case harness.ClaudeCode:
 		key, value = harness.EnvClaudeConfigDir, ClaudeHome(stateDir)
 	case harness.Pi:
-		// An operator's own PI_CODING_AGENT_DIR is theirs to keep; Steve then
-		// starts pi under a read-only policy only if that home enforces it.
-		if HasEnv(env, harness.EnvPiAgentDir) {
-			return env
-		}
-		// Until a launch knows its policy the read-only home is the one in
-		// force: a start that never chooses runs without write tools.
+		// Steve's homes always come with a pi start; ForPolicy picks one by
+		// the session's policy and nothing in the declared environment can
+		// replace it. Until then the read-only home is the one in force.
 		out := slices.Clone(env)
 		out = append(out, pihome.EnvHomes+"="+PiHome(stateDir))
 		return append(out, harness.EnvPiAgentDir+"="+pihome.Dir(PiHome(stateDir), pihome.ReadOnly))
@@ -327,5 +323,5 @@ func ForPolicy(env []string, harnessID, policy string) ([]string, error) {
 	if harnessID != harness.Pi {
 		return env, nil
 	}
-	return pihome.Select(env, policy)
+	return pihome.Launch(env, policy)
 }

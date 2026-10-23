@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/node/journal"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/permission"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 )
 
@@ -110,7 +111,16 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 		closeStream(stream, "unknown harness")
 		return
 	}
-	transport := acphost.LocalTransport{Command: spec.Command, Args: spec.Args, ProcessDir: s.processDir(spec), Env: steveruntime.ApplyEnv(spec.Env, req.Harness, s.conf().StateDir)}
+	// The hub names the policy the process runs under (read when it names
+	// none); pi's home is chosen from it as for node-owned sessions, and an
+	// operator PI_CODING_AGENT_DIR never replaces it.
+	env, err := steveruntime.ForPolicy(steveruntime.ApplyEnv(spec.Env, req.Harness, s.conf().StateDir), req.Harness, streamPolicy(req))
+	if err != nil {
+		s.processMu.Unlock()
+		closeStream(stream, err.Error())
+		return
+	}
+	transport := acphost.LocalTransport{Command: spec.Command, Args: spec.Args, ProcessDir: s.processDir(spec), Env: env}
 	if req.Plugin != nil {
 		prepared, err := s.pluginProcessConfig(ctx, req)
 		if err != nil {
@@ -715,4 +725,13 @@ func (s *Server) injectDrop(ctx context.Context, mux *nodewire.Mux) {
 			}()
 		})
 	}
+}
+
+// streamPolicy is the permission policy a process stream runs under: the
+// hub's, or read when an older hub sends none.
+func streamPolicy(req nodewire.OpenRequest) string {
+	if req.Permission == "" {
+		return permission.PolicyRead
+	}
+	return req.Permission
 }
