@@ -275,11 +275,8 @@ func TestRecoveryMachineProofAcrossHubRefusalAndNodeRestart(t *testing.T) {
 }
 
 func TestRecoveryProvenLostOpenConvergesItsExactNativeRetirement(t *testing.T) {
-	t.Parallel()
 	for _, mode := range []string{"lost-reply", "retirement-before-proof", "refused-proof", "cancelled-open"} {
 		t.Run(mode, func(t *testing.T) {
-			// Each case builds its own fixture.
-			t.Parallel()
 			c, tasks := taskCoordinator(t, &fakeRunner{reply: "unused"}, withOwner("owner"))
 			p := project.Project{ID: "lost-open", Home: project.Home{Node: "node", Path: t.TempDir()}}
 			if err := c.projects.Declare(t.Context(), []project.Project{p}); err != nil {
