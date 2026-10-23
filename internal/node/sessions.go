@@ -358,6 +358,10 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 		return nodewire.SessionState{}, sessionError("forbidden", "MCP authorization refresh requires the original native process to stop")
 	}
 	one.mu.Lock()
+	if failure := one.failure; failure != nil {
+		one.mu.Unlock()
+		return s.doFailed(ctx, one, failure, req)
+	}
 	if err := one.admitLocked(req); err != nil {
 		one.mu.Unlock()
 		return nodewire.SessionState{}, err

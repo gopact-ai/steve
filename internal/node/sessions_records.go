@@ -339,6 +339,20 @@ func (s *sessionRecords) pending(id string) (int, error) {
 	return count, err
 }
 
+// sessionQuestionLimit is the CHECK bound on sessions.question_count.
+const sessionQuestionLimit = 256
+
+// questions counts every question the journal retains for a session, across
+// all of its commands.
+func (s *sessionRecords) questions(id string) (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT question_count FROM sessions WHERE id=?`, id).Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return count, err
+}
+
 func (s *sessionRecords) resumable(id string) error {
 	var unsettled int
 	err := s.db.QueryRow(`SELECT

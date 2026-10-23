@@ -40,6 +40,11 @@ func (s *registryStopSessions) AttachRetainedSession(ctx context.Context, at har
 	return registryStopRunner{ResumableRunner: runner, sessions: s}, nil
 }
 
+func (s *registryStopSessions) KillRetainedSession(ctx context.Context, at harness.Placement, id, workdir string) (nodewire.SessionState, error) {
+	s.calls.Add(1)
+	return s.manager.KillRetainedSession(ctx, at, id, workdir)
+}
+
 func (s *registryStopSessions) ReconcileNodeOpen(ctx context.Context, at harness.Placement, workdir string, cancel bool) (nodewire.SessionState, error) {
 	s.calls.Add(1)
 	return s.manager.ReconcileNodeOpen(ctx, at, workdir, cancel)
@@ -67,24 +72,35 @@ func (r registryStopRunner) StopRetained(ctx context.Context) (nodewire.SessionS
 }
 
 type stopRegistryFixture struct {
-	ctx      context.Context
-	book     *ledger.Ledger
-	tasks    *task.Store
-	attempts *attempt.Service
-	record   attempt.Record
-	registry *execution.Registry
-	owner    *execution.Scope
-	sessions *registryStopSessions
-	stops    *applicationStops
+	ctx       context.Context
+	book      *ledger.Ledger
+	nodeState string
+	binding   harness.NodeSessionContext
+	runner    harness.Runner
+	tasks     *task.Store
+	attempts  *attempt.Service
+	record    attempt.Record
+	registry  *execution.Registry
+	owner     *execution.Scope
+	sessions  *registryStopSessions
+	stops     *applicationStops
 }
 
 func newStopRegistryFixture(t *testing.T, bin string, pendingOpen bool) *stopRegistryFixture {
 	t.Helper()
+	return newStopRegistryFixtureBefore(t, bin, pendingOpen, nil)
+}
+
+// newStopRegistryFixtureBefore runs beforeStop against the live original
+// execution, before its task is set aside.
+func newStopRegistryFixtureBefore(t *testing.T, bin string, pendingOpen bool, beforeStop func(*stopRegistryFixture)) *stopRegistryFixture {
+	t.Helper()
+	nodeState := t.TempDir()
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	t.Cleanup(cancel)
 	server := node.NewServer(node.ServerConfig{
 		Name: "worker", Listen: "127.0.0.1:0", Token: "registry-stop-test",
-		StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(),
+		StateDir: nodeState, WorkspaceRoot: t.TempDir(),
 		Harnesses:         map[string]node.HarnessSpec{"mock": {Command: bin}},
 		SessionAuthorizer: &applicationStopAuthority{epoch: 1},
 	})
@@ -151,12 +167,14 @@ func newStopRegistryFixture(t *testing.T, bin string, pendingOpen bool) *stopReg
 	t.Cleanup(manager.Stop)
 	manager.SetTransports(connections)
 	manager.SetStopRegistrar(execution.RegisterStopHandler)
+	var runner harness.Runner
 	if !pendingOpen {
-		runner, err := manager.OpenSession(harness.WithNodeSession(ctx, binding), harness.Placement{Node: record.Node, Harness: record.Harness}, "", record.Workspace.Path, nil)
+		opened, err := manager.OpenSession(harness.WithNodeSession(ctx, binding), harness.Placement{Node: record.Node, Harness: record.Harness}, "", record.Workspace.Path, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		record, err = attempts.Advance(ctx, record.ID, attempt.Running, "test", func(r *attempt.Record) { r.Session = runner.ID() })
+		runner = opened
+		record, err = attempts.Advance(ctx, record.ID, attempt.Running, "test", func(r *attempt.Record) { r.Session = opened.ID() })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -171,13 +189,17 @@ func newStopRegistryFixture(t *testing.T, bin string, pendingOpen bool) *stopReg
 		}
 		return harness.WithNodeSession(ctx, binding), nil
 	})
+	f := &stopRegistryFixture{ctx: ctx, book: book, nodeState: nodeState, binding: binding, runner: runner, tasks: tasks, attempts: attempts, record: record, registry: registry, owner: owner}
+	if beforeStop != nil {
+		beforeStop(f)
+	}
 	if _, err := tasks.SetAside(tracked.ID, task.StatePaused); err != nil {
 		t.Fatal(err)
 	}
-	sessions := &registryStopSessions{manager: manager}
-	stops := newApplicationStops(attempts, tasks, sessions, i18n.New(i18n.LocaleZH))
-	stops.executions = registry
-	return &stopRegistryFixture{ctx: ctx, book: book, tasks: tasks, attempts: attempts, record: record, registry: registry, owner: owner, sessions: sessions, stops: stops}
+	f.sessions = &registryStopSessions{manager: manager}
+	f.stops = newApplicationStops(attempts, tasks, f.sessions, i18n.New(i18n.LocaleZH))
+	f.stops.executions = registry
+	return f
 }
 
 func (f *stopRegistryFixture) requireBusy(t *testing.T) {
