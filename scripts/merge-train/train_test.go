@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOrderPutsDisjointFirstAndKeepsOverlapsInListOrder(t *testing.T) {
@@ -342,5 +343,165 @@ func TestCLIAgainstFakeGHBinary(t *testing.T) {
 	}
 	if m := calls(w, "merge"); len(m) != 1 || !has(m[0], "--match-head-commit") {
 		t.Fatalf("merge calls %v", m)
+	}
+}
+
+func TestDiffNamesKeepSpacesInsidePaths(t *testing.T) {
+	got := diffNames([]byte("docs/design notes.md\r\ndocs/release notes.md\n\nweb/a b/c.ts\n"))
+	want := []string{"docs/design notes.md", "docs/release notes.md", "web/a b/c.ts"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("diffNames = %q, want %q", got, want)
+	}
+	// Two pull requests that only share a word of a path are disjoint, so
+	// the CLEAN one still goes first.
+	cs := []candidate{
+		{n: 1, index: 0, head: "a", base: "master", files: diffNames([]byte("docs/design notes.md\n"))},
+		{n: 2, index: 1, head: "b", base: "master", files: diffNames([]byte("docs/release notes.md\n")), ready: true},
+	}
+	if o := overlaps(cs); len(o) != 0 {
+		t.Fatalf("fictitious overlap %v", o)
+	}
+	h := newHarness(t, open(1, "BEHIND", "docs/design notes.md"), open(2, "CLEAN", "docs/release notes.md"))
+	if err := h.train(false, 1, 2).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(h.out.String(), "1. #2") || strings.Contains(h.out.String(), "shares files") {
+		t.Fatalf("plan:\n%s", h.out.String())
+	}
+}
+
+func TestForkHeadsAreNeverStackParents(t *testing.T) {
+	// #1 comes from a fork's "master"; #2 and #3 target upstream master and
+	// overlap. Without fork identity #1 looked like their base.
+	fork := open(1, "BEHIND", "x.go")
+	fork.PR.HeadRefName, fork.PR.IsCrossRepository = "master", true
+	behind, clean := open(2, "BEHIND", "shared.go"), open(3, "CLEAN", "shared.go", "y.go")
+	h := newHarness(t, fork, behind, clean)
+	if err := h.train(false, 1, 2, 3).Run(); err != nil {
+		t.Fatal(err)
+	}
+	out := h.out.String()
+	if !strings.Contains(out, "1. #1") || !strings.Contains(out, "2. #2") || !strings.Contains(out, "3. #3") {
+		t.Fatalf("order changed by a fork head:\n%s", out)
+	}
+	if p := parents([]candidate{{n: 1, head: "master", fork: true, base: "master"}, {n: 2, index: 1, head: "b", base: "master"}}); len(p) != 0 {
+		t.Fatalf("fork head became a parent: %v", p)
+	}
+	// A same-repository head is still a parent.
+	if p := parents([]candidate{{n: 1, head: "feature", base: "master"}, {n: 2, index: 1, head: "b", base: "feature"}}); p[2] != 1 {
+		t.Fatalf("stack lost: %v", p)
+	}
+}
+
+func TestResetReplacesAnUnreadableState(t *testing.T) {
+	h := newHarness(t, open(1, "CLEAN", "a.go"))
+	if err := os.WriteFile(h.state, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.train(true, 1).Run(); err == nil || !strings.Contains(err.Error(), "-reset") {
+		t.Fatalf("without -reset: %v", err)
+	}
+	tr := h.train(true, 1)
+	tr.Reset = true
+	if err := tr.Run(); err != nil {
+		t.Fatalf("-reset: %v", err)
+	}
+	if st, err := loadState(h.state); err != nil || st == nil || st.Merged[1] == "" {
+		t.Fatalf("state after reset = %+v, %v", st, err)
+	}
+}
+
+func TestDescendantsOfAConflictAreSkippedAndTheRestMerge(t *testing.T) {
+	parent := open(1, "DIRTY", "p.go")
+	child := open(2, "CLEAN", "p.go", "c.go")
+	child.PR.BaseRefName = "branch-1"
+	grandchild := open(3, "CLEAN", "g.go")
+	grandchild.PR.BaseRefName = "branch-2"
+	other := open(4, "BEHIND", "o.go")
+	h := newHarness(t, parent, child, grandchild, other)
+	err := h.train(true, 1, 2, 3, 4).Run()
+	for _, want := range []string{"#1: conflicts with master", "#2: stacked on #1", "#3: stacked on #1"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want %q", err, want)
+		}
+	}
+	w := h.read()
+	if w.PRs["4"].PR.State != "MERGED" {
+		t.Fatalf("an unrelated pull request must still merge; out:\n%s", h.out.String())
+	}
+	for _, c := range h.read().Calls {
+		if len(c) > 2 && c[0] == "pr" && (c[1] == "merge" || c[1] == "update-branch") && (c[2] == "2" || c[2] == "3") {
+			t.Fatalf("acted on a descendant of the conflict: %v", c)
+		}
+	}
+}
+
+func TestConflictedPullRequestWithARedCheckStopsTheTrain(t *testing.T) {
+	dirty := open(1, "DIRTY", "a.go")
+	dirty.Checks = append(green("console", "desktop", "macos", "fleet"), Check{Name: "test", Bucket: "fail", Link: "https://ci.example/job/9"})
+	h := newHarness(t, dirty, open(2, "BEHIND", "b.go"))
+	err := h.train(true, 1, 2).Run()
+	var stop *Stop
+	if !errors.As(err, &stop) || stop.PR != 1 || stop.URL != "https://ci.example/job/9" || strings.Contains(err.Error(), "merged what could be merged") {
+		t.Fatalf("err = %v", err)
+	}
+	if m := mutations(h.read()); len(m) != 0 {
+		t.Fatalf("carried on after a red check: %v", m)
+	}
+}
+
+func TestACheckThatFailsBetweenReadsIsNeverMerged(t *testing.T) {
+	// Preflight sees an optional job pending; by the decisive read it has
+	// failed. Protection would not block it (it is not required).
+	pr := open(1, "CLEAN", "a.go")
+	pr.Checks = append(green(requiredChecks...), Check{Name: "lint", Bucket: "pending", Link: "https://ci.example/job/lint"})
+	pr.FlipAfter, pr.Flip = 1, append(green(requiredChecks...), Check{Name: "lint", Bucket: "fail", Link: "https://ci.example/job/lint"})
+	h := newHarness(t, pr)
+	err := h.train(true, 1).Run()
+	var stop *Stop
+	if !errors.As(err, &stop) || stop.URL != "https://ci.example/job/lint" {
+		t.Fatalf("err = %v\n%s", err, h.out.String())
+	}
+	if m := calls(h.read(), "merge"); len(m) != 0 {
+		t.Fatalf("merged after a check went red: %v", m)
+	}
+	// A cancelled required check read last is a stop too.
+	req := open(2, "CLEAN", "b.go")
+	req.FlipAfter, req.Flip = 2, append(green("console", "desktop", "macos", "fleet"), Check{Name: "test", Bucket: "cancel", Link: "https://ci.example/job/test"})
+	h2 := newHarness(t, req)
+	if err := h2.train(true, 2).Run(); !errors.As(err, &stop) || !strings.Contains(stop.Reason, "cancelled") {
+		t.Fatalf("err = %v", err)
+	}
+	if m := calls(h2.read(), "merge"); len(m) != 0 {
+		t.Fatalf("merged with a cancelled required check: %v", m)
+	}
+}
+
+func TestPendingRequiredChecksAreWaitedFor(t *testing.T) {
+	pr := open(1, "CLEAN", "a.go")
+	// From the third check read on, "test" (required) is pending until the
+	// train has waited once; it must not merge on that read.
+	pr.FlipAfter, pr.Flip = 2, []Check{{Name: "test", Bucket: "pending"}, {Name: "console", Bucket: "pass"}, {Name: "desktop", Bucket: "pass"}, {Name: "macos", Bucket: "pass"}, {Name: "fleet", Bucket: "pass"}}
+	h := newHarness(t, pr)
+	w := h.read()
+	w.PRs["1"].Required = requiredChecks
+	h.write(w)
+	tr := h.train(true, 1)
+	reads := 0
+	tr.Sleep = func(time.Duration) {
+		// The pending required check finishes while the train waits.
+		reads++
+		w := h.read()
+		w.PRs["1"].Checks = green(requiredChecks...)
+		h.write(w)
+	}
+	if err := tr.Run(); err != nil {
+		t.Fatalf("%v\n%s", err, h.out.String())
+	}
+	if reads == 0 || !strings.Contains(h.out.String(), "waiting for checks") && !strings.Contains(h.out.String(), "waiting for required checks") {
+		t.Fatalf("must wait on a pending required check:\n%s", h.out.String())
+	}
+	if len(calls(h.read(), "merge")) != 1 {
+		t.Fatal("must merge once the required check passes")
 	}
 }

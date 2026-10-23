@@ -30,6 +30,11 @@ type fakePR struct {
 	Checks   []Check  `json:"checks"`   // final results of the current head
 	Required []string `json:"required"` // names of required checks
 	Pending  int      `json:"pending"`  // check reads before results appear
+	// FlipAfter turns Checks into Flip once that many check reads have
+	// been answered: a job that changes between two reads.
+	FlipAfter int     `json:"flip_after"`
+	Flip      []Check `json:"flip"`
+	Reads     int     `json:"reads"`
 	// What an update produces: conflicts make the branch DIRTY instead.
 	UpdateConflicts bool    `json:"update_conflicts"`
 	UpdateRefused   bool    `json:"update_refused"`
@@ -110,6 +115,10 @@ func (w *world) handle(args []string) int {
 		fmt.Fprintln(w.stdout, strings.Join(p.Files, "\n"))
 		return 0
 	case "checks":
+		if p.Flip != nil && p.Reads >= p.FlipAfter {
+			p.Checks, p.Flip = p.Flip, nil
+		}
+		p.Reads++
 		var rows []Check
 		for _, c := range p.Checks {
 			if has(args, "--required") && !slices.Contains(p.Required, c.Name) {

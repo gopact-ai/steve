@@ -16,11 +16,13 @@ import (
 // every run re-reads each pull request, so a lost or stale file can only
 // cost a re-read, never a second merge.
 type State struct {
-	List   []int             `json:"list"`  // the owner-approved list, as given
-	Order  []int             `json:"order"` // merge order fixed on the first run
-	Merged map[int]string    `json:"merged,omitempty"`
-	Notes  map[int]string    `json:"notes,omitempty"` // last outcome per pull request
-	Update map[int]time.Time `json:"updated,omitempty"`
+	List  []int `json:"list"`  // the owner-approved list, as given
+	Order []int `json:"order"` // merge order fixed on the first run
+	// Parents maps a stacked pull request to the listed one it is based on.
+	Parents map[int]int       `json:"parents,omitempty"`
+	Merged  map[int]string    `json:"merged,omitempty"`
+	Notes   map[int]string    `json:"notes,omitempty"` // last outcome per pull request
+	Update  map[int]time.Time `json:"updated,omitempty"`
 }
 
 func loadState(path string) (*State, error) {
@@ -120,11 +122,14 @@ func (t *Train) Run() error {
 		}
 		t.listed[n] = true
 	}
-	saved, err := loadState(t.State)
-	if err != nil {
-		return err
+	var saved *State
+	var err error
+	if !t.Reset { // -reset replaces the saved train, even an unreadable one
+		if saved, err = loadState(t.State); err != nil {
+			return err
+		}
 	}
-	if saved != nil && !t.Reset {
+	if saved != nil {
 		if !slices.Equal(sortedCopy(saved.List), sortedCopy(t.List)) {
 			return fmt.Errorf("%s holds a train for %v; pass the same list to resume or -reset to start over", t.State, saved.List)
 		}
@@ -146,7 +151,7 @@ func (t *Train) Run() error {
 		var cs []candidate
 		for i, n := range t.List {
 			pr := prs[n]
-			c := candidate{n: n, index: i, head: pr.HeadRefName, base: pr.BaseRefName}
+			c := candidate{n: n, index: i, head: pr.HeadRefName, fork: pr.IsCrossRepository, base: pr.BaseRefName}
 			if pr.State == "OPEN" {
 				if c.files, err = t.GH.Files(n); err != nil {
 					return err
@@ -159,7 +164,7 @@ func (t *Train) Run() error {
 		if err != nil {
 			return err
 		}
-		t.state = &State{List: slices.Clone(t.List), Order: ord, Merged: map[int]string{}, Notes: map[int]string{}, Update: map[int]time.Time{}}
+		t.state = &State{List: slices.Clone(t.List), Order: ord, Parents: parents(cs), Merged: map[int]string{}, Notes: map[int]string{}, Update: map[int]time.Time{}}
 		t.printPlan(cs, prs)
 	}
 	if t.state.Merged == nil {
@@ -178,9 +183,16 @@ func (t *Train) Run() error {
 		return err
 	}
 	var conflicts []string
+	held := map[int]int{} // pull request -> conflicted ancestor it waits for
 	for _, n := range t.state.Order {
 		if !t.listed[n] {
 			return fmt.Errorf("state order names #%d, which is not listed", n) // never reached: lists are equal
+		}
+		if p, ok := held[n]; ok {
+			conflicts = append(conflicts, fmt.Sprintf("#%d: stacked on #%d, which has a conflict; skipped", n, p))
+			t.logf("#%d: skipped; it is stacked on conflicted #%d", n, p)
+			t.state.Notes[n] = fmt.Sprintf("skipped: stacked on conflicted #%d", p)
+			continue
 		}
 		err := t.one(n)
 		if serr := t.state.save(t.State); serr != nil && err == nil {
@@ -192,6 +204,9 @@ func (t *Train) Run() error {
 			// this one can still merge. Its stacked children cannot.
 			conflicts = append(conflicts, stop.Error())
 			t.logf("#%d: %s; continuing with the rest", n, stop.Reason)
+			for _, d := range t.stackedOn(n) {
+				held[d] = n
+			}
 			continue
 		}
 		if err != nil {
@@ -203,6 +218,22 @@ func (t *Train) Run() error {
 	}
 	t.logf("train complete: %v merged", t.state.Order)
 	return nil
+}
+
+// stackedOn lists the train's pull requests stacked, directly or not, on n.
+func (t *Train) stackedOn(n int) []int {
+	var out []int
+	for _, m := range t.state.Order {
+		seen := map[int]bool{}
+		for p, ok := t.state.Parents[m]; ok && !seen[p]; p, ok = t.state.Parents[p] {
+			seen[p] = true
+			if p == n {
+				out = append(out, m)
+				break
+			}
+		}
+	}
+	return out
 }
 
 func sortedCopy(xs []int) []int { c := slices.Clone(xs); slices.Sort(c); return c }
@@ -277,15 +308,17 @@ func (t *Train) preflight(pr PR) (string, error) {
 	if open > 0 {
 		return "", &Stop{PR: n, Reason: fmt.Sprintf("has %d unresolved review thread(s)", open), URL: pr.URL}
 	}
-	if pr.MergeStateStatus == "DIRTY" {
-		return "", &Stop{PR: n, Reason: "conflicts with " + t.Base + "; resolve on its branch (the train does not)", URL: pr.URL}
-	}
+	// A red check stops the train even on a conflicted pull request, so
+	// read checks before reporting the conflict.
 	checks, err := t.GH.Checks(n, false)
 	if err != nil {
 		return "", err
 	}
 	if red := firstRed(checks); red != nil {
-		return "", &Stop{PR: n, Reason: fmt.Sprintf("check %q failed", red.Name), URL: red.Link}
+		return "", redStop(n, red)
+	}
+	if pr.MergeStateStatus == "DIRTY" {
+		return "", &Stop{PR: n, Reason: "conflicts with " + t.Base + "; resolve on its branch (the train does not)", URL: pr.URL}
 	}
 	switch pr.MergeStateStatus {
 	case "BEHIND":
@@ -298,6 +331,14 @@ func (t *Train) preflight(pr PR) (string, error) {
 	default:
 		return fmt.Sprintf("%s: wait for checks, then merge if GitHub allows it", pr.MergeStateStatus), nil
 	}
+}
+
+func redStop(n int, red *Check) *Stop {
+	verb := "failed"
+	if red.Bucket == "cancel" {
+		verb = "was cancelled"
+	}
+	return &Stop{PR: n, Reason: fmt.Sprintf("check %q %s", red.Name, verb), URL: red.Link}
 }
 
 func firstRed(checks []Check) *Check {
@@ -366,9 +407,14 @@ func (t *Train) one(n int) error {
 			continue
 		}
 		// CLEAN, HAS_HOOKS, BLOCKED, UNSTABLE: settle every check first.
+		// These two reads decide the merge: a check that went red since
+		// preflight stops the train, and anything still pending waits.
 		checks, err := t.GH.Checks(n, false)
 		if err != nil {
 			return err
+		}
+		if red := firstRed(checks); red != nil {
+			return redStop(n, red)
 		}
 		if pending(checks) || len(checks) == 0 {
 			if err := t.wait(n, "checks"); err != nil {
@@ -379,6 +425,15 @@ func (t *Train) one(n int) error {
 		required, err := t.GH.Checks(n, true)
 		if err != nil {
 			return err
+		}
+		if red := firstRed(required); red != nil {
+			return redStop(n, red)
+		}
+		if pending(required) {
+			if err := t.wait(n, "required checks"); err != nil {
+				return err
+			}
+			continue
 		}
 		if (pr.MergeStateStatus == "BLOCKED" || pr.MergeStateStatus == "UNSTABLE") && settle < blockedSettle {
 			settle++ // GitHub can lag the last check by a poll or two

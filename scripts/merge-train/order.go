@@ -11,6 +11,7 @@ type candidate struct {
 	n     int
 	index int    // position in the owner's list
 	head  string // branch name
+	fork  bool   // head lives in a fork, so it cannot be another PR's base
 	base  string
 	files []string
 	ready bool // up to date with its base and green: merging it costs no CI run
@@ -47,11 +48,15 @@ func overlaps(cs []candidate) map[int]map[int][]string {
 	return out
 }
 
-// parents maps a stacked pull request to the listed one whose branch is its base.
+// parents maps a stacked pull request to the listed one whose branch is its
+// base. Only heads in the base repository can be bases: a fork's "master"
+// is not upstream "master".
 func parents(cs []candidate) map[int]int {
 	byHead := map[string]int{}
 	for _, c := range cs {
-		byHead[c.head] = c.n
+		if !c.fork {
+			byHead[c.head] = c.n
+		}
 	}
 	out := map[int]int{}
 	for _, c := range cs {

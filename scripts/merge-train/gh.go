@@ -21,6 +21,9 @@ type PR struct {
 	HeadRefName      string `json:"headRefName"`
 	HeadRefOid       string `json:"headRefOid"`
 	BaseRefName      string `json:"baseRefName"`
+	// IsCrossRepository marks a head branch in a fork: its name says nothing
+	// about branches of the base repository.
+	IsCrossRepository bool `json:"isCrossRepository"`
 }
 
 // Check is one row of `gh pr checks --json`.
@@ -51,7 +54,7 @@ type cli struct {
 	exec      func(args []string) (stdout, stderr []byte, err error)
 }
 
-const prFields = "number,title,url,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,baseRefName"
+const prFields = "number,title,url,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,baseRefName,isCrossRepository"
 
 func (c *cli) run(args ...string) ([]byte, error) {
 	var out, errOut []byte
@@ -184,7 +187,19 @@ func (c *cli) Files(n int) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return strings.Fields(string(out)), nil
+	return diffNames(out), nil
+}
+
+// diffNames splits `gh pr diff --name-only` output on line breaks only:
+// paths may contain spaces.
+func diffNames(out []byte) []string {
+	var files []string
+	for _, line := range strings.Split(strings.ReplaceAll(string(out), "\r\n", "\n"), "\n") {
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	return files
 }
 
 // updateArgs merges the base into the branch: a new commit on top, never a
