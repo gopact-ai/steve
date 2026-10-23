@@ -61,6 +61,15 @@ func TestRestartDiscoveryDoesNotStarveALaterHealthyHolder(t *testing.T) {
 			peer.Mu.Unlock()
 		}
 	}()
+	// Shorter budgets with the production ratio: a pass reaches about six
+	// of the eight candidates, so only a second pass that goes on from the
+	// first reaches the healthy holder ordered last. A probe of the healthy
+	// holder has a whole second under the race detector.
+	discovery := control.(memberRestarts).discovery
+	discovery.passBudget, discovery.probeTimeout = 6500*time.Millisecond, time.Second
+	if pass, probe := discovery.budgets(); pass/probe >= time.Duration(len(candidates)) {
+		t.Fatalf("one pass of %s with %s probes could reach every candidate", pass, probe)
+	}
 	backend.reads.Store(0)
 	for pass := 0; pass < 2; pass++ {
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)

@@ -112,6 +112,7 @@ func assertRecoveryRetryCommitted(t *testing.T, f recoveryPreapplyFixture, land 
 }
 
 func TestRecoveryPreapplyConflictRetriesAfterPhysicalBlockerRemoval(t *testing.T) {
+	t.Parallel()
 	f := blockedRecoveryPreapply(t)
 	checks := 0
 	f.nodes.before = func(req ops.Request) error {
@@ -156,8 +157,11 @@ func TestRecoveryPreapplyConflictRetriesAfterPhysicalBlockerRemoval(t *testing.T
 }
 
 func TestRecoveryPreapplyRetryKeepsPendingWhenAuthorityOrTransactionIsRefused(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"owner", "maintenance", "first-source", "last-source", "cancelled", "transition-refused", "pending-delete-refused"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			f := blockedRecoveryPreapply(t)
 			before := string(recoveryPendingBytes(t, f))
 			removePreapplyBlocker(t, f)
@@ -241,8 +245,11 @@ func TestRecoveryPreapplyRetryKeepsPendingWhenAuthorityOrTransactionIsRefused(t 
 }
 
 func TestRecoveryPreapplyRetryRequiresExactPendingLineage(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{"root", "head-version", "canonical", "marked"} {
 		t.Run(field, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			f := blockedRecoveryPreapply(t)
 			removePreapplyBlocker(t, f)
 			var item artifact.Pending
@@ -280,6 +287,7 @@ func TestRecoveryPreapplyRetryRequiresExactPendingLineage(t *testing.T) {
 }
 
 func TestRecoveryPreapplyRetryRechecksSourcesBeforeApplying(t *testing.T) {
+	t.Parallel()
 	f := blockedRecoveryPreapply(t)
 	removePreapplyBlocker(t, f)
 	revoked := false
@@ -302,6 +310,7 @@ func TestRecoveryPreapplyRetryRechecksSourcesBeforeApplying(t *testing.T) {
 }
 
 func TestRecoveryResolverPreapplyRetryClosesEveryAcquiredScope(t *testing.T) {
+	t.Parallel()
 	for _, registered := range []bool{true, false} {
 		for _, cancelResolver := range []bool{true, false} {
 			name := "registered"

@@ -210,6 +210,7 @@ func TestScheduleMCPCreatesDurableJobFromExecutionIdentity(t *testing.T) {
 }
 
 func TestScheduleMCPRefusesGuestGroupChildAndMismatchedExecution(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(*task.Task, *attempt.Record){
 		"guest":               func(work *task.Task, r *attempt.Record) { work.Requester, r.By = "guest", "guest" },
 		"guest-on-owner-task": func(_ *task.Task, r *attempt.Record) { r.By = "guest" },
@@ -328,6 +329,7 @@ func TestScheduledMCPWorkCanInspectButCannotCreate(t *testing.T) {
 }
 
 func TestScheduleGuidanceRefreshContinuesExistingNativeSession(t *testing.T) {
+	t.Parallel()
 	gate, err := agentmcp.New(0, i18n.New(i18n.LocaleZH))
 	if err != nil {
 		t.Fatal(err)

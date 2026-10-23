@@ -51,8 +51,11 @@ func TestRejectedOnTurnReadyReceiptCancelsBeforeNativePrompt(t *testing.T) {
 }
 
 func TestCompletionCallbackWaitsForDurableTaskAccounting(t *testing.T) {
+	t.Parallel()
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "accounting-failure"}[fail], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			runner := &fakeRunner{reply: "original completed answer"}
 			afterTurn := func(string) {}
 			c, book := completionCoordinator(t, runner, withCallbacks(func(cb *Callbacks) {
@@ -95,6 +98,7 @@ func TestCompletionCallbackWaitsForDurableTaskAccounting(t *testing.T) {
 }
 
 func TestRetainedCallbackWaitsForDurableAccounting(t *testing.T) {
+	t.Parallel()
 	afterTurn := func(string) {}
 	c, _, _, old, req := retainedChatFixture(t, withCallbacks(func(cb *Callbacks) {
 		cb.AfterTurn = func(id string) { afterTurn(id) }
@@ -117,6 +121,7 @@ func TestRetainedCallbackWaitsForDurableAccounting(t *testing.T) {
 }
 
 func TestRetainedAccountingRetryResolvesOnlyJoinedOriginalEpoch(t *testing.T) {
+	t.Parallel()
 	c, _, book, old, req := retainedChatFixture(t)
 	if _, err := book.DB().Exec(`CREATE TRIGGER reject_retained_accounting BEFORE INSERT ON bindings
 		WHEN NEW.kind='task-attempt' AND json_extract(NEW.data,'$.ended_at') IS NOT NULL
@@ -158,6 +163,7 @@ func TestRetainedAccountingRetryResolvesOnlyJoinedOriginalEpoch(t *testing.T) {
 }
 
 func TestCompletedRelocationRequiresAccountingBeforeResult(t *testing.T) {
+	t.Parallel()
 	c, _, book, old, req := retainedChatFixture(t)
 	if _, err := c.ResumeRetainedChat(t.Context(), old.ID, req); err != nil {
 		t.Fatal(err)

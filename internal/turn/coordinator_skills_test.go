@@ -17,6 +17,7 @@ import (
 )
 
 func TestOwnerSkillsEnableDisableAndDrift(t *testing.T) {
+	t.Parallel()
 	coordinator, store, live, dest := skillsCoordinator(t)
 	list, err := ownerHandle(t, coordinator, "/skills")
 	if err != nil {
@@ -54,6 +55,7 @@ func TestOwnerSkillsEnableDisableAndDrift(t *testing.T) {
 }
 
 func TestGuestCannotManageSkills(t *testing.T) {
+	t.Parallel()
 	coordinator, _, _, _ := skillsCoordinator(t)
 	result, err := coordinator.Handle(t.Context(), Request{
 		Source: Source{

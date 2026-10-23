@@ -11,6 +11,7 @@ import (
 )
 
 func TestLiveQueryUsesBoundedHistoryIndex(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	book, err := ledger.Open(dir, ledger.Options{})
 	if err != nil {
@@ -63,6 +64,7 @@ func seedLiveHistory(t testing.TB, l *ledger.Ledger, n int) {
 }
 
 func TestLiveQueryDoesNotHideMalformedClosedAttempt(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	if _, err := s.l.DB().Exec(`INSERT INTO operations VALUES('bad','attempt','bound',1,1,'{','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z')`); err != nil {
 		t.Fatal(err)
@@ -73,6 +75,7 @@ func TestLiveQueryDoesNotHideMalformedClosedAttempt(t *testing.T) {
 }
 
 func TestLiveIndexUsesTheOwnerDecoder(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, raw string
 		wantError bool
@@ -103,6 +106,7 @@ func TestLiveIndexUsesTheOwnerDecoder(t *testing.T) {
 }
 
 func TestRestoredReplicaAndWriterKeepOwnerLiveIndex(t *testing.T) {
+	t.Parallel()
 	source, _ := newService(t)
 	if _, err := source.l.DB().Exec(`INSERT INTO operations VALUES('candidate','attempt','failed',1,1,'{"id":"candidate","Unsettled":true}','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z')`); err != nil {
 		t.Fatal(err)

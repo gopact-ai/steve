@@ -122,8 +122,11 @@ func startOwedSession(t *testing.T, c *Coordinator, req Request, id string) (sta
 // close it certainly never got there, so the conversation starts over now
 // and the close is owed to the node, naming the execution it ends.
 func TestResetLetsGoOfASessionItsNodeCannotBeReachedFor(t *testing.T) {
+	t.Parallel()
 	for _, tc := range ownerChannels {
 		t.Run(tc.name, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			sessions := &nodeSessions{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}}
 			c, tasks, _ := owedCloseCoordinator(t, sessions)
 			session, first := startOwedSession(t, c, tc.req, "ns_owed")
@@ -181,6 +184,7 @@ func TestResetLetsGoOfASessionItsNodeCannotBeReachedFor(t *testing.T) {
 // why: the close failure, and what kept the close from being owed when
 // that is more than the failure.
 func TestResetKeepsTheSessionWhenTheCloseMayHaveLanded(t *testing.T) {
+	t.Parallel()
 	notSent := &nodewire.SessionNotDispatched{Cause: errors.New("dial node-b: connection refused")}
 	for name, tc := range map[string]struct {
 		failure error

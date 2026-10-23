@@ -33,6 +33,7 @@ func markPlatform(extras []capability.Extra) []capability.Extra {
 // gave them to it, whether or not the agent was also given the messaging
 // server, and wherever the agent runs. Reading it prepares no credential.
 func TestSessionSetupIsAppliedAfterATurnReadTheInstructions(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		mcpHTTP bool

@@ -76,6 +76,7 @@ func gateCoordinator(t *testing.T, mcpHTTP bool, opts ...testOption) (*Coordinat
 }
 
 func TestCoordinatorInjectsGateForHTTPMCPHarness(t *testing.T) {
+	t.Parallel()
 	coordinator, manager, runner, gate, store := gateCoordinator(t, true)
 	if _, err := handle(coordinator, t.Context(), "hello"); err != nil {
 		t.Fatal(err)
@@ -111,6 +112,7 @@ func TestCoordinatorInjectsGateForHTTPMCPHarness(t *testing.T) {
 }
 
 func TestCoordinatorSkipsGateWhenHarnessLacksHTTPMCP(t *testing.T) {
+	t.Parallel()
 	coordinator, manager, _, gate, store := gateCoordinator(t, false)
 	if _, err := handle(coordinator, t.Context(), "hello"); err != nil {
 		t.Fatal(err)
@@ -127,6 +129,7 @@ func TestCoordinatorSkipsGateWhenHarnessLacksHTTPMCP(t *testing.T) {
 }
 
 func TestCoordinatorMintsDistinctTokensPerConversation(t *testing.T) {
+	t.Parallel()
 	coordinator, _, _, _, store := gateCoordinator(t, true)
 	for _, conversation := range []string{"chat-a", "chat-b"} {
 		if _, err := coordinator.Handle(t.Context(), Request{
@@ -195,6 +198,7 @@ func (n *idleNodes) RegisterIdle(node string, _ idle.Clock) func() {
 // running there whether or not the messaging server is up: the clock
 // measures the agent's silence, not the transport's.
 func TestPromptRegistersItsIdleClockWithTheNodeWithoutMessaging(t *testing.T) {
+	t.Parallel()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"lab": {Harness: "codex", Node: "host-3", Default: true},
 	})
@@ -221,6 +225,7 @@ func TestPromptRegistersItsIdleClockWithTheNodeWithoutMessaging(t *testing.T) {
 // must be reachable from the machine that agent runs on. The hub's own
 // loopback address means nothing over there.
 func TestRemoteAgentGetsItsOwnNodeLoopback(t *testing.T) {
+	t.Parallel()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 		"lab":   {Harness: "codex", Node: "host-3", Aliases: []string{"lab"}},

@@ -57,6 +57,7 @@ func executionWorldOn(t *testing.T, node string, nodes func(artifact.LocalNodes)
 }
 
 func TestTaskStopReachesDetachedDelegateAndRejectsLateSuccess(t *testing.T) {
+	t.Parallel()
 	w, r := executionWorld(t)
 	parent := w.running(t, "codex")
 	entered := make(chan context.Context, 1)
@@ -184,6 +185,7 @@ func TestAChildStoppedAsItsLandingIsCutIsNotQueued(t *testing.T) {
 // that is absent has no home region; one that cannot be read is an error,
 // not a project without a home region.
 func TestHomeRegionReportsAnUnreadableProject(t *testing.T) {
+	t.Parallel()
 	w, _ := executionWorld(t)
 	if region, err := w.service.homeRegion(t.Context(), "absent"); err != nil || region != "" {
 		t.Fatalf("absent project: region %q, err %v", region, err)

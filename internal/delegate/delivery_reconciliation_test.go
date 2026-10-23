@@ -116,6 +116,7 @@ func TestDeliveryReceiptLossDoesNotAbsorbALaterChild(t *testing.T) {
 }
 
 func TestReconcilerHonorsBackoffForEachBatch(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	first := completedChild(t, w, parent, "first")
@@ -160,6 +161,7 @@ func TestUncertainDeliveryIsNeverAutomaticallyReplayed(t *testing.T) {
 }
 
 func TestAsynchronousReceiptCanArriveBeforeDispatchReturns(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	child := completedChild(t, w, parent, "result")

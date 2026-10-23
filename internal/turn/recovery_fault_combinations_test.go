@@ -215,6 +215,7 @@ func combinationCheckpoint(t *testing.T, c *Coordinator, label string, value any
 }
 
 func TestRecoveryFaultCombinationSameSHARevokedNonLastSource(t *testing.T) {
+	t.Parallel()
 	for _, revoked := range []int{-1, 0, 1} {
 		name := "authorized-control"
 		if revoked >= 0 {
@@ -340,8 +341,11 @@ func TestRecoveryFaultCombinationSameSHARevokedNonLastSource(t *testing.T) {
 }
 
 func TestRecoveryFaultCombinationFinalPendingResultHoldRollback(t *testing.T) {
+	t.Parallel()
 	for _, refused := range []string{"pending-delete", "released-after-delete", "event-after-released"} {
 		t.Run(refused, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, episode, stuck := recoveryConflictFixture(t)
 			land, err := c.artifacts.ResolveByHand(t.Context(), p, stuck, []artifact.Edit{{Path: "original", Text: "combined atomic release\n"}}, "console")
 			if err != nil || land.State != artifact.LandCommitted || land.Committed == nil {
@@ -612,11 +616,14 @@ func TestRecoveryFaultCombinationAbandonDescendantTreeRollback(t *testing.T) {
 }
 
 func TestRecoveryFaultCombinationDeleteAckRefusalBasenameReplacement(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("the pinned-directory replacement oracle requires Unix unlink semantics")
 	}
 	for _, marker := range []bool{false, true} {
 		t.Run(fmt.Sprintf("replacement-marker-%t", marker), func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, ws, episode := releasedRecoveryCopy(t)
 			container := filepath.Dir(ws.Path)
 			// Pin the unlinked inode: immediate allocation must not accidentally

@@ -113,6 +113,7 @@ func TestRecoverRetainedSettlesAChildThatNeverReachedTheLedger(t *testing.T) {
 // before its attempt is admitted — a delegation of this process, or a chat
 // turn the user resumed the child into — and is not recovery's to close.
 func TestRecoverRetainedLeavesRowsOpenedSinceItStarted(t *testing.T) {
+	t.Parallel()
 	w, _ := executionWorld(t)
 	parent := w.running(t, "codex")
 	spawned := unrecordedChild(t, w, parent, false)

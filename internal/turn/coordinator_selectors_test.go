@@ -81,6 +81,7 @@ func selectorCoordinator(t *testing.T, configurable bool) (*Coordinator, *select
 }
 
 func TestSelectorsDiscoverWithoutResumingConversation(t *testing.T) {
+	t.Parallel()
 	for _, configurable := range []bool{true, false} {
 		t.Run(fmt.Sprint(configurable), func(t *testing.T) {
 			c, rt, runner := selectorCoordinator(t, configurable)
@@ -109,6 +110,7 @@ func TestSelectorsDiscoverWithoutResumingConversation(t *testing.T) {
 }
 
 func TestSelectorsUnavailableTargetReportsDiscoveryFailureAndCanRetry(t *testing.T) {
+	t.Parallel()
 	for _, reason := range []string{"grok executable not found", "node disconnected"} {
 		t.Run(reason, func(t *testing.T) {
 			c, rt, runner := selectorCoordinator(t, true)

@@ -100,6 +100,7 @@ func usageRecord(rng *rand.Rand, id, taskID string, at time.Time) Record {
 // history changes, only the tasks whose revision moved are read again, and
 // the result stays what a full decode of the settled history gives.
 func TestUsageSamplesFollowSettledHistoryThroughReadRevisions(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	rng := rand.New(rand.NewSource(7))
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -175,6 +176,7 @@ func TestUsageSamplesRereadOnlyTasksWhoseRevisionMoved(t *testing.T) {
 // Every read fails while any attempt row cannot be decoded in full, even
 // when usage does not need the broken field or its task is unchanged.
 func TestUsageSamplesFailOnMalformedHistory(t *testing.T) {
+	t.Parallel()
 	for name, data := range map[string]string{
 		"syntax":      `{`,
 		"null":        `null`,
@@ -224,6 +226,7 @@ func TestUsageSamplesRereadAllHistoryAfterRestore(t *testing.T) {
 }
 
 func TestUsageSamplesReadChangedTasksThroughTheTaskIndex(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	book, err := ledger.Open(dir, ledger.Options{})
 	if err != nil {

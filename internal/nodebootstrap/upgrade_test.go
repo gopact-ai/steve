@@ -194,6 +194,7 @@ func peerPIDs(t *testing.T, home string) []string {
 }
 
 func TestPeerUpgradeScriptSwapsTheProgramAndRestartsThePeer(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("peer upgrade runs on linux and darwin")
 	}
@@ -255,6 +256,7 @@ func TestPeerUpgradeScriptRestoresThePreviousProgramWhenTheNewOneExits(t *testin
 // broken program into steve.previous: when the next program fails too,
 // the machine comes back on the one that worked.
 func TestPeerUpgradeScriptKeepsTheLastWorkingProgramWhenNoPeerRuns(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("peer upgrade runs on linux and darwin")
 	}
@@ -289,6 +291,7 @@ func TestPeerUpgradeScriptKeepsTheLastWorkingProgramWhenNoPeerRuns(t *testing.T)
 // set aside as steve.rejected, and nothing else, neither steve.previous
 // nor a staged steve.new, is left beside them.
 func TestPeerUpgradeScriptLeftDownKeepsTheFallbackInstalledAndTheNewProgramRejected(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	home, _ := layoutPeer(t)
 	bin := filepath.Join(home, ".steve-peer", "bin")
@@ -316,6 +319,7 @@ func TestPeerUpgradeScriptLeftDownKeepsTheFallbackInstalledAndTheNewProgramRejec
 // the fallback does or 28 when it does not either, rather than exit 31
 // with the programs put back and nothing started.
 func TestPeerUpgradeScriptFallsBackFromANewProgramThatExitsWithoutAWord(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	for _, fallbackUp := range []bool{true, false} {
 		home, program := layoutPeer(t)
@@ -449,6 +453,7 @@ func TestPeerUpgradeScriptPutsTheProgramsBackWhenThePeerWasNotStopped(t *testing
 // and leaves the machine as it found it: the programs as they were, no
 // staged program beside them, no upload and no installation lock.
 func TestPeerUpgradeScriptLeavesTheMachineAsItWasWhereItCannotLookForThePeer(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	for name, spoil := range unsearchable(t) {
 		t.Run(name, func(t *testing.T) {

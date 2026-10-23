@@ -12,8 +12,11 @@ import (
 )
 
 func TestAbandonedFailureReturnsItsCommittedAccounting(t *testing.T) {
+	t.Parallel()
 	for _, known := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unknown", true: "known"}[known], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			s, frozen := abandonedReturnFixture(t, known)
 			s.now = func() time.Time { return frozen.Abandoned.At.Add(time.Hour) }
 			returned, err := s.FailWith(t.Context(), frozen.ID, "late-observer", "observer ended", &Usage{Model: "late-model", Input: 700, Output: 900, Context: 1000, Reported: true})
@@ -36,6 +39,7 @@ func TestAbandonedFailureReturnsItsCommittedAccounting(t *testing.T) {
 }
 
 func TestRejectedAbandonedFailureReturnsNoProposedRecord(t *testing.T) {
+	t.Parallel()
 	s, frozen := abandonedReturnFixture(t, true)
 	if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error {
 		_, err := tx.Exec(`CREATE TRIGGER refuse_late_failure BEFORE UPDATE ON operations WHEN NEW.id='att-live' AND NEW.state='failed' BEGIN SELECT RAISE(ABORT,'late failure refused'); END`)
@@ -55,6 +59,7 @@ func TestRejectedAbandonedFailureReturnsNoProposedRecord(t *testing.T) {
 }
 
 func TestOrdinaryFailureReturnsItsCommittedUsage(t *testing.T) {
+	t.Parallel()
 	s, _, original, _, _ := retainedFixture(t)
 	usage := &Usage{Model: "actual-model", Input: 21, Output: 34, Context: 55, Reported: true}
 	returned, err := s.FailWith(t.Context(), original.ID, "observer", "prompt failed", usage)

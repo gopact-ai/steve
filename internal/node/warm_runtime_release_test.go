@@ -137,8 +137,11 @@ func warmReleaseInvoke(one *ownedSession, req nodewire.SessionRequest, mode stri
 }
 
 func TestWarmRuntimeUseRetainedWhenSQLiteStopCommitFails(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"archive", "failed-open", "service-close", "recorded-cancel"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			one, req, ref := warmReleaseFixture(t, mode == "recorded-cancel", 2)
 			before := warmReleaseSaved(t, one)
 			store, err := one.service.recordsStore()
@@ -177,8 +180,11 @@ func TestWarmRuntimeUseRetainedWhenSQLiteStopCommitFails(t *testing.T) {
 }
 
 func TestWarmRuntimeUseReleasedAfterSuccessfulDurableStop(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"archive", "failed-open", "service-close", "recorded-cancel"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			one, req, ref := warmReleaseFixture(t, mode == "recorded-cancel", 2)
 			before := warmReleaseSaved(t, one)
 			cause := errors.New("original native open failed")
@@ -211,8 +217,11 @@ func TestWarmRuntimeUseReleasedAfterSuccessfulDurableStop(t *testing.T) {
 }
 
 func TestWarmRuntimeReleaseRejectsProposedStopInsteadOfDurableEvidence(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"unsaved-stop", "unsaved-terminal-stop", "latched-write-failure", "unavailable-store", "different-process", "different-runtime", "different-sequence"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			one, _, ref := warmReleaseFixture(t, false, 2)
 			if mode == "unsaved-terminal-stop" {
 				// These synthetic cleanup IDs exercise only the metadata/durable
@@ -286,6 +295,7 @@ func TestWarmRuntimeReleaseRejectsProposedStopInsteadOfDurableEvidence(t *testin
 }
 
 func TestWarmRuntimeUseRetainedWhenHostStopOmitsTerminal(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"archive", "failed-open", "service-close"} {
 		t.Run(mode, func(t *testing.T) {
 			one, req, ref := warmReleaseFixture(t, false, 2)
@@ -320,6 +330,7 @@ func TestWarmRuntimeUseRetainedWhenHostStopOmitsTerminal(t *testing.T) {
 }
 
 func TestWarmRuntimeFormat1PhysicalStopCleanupSurvivesSQLiteReceiptFailure(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"archive", "failed-open", "service-close", "recorded-cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			one, req, ref := warmReleaseFixture(t, mode == "recorded-cancel", 1)

@@ -29,6 +29,7 @@ func restartFixture(t *testing.T) (*Service, Record) {
 }
 
 func TestForceRestartIsPersistedBeforeDispatchAndClaimedOnce(t *testing.T) {
+	t.Parallel()
 	s, r := restartFixture(t)
 	op, fresh, err := s.BeginForceRestart(t.Context(), r.ID, r.ForceStop.Revision, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1})
 	if err != nil || !fresh || op.ID == "" || op.NodeID != r.Node || op.Holder != "holder" {
@@ -59,6 +60,7 @@ func TestForceRestartIsPersistedBeforeDispatchAndClaimedOnce(t *testing.T) {
 }
 
 func TestForceRestartRejectsWrongIdentityAndOldRevision(t *testing.T) {
+	t.Parallel()
 	s, r := restartFixture(t)
 	op, _, err := s.BeginForceRestart(t.Context(), r.ID, r.ForceStop.Revision, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1})
 	if err != nil {
@@ -83,6 +85,7 @@ func TestForceRestartRejectsWrongIdentityAndOldRevision(t *testing.T) {
 }
 
 func TestForceRestartConcurrentClaimsHaveOneWinner(t *testing.T) {
+	t.Parallel()
 	s, r := restartFixture(t)
 	op, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1})
 	if err != nil {
@@ -135,6 +138,7 @@ func TestForceRestartCancellationCannotReserveOrClaim(t *testing.T) {
 }
 
 func TestForceRestartTimeoutDoesNotResetItsClock(t *testing.T) {
+	t.Parallel()
 	s, r := restartFixture(t)
 	op, fresh, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1})
 	if err != nil || !fresh {
@@ -178,6 +182,7 @@ func (r *restartReplication) Propose(ctx context.Context, w ledger.ReplicatedWri
 }
 
 func TestForceRestartRefusedProposalRollsBackReservationAndClaim(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"reserve", "claim"} {
 		t.Run(stage, func(t *testing.T) {
 			s, r := restartFixture(t)
@@ -258,6 +263,7 @@ func TestForceRestartClaimIsInvisibleUntilReplicationCompletes(t *testing.T) {
 }
 
 func TestForceRestartTerminalOperationNeedsANewExplicitRequest(t *testing.T) {
+	t.Parallel()
 	s, r := restartFixture(t)
 	op, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1})
 	if err != nil {
@@ -295,6 +301,7 @@ func TestForceRestartTerminalOperationNeedsANewExplicitRequest(t *testing.T) {
 }
 
 func TestForceRestartExpiredUnobservedOperationDoesNotTrapANewRequest(t *testing.T) {
+	t.Parallel()
 	s, r := restartFixture(t)
 	op, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1})
 	if err != nil {
@@ -317,6 +324,7 @@ func TestForceRestartExpiredUnobservedOperationDoesNotTrapANewRequest(t *testing
 }
 
 func TestForceRestartVerificationRequiresTheExactLiveClaim(t *testing.T) {
+	t.Parallel()
 	s, r := restartFixture(t)
 	op, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1})
 	if err != nil {

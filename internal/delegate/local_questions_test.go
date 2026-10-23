@@ -17,6 +17,7 @@ import (
 // handlers as a node-owned child, bound to its own execution, and the
 // answer reaches the child's turn.
 func TestHubLocalChildAsksItsOwnerThroughItsOwnExecution(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "builder")
 	var questions, permissions []QuestionBinding

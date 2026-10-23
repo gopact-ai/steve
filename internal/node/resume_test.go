@@ -175,6 +175,7 @@ func TestAcceptedInputSurvivesLostAckAndPartialInputIsDiscarded(t *testing.T) {
 }
 
 func TestDropDuringReplayAndSupersedingAttachment(t *testing.T) {
+	t.Parallel()
 	m := newMemoryNode(t, "/bin/cat")
 	mux := m.connection(t)
 	s, r := openProcess(t, mux, nodewire.OpenRequest{Stream: "again"})

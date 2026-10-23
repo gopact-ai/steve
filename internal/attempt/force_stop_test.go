@@ -9,6 +9,7 @@ import (
 )
 
 func TestForceStopRequestsAreRevokedAndRevisionFenced(t *testing.T) {
+	t.Parallel()
 	s, _, r, proof, tasks := retainedFixture(t)
 	if _, err := s.RequestForceStop(t.Context(), r.ID, "owner"); err == nil {
 		t.Fatal("live task accepted force stop without revocation")
@@ -46,6 +47,7 @@ func TestForceStopRequestsAreRevokedAndRevisionFenced(t *testing.T) {
 	}
 }
 func TestForceStopUnansweredPersistsTwoTriesAcrossRestart(t *testing.T) {
+	t.Parallel()
 	s, now, r, _, tasks := retainedFixture(t)
 	_, _ = tasks.SetAside(r.TaskID, task.StateCancelled)
 	r, err := s.RequestForceStop(t.Context(), r.ID, "owner")
@@ -71,6 +73,7 @@ func TestForceStopUnansweredPersistsTwoTriesAcrossRestart(t *testing.T) {
 	}
 }
 func TestForceStopAnsweredResetsUnansweredAndBoundsRunning(t *testing.T) {
+	t.Parallel()
 	s, now, r, _, tasks := retainedFixture(t)
 	_, _ = tasks.SetAside(r.TaskID, task.StateCancelled)
 	r, err := s.RequestForceStop(t.Context(), r.ID, "owner")
@@ -99,8 +102,11 @@ func TestForceStopAnsweredResetsUnansweredAndBoundsRunning(t *testing.T) {
 	}
 }
 func TestForceStopUnprovableAndOldNodeExhaustWithoutAbort(t *testing.T) {
+	t.Parallel()
 	for _, code := range []string{"stop_unproven", "stop_unsupported", "invalid", "unavailable", "forbidden"} {
 		t.Run(code, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			s, _, r, _, tasks := retainedFixture(t)
 			_, _ = tasks.SetAside(r.TaskID, task.StateCancelled)
 			r, err := s.RequestForceStop(t.Context(), r.ID, "owner")
@@ -123,6 +129,7 @@ func TestForceStopUnprovableAndOldNodeExhaustWithoutAbort(t *testing.T) {
 }
 
 func TestForceStopRequiresProcessExitNotJustAnAnsweredCommand(t *testing.T) {
+	t.Parallel()
 	s, _, r, proof, tasks := retainedFixture(t)
 	_, _ = tasks.SetAside(r.TaskID, task.StateCancelled)
 	if _, err := s.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {
@@ -141,6 +148,7 @@ func TestForceStopRequiresProcessExitNotJustAnAnsweredCommand(t *testing.T) {
 }
 
 func TestOrdinaryStopCannotDowngradePendingForceStopProof(t *testing.T) {
+	t.Parallel()
 	s, _, r, proof, tasks := retainedFixture(t)
 	_, _ = tasks.SetAside(r.TaskID, task.StateCancelled)
 	if _, err := s.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {

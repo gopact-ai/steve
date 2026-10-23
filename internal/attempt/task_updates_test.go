@@ -46,6 +46,7 @@ func TestForTasksByUpdateListsOnlyThoseTasksMostRecentlyUpdatedFirst(t *testing.
 }
 
 func TestForTasksByUpdateSeeksTheTaskIndex(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	book, err := ledger.Open(dir, ledger.Options{})
 	if err != nil {

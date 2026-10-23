@@ -50,6 +50,7 @@ func TestOpenCancellationStopsReservedSessionWhileNativeInitializeIsPending(t *t
 }
 
 func TestOpenCancellationFencesLateNativeCreationAcrossNodeRestart(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority}
 	s := NewServer(cfg)

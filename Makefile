@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: build console test test-console e2e e2e-lab e2e-fleet e2e-autonomous
+.PHONY: build console test test-console gate gate-full e2e e2e-lab e2e-fleet e2e-autonomous
 
 # The console is a React app built into internal/readmodel/web/dist and
 # embedded into the binary; rebuild it after touching web/console.
@@ -16,6 +16,19 @@ build:
 # thousands of durable entries one at a time.
 test:
 	$(GO) test -race -timeout 30m ./cmd/... ./internal/... ./e2e/...
+
+# The local loop: gofmt, go vet and go test -race on the packages a change
+# reaches (changed packages and their reverse dependencies), plus the
+# console scripts whose imports reach it. Falls back to gate-full when the
+# reach is not computed. GATE_BASE overrides origin/master; ARGS=-n prints
+# the plan only.
+gate:
+	$(GO) run ./scripts/gate $(ARGS)
+
+# The required CI jobs (test, console, desktop, macos, fleet), run locally;
+# jobs this host cannot run are reported and left to CI.
+gate-full:
+	bash scripts/gate/full.sh
 
 test-console:
 	npm --prefix providers/mail ci --ignore-scripts --no-audit --no-fund
