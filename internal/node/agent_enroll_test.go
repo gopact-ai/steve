@@ -367,14 +367,20 @@ func TestEnrollmentUpdatesAMovedPi(t *testing.T) {
 		}
 		return NewServer(cfg), deps
 	}
-	s, deps := start(t, HarnessSpec{Adapter: "pi-acp", Command: piACP, Env: []string{"KEEP=1", "PI_ACP_PI_COMMAND=/old/place/pi"}})
+	work := t.TempDir()
+	s, deps := start(t, HarnessSpec{Adapter: "pi-acp", Command: piACP, Env: []string{"KEEP=1", "PI_ACP_PI_COMMAND=/old/place/pi"}, Slots: 2, Models: []string{"relay/m1"}, ProcessDir: work})
 	got, err := s.enrollAgentWith(t.Context(), agenttools.InstallRequest{CandidateID: "pi", ExpectedRevision: s.settings().Revision}, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"KEEP=1", "PI_ACP_PI_COMMAND=" + filepath.Join(dir, "pi")}
-	if env := s.conf().Harnesses["pi"].Env; !slices.Equal(env, want) || got.Harness != "pi" {
-		t.Fatalf("moved pi = %v (%+v)", env, got)
+	updated := s.conf().Harnesses["pi"]
+	if !slices.Equal(updated.Env, want) || got.Harness != "pi" {
+		t.Fatalf("moved pi = %v (%+v)", updated.Env, got)
+	}
+	// The rest of the entry is the operator's and stays.
+	if updated.Slots != 2 || !slices.Equal(updated.Models, []string{"relay/m1"}) || updated.ProcessDir != work || updated.Adapter != "pi-acp" || updated.Command != piACP {
+		t.Fatalf("moved pi lost its settings: %+v", updated)
 	}
 	stored, _ := os.ReadFile(s.conf().Source)
 	if !strings.Contains(string(stored), want[1]) {

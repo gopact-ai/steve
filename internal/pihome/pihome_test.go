@@ -1,13 +1,16 @@
 package pihome
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -238,30 +241,114 @@ func TestLaunchKeepsTheOperatorSource(t *testing.T) {
 
 func TestResumeUnderAnotherClassStartsFresh(t *testing.T) {
 	base := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
 	env := []string{EnvHomes + "=" + base}
-	if !Resumable(env, "s-unknown", "read") {
+	if !Resumable(env, "s-unknown", ReadOnly) {
 		t.Fatal("a session Steve has no record of must stay resumable")
 	}
-	if err := Remember(env, "s1", "write"); err != nil {
+	if err := Remember(env, "s1", Full); err != nil {
 		t.Fatal(err)
 	}
-	if !Resumable(env, "s1", "auto") {
+	if !Resumable(env, "s1", Full) {
 		t.Fatal("same class refused")
 	}
 	// The owner narrowed the policy: resuming would restore bash/edit/write.
-	if Resumable(env, "s1", "read") || Resumable(env, "s1", "deny") {
-		t.Fatal("write-class session resumable under read")
+	if Resumable(env, "s1", ReadOnly) {
+		t.Fatal("full-class session resumable under read-only")
 	}
-	if err := Remember(env, "s2", "read"); err != nil {
+	if err := Remember(env, "s2", ReadOnly); err != nil {
 		t.Fatal(err)
 	}
-	if Resumable(env, "s2", "write") || !Resumable(env, "s2", "") {
-		t.Fatal("read-class session class mismatch not seen")
+	if Resumable(env, "s2", Full) || !Resumable(env, "s2", ReadOnly) {
+		t.Fatal("read-only session class mismatch not seen")
+	}
+	// The record is replaced by rename and is never a link or half file.
+	if info, err := os.Lstat(filepath.Join(base, classes)); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Fatalf("classes.json = %v, %v", info, err)
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(base, tmpName+"*")); len(leftovers) != 0 {
+		t.Fatalf("temporary files left: %v", leftovers)
+	}
+}
+
+// A record that does not parse is moved aside, not overwritten.
+func TestCorruptClassRecordIsQuarantined(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	env := []string{EnvHomes + "=" + base}
+	if err := os.WriteFile(filepath.Join(base, classes), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Remember(env, "s1", Full); err != nil {
+		t.Fatal(err)
+	}
+	aside, _ := filepath.Glob(filepath.Join(base, classes+".corrupt-*"))
+	if len(aside) != 1 {
+		t.Fatalf("corrupt record not kept aside: %v", aside)
+	}
+	if raw, _ := os.ReadFile(aside[0]); string(raw) != "{not json" {
+		t.Fatalf("quarantined record changed: %q", raw)
+	}
+	if Resumable(env, "s1", ReadOnly) {
+		t.Fatal("record written after quarantine not used")
+	}
+}
+
+// Remember from many goroutines keeps every record (one lock, whole-file
+// rename).
+func TestRememberKeepsConcurrentRecords(t *testing.T) {
+	base := t.TempDir()
+	env := []string{EnvHomes + "=" + base}
+	var wg sync.WaitGroup
+	for i := range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := Remember(env, fmt.Sprintf("s%d", i), Full); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	unlock, _ := lockBase(base)
+	defer unlock()
+	if got := len(readClasses(base).Sessions); got != 32 {
+		t.Fatalf("records = %d, want 32", got)
+	}
+}
+
+// pi-acp's map places a session's file; one outside this class's home is
+// not resumed even without Steve's record.
+func TestResumableFollowsTheSessionMap(t *testing.T) {
+	base := t.TempDir()
+	home := t.TempDir()
+	if err := Prepare(base, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, class := range []string{Full, ReadOnly} {
+		if err := os.MkdirAll(filepath.Join(Dir(base, class), "sessions", "--w--"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	full := filepath.Join(Dir(base, Full), "sessions", "--w--", "x_s9.jsonl")
+	escape := filepath.Join(Dir(base, ReadOnly), "sessions", "..", "..", "full", "sessions", "--w--", "x_s8.jsonl")
+	own := filepath.Join(Dir(base, ReadOnly), "sessions", "--w--", "x_s7.jsonl")
+	mapped := fmt.Sprintf(`{"version":1,"sessions":{"s9":{"sessionFile":%q},"s8":{"sessionFile":%q},"s7":{"sessionFile":%q}}}`, full, escape, own)
+	if err := os.MkdirAll(filepath.Join(home, ".pi", "pi-acp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".pi", "pi-acp", "session-map.json"), []byte(mapped), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{EnvHomes + "=" + base, "HOME=" + home}
+	if Resumable(env, "s9", ReadOnly) || Resumable(env, "s8", ReadOnly) || !Resumable(env, "s7", ReadOnly) || !Resumable(env, "s9", Full) {
+		t.Fatal("session map placement not followed")
 	}
 }
 
 // The launcher, run with a fake pi, appends the read-only allowlist and
-// refuses a session file kept in the other home.
+// refuses, with a note for Steve, a session file that does not resolve
+// into its home.
 func TestWrapperPinsToolsAndRefusesTheOtherHome(t *testing.T) {
 	base := t.TempDir()
 	if err := Prepare(base, ""); err != nil {
@@ -281,19 +368,155 @@ func TestWrapperPinsToolsAndRefusesTheOtherHome(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		return strings.TrimSpace(string(out)), err
 	}
-	ro := Dir(base, ReadOnly)
-	out, err := run(ReadOnly, "--mode", "rpc", "--session", filepath.Join(ro, "sessions", "a.jsonl"))
-	if err != nil || out != "--mode rpc --session "+filepath.Join(ro, "sessions", "a.jsonl")+" --no-extensions --tools read,grep,find,ls" {
+	ro, full := Dir(base, ReadOnly), Dir(base, Full)
+	for _, dir := range []string{ro, full} {
+		if err := os.MkdirAll(filepath.Join(dir, "sessions", "--w--"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	own := filepath.Join(ro, "sessions", "--w--", "a.jsonl")
+	out, err := run(ReadOnly, "--mode", "rpc", "--session", own)
+	if err != nil || out != "--mode rpc --session "+own+" --no-extensions --tools read,grep,find,ls" {
 		t.Fatalf("read-only launch = %q, %v", out, err)
 	}
 	out, err = run(Full, "--mode", "rpc")
 	if err != nil || out != "--mode rpc --no-extensions" {
 		t.Fatalf("full launch = %q, %v", out, err)
 	}
-	// A session file from the full home under the read-only one.
-	out, err = run(ReadOnly, "--mode", "rpc", "--session", filepath.Join(Dir(base, Full), "sessions", "b.jsonl"))
-	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.ExitCode() != 3 || !strings.Contains(out, "another permission policy") {
-		t.Fatalf("cross-home resume = %q, %v", out, err)
+	link := filepath.Join(ro, "sessions", "--w--", "linked")
+	if err := os.Symlink(filepath.Join(full, "sessions", "--w--"), link); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.Symlink(filepath.Join(full, "sessions", "--w--", "f.jsonl"), filepath.Join(ro, "sessions", "--w--", "g_s5.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{
+		"other home":    filepath.Join(full, "sessions", "--w--", "b_s1.jsonl"),
+		"dot-dot":       filepath.Join(ro, "sessions", "..", "..", "full", "sessions", "--w--", "c_s2.jsonl"),
+		"linked dir":    filepath.Join(link, "d_s3.jsonl"),
+		"relative":      "sessions/--w--/e_s4.jsonl",
+		"linked file":   filepath.Join(ro, "sessions", "--w--", "g_s5.jsonl"),
+		"sessions peer": filepath.Join(ro, "sessions-x", "h_s6.jsonl"),
+	} {
+		out, err = run(ReadOnly, "--mode", "rpc", "--session", path)
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 3 || !strings.Contains(out, "another policy") {
+			t.Fatalf("%s: resume = %q, %v", name, out, err)
+		}
+	}
+	env := []string{EnvHomes + "=" + base}
+	for _, id := range []string{"s1", "s2", "s3", "s4", "s5", "s6"} {
+		if !Refused(env, id, ReadOnly) {
+			t.Fatalf("no refusal note for %s", id)
+		}
+		if Refused(env, id, ReadOnly) {
+			t.Fatalf("refusal note for %s not cleared", id)
+		}
+	}
+	if Refused(env, "a", Full) {
+		t.Fatal("refusal reported for the wrong class")
+	}
+}
+
+// pi's configuration files Steve does not prepare are removed by Launch and
+// make Enforced fail.
+func TestLaunchRemovesConfigurationPiWouldLoad(t *testing.T) {
+	base := t.TempDir()
+	if err := Prepare(base, ""); err != nil {
+		t.Fatal(err)
+	}
+	dir := Dir(base, ReadOnly)
+	for _, name := range []string{"mcp.json", "trust.json", "SYSTEM.md", "APPEND_SYSTEM.md", "AGENTS.md", "keybindings.json", "mcp-auth.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(`{"mcpServers":{"x":{"command":"touch"}}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if Enforced(dir) != "" {
+			t.Fatalf("%s: home still enforced", name)
+		}
+		if _, err := Launch([]string{EnvHomes + "=" + base}, "read"); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s survived Launch: %v", name, err)
+		}
+	}
+	for _, name := range []string{"tools", "themes", "prompts", "npm", "git"} {
+		if err := os.MkdirAll(filepath.Join(dir, name, "x"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if Enforced(dir) != "" {
+		t.Fatal("home with tools/themes/prompts/npm/git still enforced")
+	}
+	// pi's own run-time state stays.
+	for _, name := range []string{"sessions", "tmp"} {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"models-store.json", "crashes.json", "settings.json.lock"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Launch([]string{EnvHomes + "=" + base}, "read"); err != nil || Enforced(dir) != ReadOnly {
+		t.Fatalf("launch = %v, enforced %q", err, Enforced(dir))
+	}
+	for _, name := range []string{"sessions", "tmp", "models-store.json", "crashes.json", "settings.json.lock"} {
+		if _, err := os.Lstat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("%s removed: %v", name, err)
+		}
+	}
+}
+
+// A launch while another pi starts from the same home never leaves the
+// launcher or settings missing or partial: an unchanged home is left
+// alone, a changed one is replaced by rename.
+func TestLaunchNeverLeavesTheHomeHalfWritten(t *testing.T) {
+	base := t.TempDir()
+	if err := Prepare(base, ""); err != nil {
+		t.Fatal(err)
+	}
+	dir := Dir(base, ReadOnly)
+	launcher, settings := filepath.Join(dir, wrapper), filepath.Join(dir, "settings.json")
+	before, _ := os.Stat(launcher)
+	if _, err := Launch([]string{EnvHomes + "=" + base}, "read"); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.Stat(launcher); !os.SameFile(before, after) {
+		t.Fatal("an unchanged launcher was rewritten")
+	}
+	want, _ := os.ReadFile(launcher)
+	wantSettings, _ := os.ReadFile(settings)
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			// Another process changes the home; the launch repairs it.
+			_ = os.WriteFile(filepath.Join(dir, "mcp.json"), []byte("{}"), 0o600)
+			if _, err := Launch([]string{EnvHomes + "=" + base}, "read"); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	for range 2000 {
+		got, err := os.ReadFile(launcher)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("launcher read during launch: %v (%d bytes)", err, len(got))
+		}
+		got, err = os.ReadFile(settings)
+		if err != nil || !bytes.Equal(got, wantSettings) {
+			t.Fatalf("settings read during launch: %v (%d bytes)", err, len(got))
+		}
+	}
+	close(stop)
+	wg.Wait()
 }

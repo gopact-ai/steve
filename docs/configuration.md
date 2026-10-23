@@ -97,15 +97,19 @@ Steve 在 `<state>/runtimes/pi/` 下为 pi 准备 `read-only` 与 `full` 两个�
 
 每次启动 pi 时 Steve 会：
 
-- 重写所选目录的 `settings.json`，清空 `extensions/`，再检查内容（工具列表、项目信任、启动脚本、扩展目录为空）；检查不通过就不启动。
-- 让 `pi-acp` 通过该目录里的 `steve-pi` 启动 pi（`PI_ACP_PI_COMMAND`）。`steve-pi` 总是加 `--no-extensions`，只读目录里再加 `--tools read,grep,find,ls`；即使恢复的会话记录了别的工具，也只有这四个。会话文件不在本目录 `sessions/` 下时，`steve-pi` 拒绝恢复。
-- 记录每个 pi 会话是在哪一档创建的（`<state>/runtimes/pi/classes.json`）。策略换档后，原会话不再恢复，本轮在新会话中开始，回复开头会说明之前的上下文没有带入。
+- 把所选目录恢复成 Steve 准备的内容：删除 pi 会当作配置读取、但不是 Steve 写的文件和目录（`extensions/`、`mcp.json`、`trust.json`、`tools/`、`themes/`、`prompts/`、`SYSTEM.md`、`AGENTS.md` 等），`settings.json` 与启动脚本有变化时以改名方式替换。之后检查内容（工具列表、项目信任、启动脚本、技能链接、没有多余配置），检查不通过就不启动。pi 运行时自己写的会话、模型缓存和锁文件保留。
+- 让 `pi-acp` 通过该目录里的 `steve-pi` 启动 pi（`PI_ACP_PI_COMMAND`）。`steve-pi` 总是加 `--no-extensions`，只读目录里再加 `--tools read,grep,find,ls`；即使恢复的会话记录了别的工具，也只有这四个。`--session` 指向的文件解析符号链接和 `..` 后不在本目录 `sessions/` 下时，`steve-pi` 拒绝启动，Steve 改为开新会话。
+- 记录每个 pi 会话由哪一档的进程创建（`<state>/runtimes/pi/classes.json`，按改名方式写入，跨进程加锁；无法解析时移到 `classes.json.corrupt-*` 并记录日志）。恢复前还会核对 `pi-acp` 会话索引里该会话文件所在的目录。档位不符时不恢复原会话，本轮在新会话中开始，回复开头说明之前的上下文没有带入。
+
+hub 上修改 pi 的权限策略后，原档位的 pi 进程会立即关闭，正在运行的 pi 回合随之中止；下一轮在新档位的进程里开始。节点托管会话每轮各自启动进程，策略变更后原会话不再恢复。
 
 `harnesses.pi.env` 里的 `PI_ACP_PI_COMMAND` 是检测到的 `pi` 绝对路径（`steve setup` 与登记时写入；pi 换了位置时重新登记会更新它）。`env` 里自己设置的 `PI_CODING_AGENT_DIR` 不会被使用：目录总由策略决定，没有 Steve 准备的目录时 pi 不启动。
 
 仍然存在的限制：
 
-- 隔离靠工具列表，不是操作系统沙箱。以同一系统用户运行的其他进程（包括 `full` 档的 pi 自己）能在两次启动之间改动这些目录；下一次启动会重写并检查，但无法防止启动后的改动。
+- 隔离靠工具列表，不是操作系统沙箱。以同一系统用户运行的其他进程（包括 `full` 档的 pi 自己）能改动这些目录；每次启动会恢复并检查，但无法防止启动后的改动。
+- 旧式节点进程流（没有执行绑定的远端会话）不记录会话档位；`--tools` 仍然生效，跨档恢复会失败而不是开新会话。
+- 不支持 `flock` 的系统上，`classes.json` 的锁只在同一进程内有效。
 - `pi-acp` 自己仍会读 `<cwd>/.pi/settings.json`（只看是否启用技能命令）、`<cwd>/.pi/prompts` 和 `~/.pi/agent/prompts`。这些只是提示词文本和开关，不会增加工具。
 - `pi-acp` 不接 Steve 提供的 MCP 服务（包括 Steve 自己的协作工具），pi 的会话不会被提供这些工具；pi 的历史会话也不能导入。
 - `pi-acp` 固定把会话索引写在运行用户的 `~/.pi/pi-acp/session-map.json`，只记录会话 ID、工作目录和会话文件路径，不含凭据；会话内容本身在 Steve 的隔离目录里。

@@ -160,6 +160,14 @@ func (a *agent) LoadSession(_ context.Context, req *acp.LoadSessionRequest) (*ac
 // script bypasses these keyword behaviors altogether.
 func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.PromptResponse, error) {
 	input := promptText(req.Prompt)
+	// "mockenv NAME" answers with this process's NAME, so a test can see
+	// which environment the session it prompts actually runs in.
+	if name, ok := strings.CutPrefix(strings.TrimSpace(input), "mockenv "); ok {
+		if err := a.say(ctx, req.SessionID, "env "+name+"="+os.Getenv(strings.TrimSpace(name))); err != nil {
+			return nil, err
+		}
+		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+	}
 	if handled, err := a.workspaceFilesPrompt(ctx, req, input); handled {
 		if err != nil {
 			return nil, err

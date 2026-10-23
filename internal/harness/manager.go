@@ -77,6 +77,9 @@ type PolicyTransports interface {
 
 type Manager struct {
 	remotePermissions map[string]string
+	// piClasses is the pi home class each pi host's process was started
+	// with; a host whose class no longer matches its policy is closed.
+	piClasses         map[*acphost.Host]string
 	pluginRefs        map[*acphost.Host]plugins.RuntimeRef
 	pluginRuntimes    PluginRuntimeProvider
 	suspended         map[string]bool
@@ -128,13 +131,18 @@ func (m *Manager) Publish(prepared *Manager) {
 	policies := maps.Clone(prepared.remotePermissions)
 	prepared.mu.Unlock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.configs = configs
 	m.remotePermissions = policies
+	stale := m.stalePiHostsLocked()
+	m.mu.Unlock()
+	closeHosts(stale)
 }
 
 // Set adds or replaces one harness's configuration at runtime. Hosts
-// already running the old configuration keep it until they restart.
+// already running the old configuration keep it until they restart, except
+// pi's: pi has no per-call permission check, so a pi process started under
+// another class than its policy now needs is closed at once (a turn it is
+// running stops) and the next open starts one in the right home.
 func (m *Manager) Set(id string, cfg Config) error {
 	if id == "" || cfg.Command == "" {
 		return fmt.Errorf("harness id and command are required")
@@ -143,8 +151,10 @@ func (m *Manager) Set(id string, cfg Config) error {
 		return fmt.Errorf("harness %q: %w", id, err)
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.configs[id] = cloneConfig(cfg)
+	stale := m.stalePiHostsLocked()
+	m.mu.Unlock()
+	closeHosts(stale)
 	return nil
 }
 
@@ -216,23 +226,30 @@ func (m *Manager) OpenSession(ctx context.Context, at Placement, upstreamID, wor
 			return nil, fmt.Errorf("create agent workspace: %w", err)
 		}
 	}
-	host, err := m.host(at)
+	host, class, err := m.hostWithClass(at)
 	if err != nil {
 		return nil, err
 	}
 	// A pi session keeps the tools of the home it was opened under; one
-	// opened under the other policy class is not resumed but started anew.
-	piEnv, piPolicy, isPi := m.localPi(at)
+	// opened under the other class is not resumed but started anew, in the
+	// class of the process that actually runs it.
+	piEnv, isPi := m.localPi(at)
+	isPi = isPi && class != ""
 	reset := ""
-	if isPi && upstreamID != "" && !pihome.Resumable(piEnv, upstreamID, piPolicy) {
+	if isPi && upstreamID != "" && !pihome.Resumable(piEnv, upstreamID, class) {
 		upstreamID, reset = "", ContextResetPolicy
 	}
 	id, generation, err := host.OpenSession(ctx, acp.SessionID(upstreamID), acphost.SessionConfig{Workdir: workdir, MCPServers: servers})
+	if err != nil && isPi && upstreamID != "" && pihome.Refused(piEnv, upstreamID, class) {
+		// The launcher refused a session file outside this class's home.
+		upstreamID, reset = "", ContextResetPolicy
+		id, generation, err = host.OpenSession(ctx, "", acphost.SessionConfig{Workdir: workdir, MCPServers: servers})
+	}
 	if err != nil {
 		return nil, err
 	}
 	if isPi {
-		if err := pihome.Remember(piEnv, string(id), piPolicy); err != nil {
+		if err := pihome.Remember(piEnv, string(id), class); err != nil {
 			_ = host.CloseSession(context.WithoutCancel(ctx), id)
 			return nil, fmt.Errorf("record pi session policy: %w", err)
 		}
@@ -365,31 +382,55 @@ func (m *Manager) Restart() error {
 }
 
 func (m *Manager) host(at Placement) (*acphost.Host, error) {
+	host, _, err := m.hostWithClass(at)
+	return host, err
+}
+
+// hostWithClass is host and, for pi, the home class its process was
+// started with ("" for other harnesses).
+func (m *Manager) hostWithClass(at Placement) (*acphost.Host, string, error) {
 	if err := RetiredError(at.Harness); err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	var stale *acphost.Host
+	defer func() {
+		if stale != nil {
+			stale.Close()
+		}
+	}()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.suspended["*"] || m.suspended[at.Node] {
-		return nil, fmt.Errorf("service is restarting")
+		return nil, "", fmt.Errorf("service is restarting")
 	}
 	if m.stopped {
-		return nil, fmt.Errorf("harness manager is stopped")
+		return nil, "", fmt.Errorf("harness manager is stopped")
 	}
 	key := at.key()
-	if host := m.hosts[key]; host != nil {
-		return host, nil
-	}
 	cfg, ok := m.configs[at.Harness]
-	if !ok && at.Node == "" {
-		return nil, fmt.Errorf("unknown harness %q", at.Harness)
-	}
 	if at.Node != "" {
 		cfg.Permission = m.remotePermission(at.Harness)
 	}
+	class := ""
+	if at.Harness == Pi {
+		class = pihome.Class(cfg.Permission)
+	}
+	if host := m.hosts[key]; host != nil {
+		if class == "" || m.piClasses[host] == class {
+			return host, class, nil
+		}
+		// Started under the other class (the policy changed since): never
+		// reused, whatever closing it costs a turn it runs.
+		stale = host
+		delete(m.hosts, key)
+		delete(m.piClasses, host)
+	}
+	if !ok && at.Node == "" {
+		return nil, "", fmt.Errorf("unknown harness %q", at.Harness)
+	}
 	broker, err := permission.New(cfg.Permission)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	hostCfg := acphost.Config{
 		WorkspaceFiles: true,
@@ -397,12 +438,12 @@ func (m *Manager) host(at Placement) (*acphost.Host, error) {
 	}
 	if at.Node == "" {
 		if hostCfg.Env, err = envForPolicy(cfg.Env, at.Harness, cfg.Permission); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
 	if at.Node != "" {
 		if m.remote == nil {
-			return nil, fmt.Errorf("agent is placed on node %q but no nodes are configured", at.Node)
+			return nil, "", fmt.Errorf("agent is placed on node %q but no nodes are configured", at.Node)
 		}
 		// The command line is the node's own fact; the hub only says which
 		// harness it wants, and the node starts it from its own config.
@@ -414,7 +455,42 @@ func (m *Manager) host(at Placement) (*acphost.Host, error) {
 	}
 	host := acphost.New(hostCfg)
 	m.hosts[key] = host
-	return host, nil
+	if class != "" {
+		if m.piClasses == nil {
+			m.piClasses = map[*acphost.Host]string{}
+		}
+		m.piClasses[host] = class
+	}
+	return host, class, nil
+}
+
+// stalePiHostsLocked takes out the pi hosts whose process was started
+// under another class than their policy now needs, for the caller to close
+// once the mutex is released.
+func (m *Manager) stalePiHostsLocked() []*acphost.Host {
+	var stale []*acphost.Host
+	for key, host := range m.hosts {
+		started, ok := m.piClasses[host]
+		if !ok {
+			continue
+		}
+		policy := m.configs[Pi].Permission
+		if strings.Contains(key, "/") {
+			policy = m.remotePermission(Pi)
+		}
+		if pihome.Class(policy) != started {
+			stale = append(stale, host)
+			delete(m.hosts, key)
+			delete(m.piClasses, host)
+		}
+	}
+	return stale
+}
+
+func closeHosts(hosts []*acphost.Host) {
+	for _, host := range hosts {
+		host.Close()
+	}
 }
 
 // ErrTurnCanceled is re-exported from acphost so coordinators can recognize

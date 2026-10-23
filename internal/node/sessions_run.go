@@ -155,8 +155,8 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	}
 	// pi restores the tools a session recorded when it resumes; one opened
 	// under the other permission class starts anew instead.
-	policy, reset := piPolicy(req.Harness, hostCfg), ""
-	if policy != "" && upstream != "" && !pihome.Resumable(hostCfg.Env, upstream, policy) {
+	class, reset := piClass(req.Harness, hostCfg), ""
+	if class != "" && upstream != "" && !pihome.Resumable(hostCfg.Env, upstream, class) {
 		upstream, reset = "", harness.ContextResetPolicy
 	}
 	starting := one.copyLocked()
@@ -167,6 +167,11 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 		return one.stateAfterFailedOpen(err)
 	}
 	native, generation, openErr := host.OpenSession(openCtx, acp.SessionID(upstream), acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
+	if openErr != nil && class != "" && upstream != "" && pihome.Refused(hostCfg.Env, upstream, class) {
+		// The launcher refused a session file outside this class's home.
+		reset = harness.ContextResetPolicy
+		native, generation, openErr = host.OpenSession(openCtx, "", acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
+	}
 	one.recording.Wait()
 	httpMCP := false
 	if openErr == nil {
@@ -179,8 +184,8 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	} else {
 		s.forgetCapabilities(req.Harness)
 	}
-	if openErr == nil && policy != "" {
-		openErr = pihome.Remember(hostCfg.Env, string(native), policy)
+	if openErr == nil && class != "" {
+		openErr = pihome.Remember(hostCfg.Env, string(native), class)
 	}
 	one.mu.Lock()
 	next := one.copyLocked()
@@ -638,14 +643,15 @@ func (s *SessionService) processesStopped() bool {
 	return true
 }
 
-// piPolicy is the permission policy a pi session runs under, or "" when the
-// harness is not pi.
-func piPolicy(harnessID string, cfg acphost.Config) string {
+// piClass is the pi home class a session's process starts with, or ""
+// when the harness is not pi. A node-owned session has its own process,
+// started under the policy of its open.
+func piClass(harnessID string, cfg acphost.Config) string {
 	if harnessID != harness.Pi {
 		return ""
 	}
 	if cfg.Permission == nil {
-		return permission.PolicyRead
+		return pihome.Class(permission.PolicyRead)
 	}
-	return cfg.Permission.Policy()
+	return pihome.Class(cfg.Permission.Policy())
 }

@@ -57,14 +57,14 @@ type ContextResetter interface {
 	ContextReset() string
 }
 
-// localPi is the environment and policy of a pi started on this host, and
-// whether at is one.
-func (m *Manager) localPi(at Placement) ([]string, string, bool) {
+// localPi is the environment of a pi started on this host, and whether at
+// is one.
+func (m *Manager) localPi(at Placement) ([]string, bool) {
 	if at.Harness != Pi || at.Node != "" {
-		return nil, "", false
+		return nil, false
 	}
 	m.mu.Lock()
 	cfg := m.configs[at.Harness]
 	m.mu.Unlock()
-	return cfg.Env, cfg.Permission, true
+	return cfg.Env, true
 }
