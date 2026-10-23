@@ -98,13 +98,13 @@ jobs:
           echo "node=$(node --version)" >> "$GITHUB_OUTPUT"
           echo "playwright=$(node -p "require('./web/console/package-lock.json').packages['node_modules/playwright-core'].version")" >> "$GITHUB_OUTPUT"
           echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
-      # node_modules exactly as `npm ci` leaves it for this lockfile and Node.
+      # node_modules exactly as `npm ci` leaves it for this manifest, lockfile and Node.
       - name: Restore web/console/node_modules
         id: modules
         uses: actions/cache@v4
         with:
           path: web/console/node_modules
-          key: console-modules-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.versions.outputs.node }}-${{ hashFiles('web/console/package-lock.json') }}
+          key: console-modules-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.versions.outputs.node }}-${{ hashFiles('web/console/package.json', 'web/console/package-lock.json') }}
       - if: steps.modules.outputs.cache-hit != 'true'
         run: npm ci
         working-directory: web/console
