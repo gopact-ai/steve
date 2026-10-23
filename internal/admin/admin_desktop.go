@@ -258,7 +258,7 @@ func planDesktopAgents(text i18n.Catalog, requested []consoleapi.DesktopEnrollAg
 			return desktopAgentPlan{}, err
 		}
 		if configured, exists := harnesses[item.Harness]; exists {
-			if configured.Adapter != tool.Adapter || tool.Adapter == "" && (configured.Command != tool.Command || !slices.Equal(configured.Args, tool.Args)) {
+			if configured.Adapter != tool.Adapter || tool.Adapter == "" && (configured.Command != tool.Command || !slices.Equal(configured.Args, tool.Args)) || !slices.Equal(configured.Env, tool.Env) {
 				return desktopAgentPlan{}, text.Errorf(i18n.AdminDesktopHarnessDiffers, item.Name)
 			}
 		} else {

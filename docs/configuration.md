@@ -69,9 +69,9 @@ Agent 是执行配置，不拥有独立项目目录。偏好模型和选项必�
 
 | 键 | 类型 | 默认 | 作用 | 示例 |
 |---|---|---|---|---|
-| `adapter` | string | `""` | 内置清单里的适配器名（`codex-acp`、`claude-agent-acp`）。steve 按钉死的版本取到缓存、校验后运行；与 `command` 二选一，不能并存，也不接受 `args` | `"codex-acp"` |
+| `adapter` | string | `""` | 内置清单里的适配器名（`codex-acp`、`claude-agent-acp`、`pi-acp`）。steve 按钉死的版本取到缓存、校验后运行；与 `command` 二选一，不能并存，也不接受 `args` | `"codex-acp"` |
 | `command` | string | 与 `adapter` 二选一，必须给一个 | 自己预装的适配器可执行文件；hub 直接启动，不做 shell 展开 | `"/home/me/.local/bin/codex-acp"` |
-| `args` | string[] | `[]` | 直接传给命令的参数；`adapter` 不接受 | `[]`；kimi 为 `["acp"]` |
+| `args` | string[] | `[]` | 直接传给命令的参数；`adapter` 不接受 | `[]` |
 | `process_dir` | string | `""`（hub 进程当前目录） | harness 进程启动目录；会话工作目录另由项目决定 | `"/home/me/steve-runtime"` |
 | `env` | string[] | `[]`（继承进程环境，再加入默认的隔离 home 设置） | 追加或覆盖进程环境，格式 `KEY=value` | `["PATH=/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin"]` |
 | `permission` | string | `"read"` | ACP 工具权限策略，见下表 | `"write"` |
@@ -84,6 +84,20 @@ Agent 是执行配置，不拥有独立项目目录。偏好模型和选项必�
 | `always_allow` | 放行，优先选择 allow-always。 |
 | `deny` | 拒绝工具权限请求。 |
 
+### pi
+
+pi 不为工具调用请求授权，`pi-acp` 也不把文件读写和终端交给 Steve，所以上表的逐次审批对 pi 不适用。Steve 改为控制 pi 能加载哪些工具：
+
+| 策略 | pi 的工具 |
+|---|---|
+| `read`、`deny` | 只有 `read`、`grep`、`find`、`ls`；不能写文件或运行命令 |
+| `write`、`auto`、`always_allow` | pi 默认工具（`read`、`bash`、`edit`、`write`），执行前不询问 |
+
+Steve 在 `<state>/runtimes/pi/` 下为 pi 准备 `read-only` 与 `full` 两个隔离目录（`PI_CODING_AGENT_DIR`），按会话的策略选用。两者都从 `~/.pi/agent/settings.json` 继承模型选择（`defaultProvider`、`defaultModel`、`defaultThinkingLevel`、`enabledModels`、`modelThinkingLevels`），不继承扩展、包、主题和技能路径；`auth.json` 与 `models.json` 以符号链接指向原文件，不复制密钥。两者都设置 `defaultProjectTrust: "never"`，工作目录里的 `.pi` 设置、MCP 与扩展不会加载。Steve 下发的技能放在两者共用的 `skills/` 目录。
+
+`harnesses.pi.env` 里的 `PI_ACP_PI_COMMAND` 是登记时检测到的 `pi` 路径。自己设置了 `PI_CODING_AGENT_DIR` 时，Steve 不替换它；该目录不是 Steve 准备的只读目录时，只读策略下 pi 不会启动。
+
+`pi-acp` 不接 Steve 提供的 MCP 服务（包括 Steve 自己的协作工具），pi 的会话不会被提供这些工具；pi 的历史会话也不能导入。`pi-acp` 固定把会话索引写在运行用户的 `~/.pi/pi-acp/session-map.json`，只记录会话 ID、工作目录和会话文件路径，不含凭据；会话内容本身在 Steve 的隔离目录里。
 ## ACP 工作区文本文件
 
 Unix 的本机与节点托管会话支持 `fs/read_text_file`、`fs/write_text_file`。请求只在原活跃回合受理，路径固定在原工作区内，写入遵循工具审批。仅处理普通 UTF-8 文本，不跟随写入目标的符号链接，不覆盖多硬链接文件。

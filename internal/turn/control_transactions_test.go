@@ -297,14 +297,14 @@ func TestModelPreferenceRefusalDoesNotChangeTheNativeModel(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			catalog, _ := agent.NewCatalog(map[string]agent.Config{"grok": {Harness: "grok", Default: true}})
+			catalog, _ := agent.NewCatalog(map[string]agent.Config{"pi": {Harness: "pi", Default: true}})
 			runner := &recoveryConfigurable{fakeRunner: &fakeRunner{}, settings: view.Settings{Model: "m1"}}
 			if failure == "empty readback" {
 				runner.settings.Model = ""
 			}
-			rt := &selectorRuntime{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"grok": runner.fakeRunner}}, runner: runner}
+			rt := &selectorRuntime{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"pi": runner.fakeRunner}}, runner: runner}
 			c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), rt, time.Minute, onLedger(book))
-			if err := store.SetPreferences("chat", "grok", map[string]string{"model": runner.settings.Model}); err != nil {
+			if err := store.SetPreferences("chat", "pi", map[string]string{"model": runner.settings.Model}); err != nil {
 				t.Fatal(err)
 			}
 			ctx := t.Context()
@@ -323,7 +323,7 @@ func TestModelPreferenceRefusalDoesNotChangeTheNativeModel(t *testing.T) {
 				t.Fatal("refused model change reported success")
 			}
 			if failure == "native update" || failure == "ignored update" || failure == "empty readback" {
-				if store.Preferences("chat", "grok")["model"] != "m2" {
+				if store.Preferences("chat", "pi")["model"] != "m2" {
 					t.Fatal("uncertain native update lost the admitted model preference")
 				}
 				if _, err := handle(c, t.Context(), "try the selected model"); err == nil || len(runner.seen()) != 0 {
@@ -334,7 +334,7 @@ func TestModelPreferenceRefusalDoesNotChangeTheNativeModel(t *testing.T) {
 				if _, err := handle(c, t.Context(), "try again"); err != nil || runner.Settings().Model != "m2" || len(runner.seen()) != 1 {
 					t.Fatalf("next input did not recover the admitted model: %v", err)
 				}
-			} else if runner.Settings().Model != "m1" || store.Preferences("chat", "grok")["model"] != "m1" {
+			} else if runner.Settings().Model != "m1" || store.Preferences("chat", "pi")["model"] != "m1" {
 				t.Fatal("failed admission left the live model ahead of the durable preference")
 			}
 		})

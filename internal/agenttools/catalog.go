@@ -104,12 +104,13 @@ type Enrollment struct {
 
 type Options struct{ Path, HomeDir string }
 
+// supported are the agent tools Steve runs. Each is driven through a pinned
+// ACP adapter (internal/adapter); the tool's own executable is what
+// discovery looks for.
 var supported = []Candidate{
 	{ID: "codex", Name: "Codex", Harness: "codex", Adapter: "codex-acp"},
 	{ID: "claude", Name: "Claude Code", Harness: "claude-code", Adapter: "claude-agent-acp"},
-	{ID: "grok", Name: "Grok", Harness: "grok"},
-	{ID: "dsh", Name: "DeepSeek Harness", Harness: "dsh"},
-	{ID: "kimi", Name: "Kimi Code", Harness: "kimi"},
+	{ID: "pi", Name: "pi", Harness: "pi", Adapter: "pi-acp"},
 }
 
 func Catalog() []Candidate { return slices.Clone(supported) }
@@ -189,6 +190,8 @@ func Executable(path string) bool {
 type Declaration struct {
 	Harness, Adapter, Command string
 	Args                      []string
+	// Env is what the adapter needs to find the tool it drives.
+	Env []string
 }
 
 func Registration(candidate Candidate) (Declaration, error) {
@@ -203,16 +206,13 @@ func Registration(candidate Candidate) (Declaration, error) {
 		return Declaration{}, fmt.Errorf("%w: %s needs %s", ErrUnavailable, canonical.Name, strings.Join(candidate.Requires, ", "))
 	}
 	out := Declaration{Harness: canonical.Harness, Adapter: canonical.Adapter}
-	if canonical.Adapter == "" {
-		out.Command = candidate.Executable
-		switch candidate.ID {
-		case "grok":
-			out.Args = []string{"agent", "--no-leader", "stdio"}
-		case "kimi":
-			out.Args = []string{"acp"}
-		case "dsh":
-			out.Args = []string{"--profile", "acp"}
-		}
+	if canonical.ID == "pi" {
+		// pi-acp starts `pi --mode rpc`; give it the pi this machine found
+		// rather than whatever a service's PATH would resolve.
+		out.Env = []string{PiCommandEnv + "=" + candidate.Executable}
 	}
 	return out, nil
 }
+
+// PiCommandEnv is the variable pi-acp reads for the pi executable.
+const PiCommandEnv = "PI_ACP_PI_COMMAND"

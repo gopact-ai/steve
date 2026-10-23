@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/adapter"
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
@@ -117,19 +118,14 @@ func TestClusterPeerDesktopEnrollmentRunsTaskInDefaultWorkspace(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build isolated ACP fixture: %v %s", err, output)
 	}
-	tools := filepath.Join(dir, "tools")
-	if err := os.Mkdir(tools, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(bin, filepath.Join(tools, "grok")); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PATH", piTools(t, dir)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HOME", dir)
 	options, installed := testPeerOptions(t, filepath.Join(dir, "app"), nil)
+	// The worker's pinned pi-acp is already cached; it is the mock agent.
+	cachePeerAdapter(t, options, "pi-acp", "#!/bin/sh\nexec '"+bin+"' \"$@\"\n")
 	peer := StartTestPeer(t, options)
 	WaitPeerReady(t, peer)
-	status, body := PeerRequest(t, peer, http.MethodPost, "/console/desktop/agents", consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}})
+	status, body := PeerRequest(t, peer, http.MethodPost, "/console/desktop/agents", consoleapi.DesktopEnrollRequest{AgentIDs: []string{"pi"}})
 	if status != http.StatusOK {
 		t.Fatalf("register selected local fixture: %d %s", status, body)
 	}
@@ -148,7 +144,7 @@ func TestClusterPeerDesktopEnrollmentRunsTaskInDefaultWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if declaration.Agents["grok"].Node != installed.NodeID || declaration.Projects["workspace"].Home.Node != installed.NodeID {
+	if declaration.Agents["pi"].Node != installed.NodeID || declaration.Projects["workspace"].Home.Node != installed.NodeID {
 		t.Fatal("first task did not retain explicit physical execution/workspace identity")
 	}
 	workerData, err := cluster.ReadClusterPrivate(peer.Config.WorkerConfigFile)
@@ -175,19 +171,14 @@ func TestClusterPeerDesktopEnrollmentKeepsTheNameTheOwnerChose(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build isolated ACP fixture: %v %s", err, output)
 	}
-	tools := filepath.Join(dir, "tools")
-	if err := os.Mkdir(tools, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(bin, filepath.Join(tools, "grok")); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PATH", piTools(t, dir)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HOME", dir)
 	options, installed := testPeerOptions(t, filepath.Join(dir, "app"), nil)
+	// The worker's pinned pi-acp is already cached; it is the mock agent.
+	cachePeerAdapter(t, options, "pi-acp", "#!/bin/sh\nexec '"+bin+"' \"$@\"\n")
 	peer := StartTestPeer(t, options)
 	WaitPeerReady(t, peer)
-	request := consoleapi.DesktopEnrollRequest{Agents: []consoleapi.DesktopEnrollAgent{{CandidateID: "grok", AgentID: "scout", About: "代码审查", Default: true}}}
+	request := consoleapi.DesktopEnrollRequest{Agents: []consoleapi.DesktopEnrollAgent{{CandidateID: "pi", AgentID: "scout", About: "代码审查", Default: true}}}
 	status, body := PeerRequest(t, peer, http.MethodPost, "/console/desktop/agents", request)
 	if status != http.StatusOK {
 		t.Fatalf("register the chosen local tool: %d %s", status, body)
@@ -207,10 +198,10 @@ func TestClusterPeerDesktopEnrollmentKeepsTheNameTheOwnerChose(t *testing.T) {
 	if !ok {
 		t.Fatalf("the chosen name was not registered: %v", declaration.Agents)
 	}
-	if agent.Node != installed.NodeID || agent.Harness != "grok" || agent.About != "代码审查" || !agent.Default {
+	if agent.Node != installed.NodeID || agent.Harness != "pi" || agent.About != "代码审查" || !agent.Default {
 		t.Fatalf("placement, use or default lost in enrollment: %+v", agent)
 	}
-	if _, taken := declaration.Agents["grok"]; taken {
+	if _, taken := declaration.Agents["pi"]; taken {
 		t.Fatal("a renamed agent must not also hold the tool's own ID")
 	}
 }
@@ -266,4 +257,42 @@ func TestClusterPeerKeepsItsReplicaWhileItsApplicationCannotBeBuilt(t *testing.T
 		t.Fatal(err)
 	}
 	WaitPeerReady(t, peer)
+}
+
+// piTools is a directory holding pi and the Node.js runtime pi-acp needs.
+func piTools(t *testing.T, dir string) string {
+	t.Helper()
+	tools := filepath.Join(dir, "tools")
+	if err := os.MkdirAll(tools, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pi", "node", "npm"} {
+		if err := os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return tools
+}
+
+// cachePeerAdapter places a verified installation of the pinned adapter in
+// the peer's worker cache, so enrollment reaches no registry.
+func cachePeerAdapter(t *testing.T, options cluster.PeerOptions, name, script string) {
+	t.Helper()
+	cfg, err := cluster.LoadClusterPeerConfig(options.ClusterPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := adapter.Catalog[name]
+	installed := filepath.Join(cfg.DataDir, "node", "adapters", name+"@"+pin.Version)
+	command := filepath.Join(installed, pin.Bin)
+	if err := os.MkdirAll(filepath.Dir(command), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker, _ := json.Marshal(map[string]string{"package": pin.Package, "version": pin.Version, "integrity": pin.Integrity})
+	if err := os.WriteFile(filepath.Join(installed, ".steve-adapter.json"), marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }

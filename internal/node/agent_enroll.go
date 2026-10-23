@@ -111,7 +111,7 @@ func (s *Server) enrollAgentWith(ctx context.Context, req agenttools.InstallRequ
 			return agenttools.Enrollment{}, agenttools.ErrConfigured
 		}
 	}
-	h := HarnessSpec{Adapter: declared.Adapter, Command: declared.Command, Args: declared.Args}
+	h := HarnessSpec{Adapter: declared.Adapter, Command: declared.Command, Args: declared.Args, Env: declared.Env}
 	if declared.Adapter != "" {
 		installed, err := deps.installer.Ensure(ctx, declared.Adapter)
 		if err != nil {
@@ -208,7 +208,7 @@ func verifyEnrollmentCandidate(selected agenttools.Candidate, discover func() []
 }
 
 func matchesEnrolledTool(existing HarnessSpec, declared agenttools.Declaration) bool {
-	if existing.Adapter != declared.Adapter {
+	if existing.Adapter != declared.Adapter || !slices.Equal(existing.Env, declared.Env) {
 		return false
 	}
 	if declared.Adapter != "" {

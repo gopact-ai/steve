@@ -358,11 +358,8 @@ func StarterFeishu(feishu Feishu) *Config {
 			"claude": {
 				Aliases: []string{"claude"}, Harness: "claude-code",
 			},
-			"grok": {
-				Aliases: []string{"grok", "grok-build"}, Harness: "grok",
-			},
-			"kimi": {
-				Aliases: []string{"kimi", "kimi-code"}, Harness: "kimi",
+			"pi": {
+				Aliases: []string{"pi"}, Harness: "pi",
 			},
 		},
 		Projects: map[string]Project{
@@ -375,11 +372,9 @@ func StarterFeishu(feishu Feishu) *Config {
 			"claude-code": {
 				Adapter: "claude-agent-acp", Permission: PermissionRead,
 			},
-			"grok": {
-				Command: "grok", Args: []string{"agent", "--no-leader", "stdio"}, Permission: PermissionRead,
-			},
-			"kimi": {
-				Command: "kimi", Args: []string{"acp"}, Permission: PermissionRead,
+			// pi-acp starts the pi on PATH unless PI_ACP_PI_COMMAND names one.
+			"pi": {
+				Adapter: "pi-acp", Permission: PermissionRead,
 			},
 		},
 		MCPServers: map[string]MCPServer{},

@@ -198,6 +198,7 @@ const (
 	AgentNodeDown             Key = "agent_node_down"
 	AgentNodeUnknown          Key = "agent_node_unknown"
 	AgentHarnessMissing       Key = "agent_harness_missing"
+	AgentHarnessRetired       Key = "agent_harness_retired"
 	AgentDiskFull             Key = "agent_disk_full"
 	AgentModelMissing         Key = "agent_model_missing"
 	AgentBadRequirement       Key = "agent_bad_requirement"

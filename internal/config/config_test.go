@@ -90,27 +90,52 @@ func TestStarterDefaultsToRead(t *testing.T) {
 	}
 }
 
-func TestStarterIncludesGrokAndKimi(t *testing.T) {
+func TestStarterOffersExactlyTheSupportedTools(t *testing.T) {
 	cfg := Starter("app", "secret", "ou_user")
-	for _, id := range []string{"grok", "kimi"} {
-		if _, ok := cfg.Agents[id]; !ok {
-			t.Fatalf("missing agent %q", id)
-		}
-		if _, ok := cfg.Harnesses[id]; !ok {
-			t.Fatalf("missing harness %q", id)
+	want := map[string]struct{ harness, adapter string }{"codex": {"codex", "codex-acp"}, "claude": {"claude-code", "claude-agent-acp"}, "pi": {"pi", "pi-acp"}}
+	if len(cfg.Agents) != len(want) || len(cfg.Harnesses) != len(want) {
+		t.Fatalf("starter agents %v harnesses %v", cfg.Agents, cfg.Harnesses)
+	}
+	for id, w := range want {
+		if cfg.Agents[id].Harness != w.harness || cfg.Harnesses[w.harness].Adapter != w.adapter || cfg.Harnesses[w.harness].Command != "" {
+			t.Fatalf("%s = %#v %#v", id, cfg.Agents[id], cfg.Harnesses[w.harness])
 		}
 	}
-	if cfg.Agents["grok"].Harness != "grok" || cfg.Harnesses["grok"].Command != "grok" {
-		t.Fatalf("grok = %#v %#v", cfg.Agents["grok"], cfg.Harnesses["grok"])
+}
+
+// An installation from before Kimi Code, Grok and DeepSeek Harness were
+// retired still loads: its agents and tools stay listed for their owner
+// to remove, and nothing about them is rewritten.
+func TestConfigWithARetiredKimiAgentStillLoads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	raw := `{
+  "agents": {
+    "codex": {"aliases": ["codex"], "harness": "codex", "default": true},
+    "kimi": {"aliases": ["kimi", "kimi-code"], "harness": "kimi"}
+  },
+  "harnesses": {
+    "codex": {"adapter": "codex-acp", "permission": "read"},
+    "kimi": {"command": "kimi", "args": ["acp"], "permission": "read"}
+  },
+  "projects": {"workspace": {"home": {"path": "` + filepath.Join(filepath.Dir(path), "work") + `"}}},
+  "gateway": {"prompt_timeout": "10m", "state_path": "` + filepath.Join(filepath.Dir(path), "state.json") + `"}
+}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("config with a kimi agent failed to load: %v", err)
 	}
 	if cfg.Agents["kimi"].Harness != "kimi" || cfg.Harnesses["kimi"].Command != "kimi" {
-		t.Fatalf("kimi = %#v %#v", cfg.Agents["kimi"], cfg.Harnesses["kimi"])
+		t.Fatalf("kimi entries were not kept: %#v %#v", cfg.Agents["kimi"], cfg.Harnesses["kimi"])
 	}
-	if got := cfg.Harnesses["grok"].Args; len(got) != 3 || got[0] != "agent" || got[2] != "stdio" {
-		t.Fatalf("grok args = %#v", got)
+	catalog, err := cfg.AgentCatalog()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := cfg.Harnesses["kimi"].Args; len(got) != 1 || got[0] != "acp" {
-		t.Fatalf("kimi args = %#v", got)
+	if _, ok := catalog.Resolve("kimi"); !ok {
+		t.Fatal("kimi agent is not listed, so its owner cannot see or remove it")
 	}
 }
 

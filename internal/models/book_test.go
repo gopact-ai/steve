@@ -27,7 +27,7 @@ func TestBookRemembersAcrossRestarts(t *testing.T) {
 	}
 	first.Observe(Observation{Harness: "codex", Current: "GPT 5", Available: []string{"GPT 5", "GPT 5 mini"}, Source: "session"})
 	first.Observe(Observation{Node: "node-a", Harness: "codex", Current: "GPT 5 mini", Source: "probe"})
-	first.Observe(Observation{Node: "node-a", Harness: "kimi", Source: "probe"})
+	first.Observe(Observation{Node: "node-a", Harness: "pi", Source: "probe"})
 
 	second := New()
 	if err := second.Persist(doc); err != nil {
@@ -37,12 +37,12 @@ func TestBookRemembersAcrossRestarts(t *testing.T) {
 	if !ok || hub.Current != "GPT 5" || len(hub.Available) != 2 || hub.At.IsZero() {
 		t.Fatalf("hub codex = %+v ok=%v", hub, ok)
 	}
-	if got := second.All(); len(got) != 3 || got[0].Node != "" || got[1].Harness != "codex" || got[2].Harness != "kimi" {
+	if got := second.All(); len(got) != 3 || got[0].Node != "" || got[1].Harness != "codex" || got[2].Harness != "pi" {
 		t.Fatalf("all = %+v", got)
 	}
 	// A harness that tells nothing is still on record as asked.
-	if o, ok := second.Get("node-a", "kimi"); !ok || o.Current != "" || o.Source != "probe" {
-		t.Fatalf("kimi = %+v ok=%v", o, ok)
+	if o, ok := second.Get("node-a", "pi"); !ok || o.Current != "" || o.Source != "probe" {
+		t.Fatalf("pi = %+v ok=%v", o, ok)
 	}
 	later := time.Now().Add(time.Minute)
 	second.Observe(Observation{Node: "node-a", Harness: "codex", Current: "GPT 5", Source: "session", At: later})

@@ -17,7 +17,10 @@ import (
 )
 
 func (s *SessionService) prepareSessionHost(ctx context.Context, id, resumeRuntime string, req *nodewire.SessionRequest, spec HarnessSpec, broker *permission.Broker) (acphost.Config, string, error) {
-	cfg := s.hostConfig(req.Harness, spec, broker)
+	cfg, err := s.hostConfig(req.Harness, spec, broker)
+	if err != nil {
+		return cfg, "", err
+	}
 	instructions := ""
 	if req.NativeImport != nil {
 		if req.NativeImport.ID != req.Binding.NativeImportID {

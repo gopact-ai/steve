@@ -137,7 +137,7 @@ func repairCoordinator(t *testing.T, opts ...testOption) (*Coordinator, *fakeSup
 	t.Helper()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"codex":   {Harness: "codex", Default: true},
-		"kimi":    {Harness: "kimi", Node: "node-a"},
+		"pi":      {Harness: "pi", Node: "node-a"},
 		"builder": {Harness: "codex", Node: "node-a"},
 	})
 	if err != nil {
@@ -152,7 +152,7 @@ func repairCoordinator(t *testing.T, opts ...testOption) (*Coordinator, *fakeSup
 	nodes := &flipNodes{statuses: []node.Status{{
 		Name: "node-a", Up: true,
 		Advert: nodewire.Advert{Node: "node-a", Harnesses: []nodewire.Harness{
-			{ID: "kimi", Command: "kimi", Missing: `"kimi" not on this node's PATH`},
+			{ID: "pi", Command: "pi", Missing: `"pi" not on this node's PATH`},
 			{ID: "codex", Command: "codex"},
 		}},
 	}}}
@@ -201,11 +201,11 @@ func TestRepairRunsAHelperAndReChecksTheMachine(t *testing.T) {
 		t.Fatalf("healthy agent: %q", res.Text)
 	}
 	// The fleet says who could fix the broken one.
-	if res := say(t, c, "/fleet"); !strings.Contains(res.Text, "/repair kimi") || !strings.Contains(res.Text, "builder") {
+	if res := say(t, c, "/fleet"); !strings.Contains(res.Text, "/repair pi") || !strings.Contains(res.Text, "builder") {
 		t.Fatalf("fleet hint missing: %q", res.Text)
 	}
 
-	res := say(t, c, "/repair kimi")
+	res := say(t, c, "/repair pi")
 	if len(sup.executed) != 1 {
 		t.Fatalf("plans executed = %d", len(sup.executed))
 	}
@@ -214,19 +214,19 @@ func TestRepairRunsAHelperAndReChecksTheMachine(t *testing.T) {
 		t.Fatalf("plan = %+v, want a fixed one-step repair", p)
 	}
 	// It runs under a project homed on the broken machine, not the chat's.
-	if p.ProjectID != "builder" && p.ProjectID != "kimi" {
+	if p.ProjectID != "builder" && p.ProjectID != "pi" {
 		t.Fatalf("project = %q, want one homed on node-a", p.ProjectID)
 	}
 	step := p.Steps[0]
 	if step.Agent != "builder" {
 		t.Fatalf("step pinned to %q, want the healthy agent on node-a", step.Agent)
 	}
-	if step.Verify == nil || step.Verify.Kind != plan.VerifyCommand || step.Verify.Command != "command -v kimi" {
+	if step.Verify == nil || step.Verify.Kind != plan.VerifyCommand || step.Verify.Command != "command -v pi" {
 		t.Fatalf("verify = %+v, want the binary's presence checked by command", step.Verify)
 	}
 	// The helper is told the machine, the binary and the PATH the node
 	// process actually has, which came from a command on that machine.
-	for _, want := range []string{"node-a", "`kimi`", "/home/u/.local/bin", "PATH"} {
+	for _, want := range []string{"node-a", "`pi`", "/home/u/.local/bin", "PATH"} {
 		if !strings.Contains(step.Goal, want) {
 			t.Fatalf("goal lacks %q: %s", want, step.Goal)
 		}
@@ -239,19 +239,19 @@ func TestRepairRunsAHelperAndReChecksTheMachine(t *testing.T) {
 	if len(nodes.refreshd) != 1 || nodes.refreshd[0] != "node-a" {
 		t.Fatalf("refreshed = %v", nodes.refreshd)
 	}
-	if len(probes.probed) != 1 || probes.probed[0] != "node-a/kimi" {
+	if len(probes.probed) != 1 || probes.probed[0] != "node-a/pi" {
 		t.Fatalf("probed = %v", probes.probed)
 	}
 	if !strings.Contains(res.Text, "修好了") || !strings.Contains(res.Text, "builder") {
 		t.Fatalf("reply = %q", res.Text)
 	}
-	if res := say(t, c, "/repair kimi"); !strings.Contains(res.Text, "没有坏") {
+	if res := say(t, c, "/repair pi"); !strings.Contains(res.Text, "没有坏") {
 		t.Fatalf("after repair: %q", res.Text)
 	}
 	// The repair ran as a task of its own, closed when done.
 	var found bool
 	for _, tk := range tasks.List("chat") {
-		if strings.HasPrefix(tk.Goal, "repair kimi") {
+		if strings.HasPrefix(tk.Goal, "repair pi") {
 			found = true
 			if tk.State != task.StateDone {
 				t.Fatalf("repair task state = %s", tk.State)
@@ -270,7 +270,7 @@ func TestRepairWithoutNodesKeepsTheLastAdvert(t *testing.T) {
 	t.Parallel()
 	probes := &recordProbes{}
 	c, sup, nodes, cmds, _ := repairCoordinator(t, withDeps(func(d *Deps) { d.Nodes, d.Prober = nil, probes }))
-	res := say(t, c, "/repair kimi")
+	res := say(t, c, "/repair pi")
 	if len(sup.executed) != 1 {
 		t.Fatalf("plans executed = %d", len(sup.executed))
 	}
@@ -280,7 +280,7 @@ func TestRepairWithoutNodesKeepsTheLastAdvert(t *testing.T) {
 	if len(cmds.lines) != 0 || len(nodes.refreshd) != 0 {
 		t.Fatalf("commands = %v, refreshed = %v; want none without a registry", cmds.lines, nodes.refreshd)
 	}
-	if len(probes.probed) != 1 || probes.probed[0] != "node-a/kimi" {
+	if len(probes.probed) != 1 || probes.probed[0] != "node-a/pi" {
 		t.Fatalf("probed = %v", probes.probed)
 	}
 	if !strings.Contains(res.Text, "仍不可用") {
@@ -292,12 +292,12 @@ func TestRepairWithoutNodesKeepsTheLastAdvert(t *testing.T) {
 // its error.
 func TestFleetProbeReportsEveryHarness(t *testing.T) {
 	probes := &recordProbes{results: []models.Result{
-		{Endpoint: models.Endpoint{Node: "node-a", Harness: "kimi"}, Observation: models.Observation{Current: "k2"}},
+		{Endpoint: models.Endpoint{Node: "node-a", Harness: "pi"}, Observation: models.Observation{Current: "k2"}},
 		{Endpoint: models.Endpoint{Node: "node-a", Harness: "codex"}, Err: errors.New("handshake timed out")},
 	}}
 	c, _, _, _, _ := repairCoordinator(t, withDeps(func(d *Deps) { d.Prober = probes }))
 	res := say(t, c, "/fleet probe")
-	for _, want := range []string{"kimi** · k2", "✗ **node-a · codex", "handshake timed out"} {
+	for _, want := range []string{"pi** · k2", "✗ **node-a · codex", "handshake timed out"} {
 		if !strings.Contains(res.Text, want) {
 			t.Fatalf("probe report lacks %q: %q", want, res.Text)
 		}
@@ -310,8 +310,8 @@ func TestFleetProbeReportsEveryHarness(t *testing.T) {
 func TestRepairReportsFailureHonestly(t *testing.T) {
 	t.Parallel()
 	c, sup, nodes, _, _ := repairCoordinator(t)
-	sup.fail = errors.New("verify: command -v kimi exited 1")
-	if res := say(t, c, "/repair kimi"); !strings.Contains(res.Text, "没成功") || !strings.Contains(res.Text, "exited 1") {
+	sup.fail = errors.New("verify: command -v pi exited 1")
+	if res := say(t, c, "/repair pi"); !strings.Contains(res.Text, "没成功") || !strings.Contains(res.Text, "exited 1") {
 		t.Fatalf("failed step: %q", res.Text)
 	}
 	if len(nodes.refreshd) != 0 {
@@ -322,7 +322,7 @@ func TestRepairReportsFailureHonestly(t *testing.T) {
 	nodes.statuses[0].Up = false
 	nodes.statuses[0].LastError = "connection refused"
 	nodes.mu.Unlock()
-	if res := say(t, c, "/repair kimi"); !strings.Contains(res.Text, "修不了") {
+	if res := say(t, c, "/repair pi"); !strings.Contains(res.Text, "修不了") {
 		t.Fatalf("node down: %q", res.Text)
 	}
 }
@@ -351,8 +351,8 @@ func TestContextSaysWhoCanWorkHere(t *testing.T) {
 	if a := byID["builder"]; !a.Usable || !a.Ready || !strings.Contains(a.Because, "codex") {
 		t.Fatalf("builder = %+v, want usable, naming the project it attaches", a)
 	}
-	if a := byID["kimi"]; a.Usable || a.Ready || !strings.Contains(a.Because, "PATH") {
-		t.Fatalf("kimi = %+v, want blocked with the roster's reason", a)
+	if a := byID["pi"]; a.Usable || a.Ready || !strings.Contains(a.Because, "PATH") {
+		t.Fatalf("pi = %+v, want blocked with the roster's reason", a)
 	}
 	// Usable agents come first, and the verbs come with help.
 	if !got.Agents[0].Usable {
@@ -390,7 +390,7 @@ func TestFleetAndCompletionDescribeTheFleetOnce(t *testing.T) {
 	nodes.statuses = append(nodes.statuses, node.Status{Name: "node-b", LastError: "connection refused"})
 	nodes.mu.Unlock()
 	for id, cfg := range map[string]agent.Config{
-		"kimi-2": {Harness: "kimi", Node: "node-a"},
+		"pi-2":   {Harness: "pi", Node: "node-a"},
 		"gemini": {Harness: "gemini", Node: "node-b"},
 		"qwen":   {Harness: "qwen", Node: "node-b"},
 	} {
@@ -402,7 +402,7 @@ func TestFleetAndCompletionDescribeTheFleetOnce(t *testing.T) {
 	if n := nodes.dialed(); n != 1 {
 		t.Fatalf("/fleet dialed %d times, want once", n)
 	}
-	for _, id := range []string{"kimi", "kimi-2"} {
+	for _, id := range []string{"pi", "pi-2"} {
 		if !strings.Contains(res.Text, "/repair "+id) {
 			t.Fatalf("/fleet lost the repair hint for %s:\n%s", id, res.Text)
 		}
@@ -415,7 +415,7 @@ func TestFleetAndCompletionDescribeTheFleetOnce(t *testing.T) {
 	for _, s := range c.Suggest(t.Context(), "chat", "/repair ") {
 		labels = append(labels, s.Label)
 	}
-	if strings.Join(labels, ",") != "kimi,kimi-2" && strings.Join(labels, ",") != "kimi-2,kimi" {
+	if strings.Join(labels, ",") != "pi,pi-2" && strings.Join(labels, ",") != "pi-2,pi" {
 		t.Fatalf("/repair completes %v, want the two agents builder can mend", labels)
 	}
 	if len(c.Suggest(t.Context(), "chat", "/use ")) != 6 {
@@ -430,7 +430,7 @@ func TestFleetAndCompletionDescribeTheFleetOnce(t *testing.T) {
 // names the fleet, not the supervisor, as what is missing.
 func TestRepairWithoutAFleetSaysTheFleetIsMissing(t *testing.T) {
 	c, _ := taskCoordinator(t, &fakeRunner{reply: "ok"})
-	res := say(t, c, "/repair kimi")
+	res := say(t, c, "/repair pi")
 	if strings.Contains(res.Text, "supervisor") || !strings.Contains(res.Text, "机群") {
 		t.Fatalf("repair without a fleet: %q", res.Text)
 	}

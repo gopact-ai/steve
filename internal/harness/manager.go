@@ -23,15 +23,14 @@ import (
 const (
 	Codex      = "codex"
 	ClaudeCode = "claude-code"
-	Grok       = "grok"
-	Dsh        = "dsh"
-	Kimi       = "kimi"
+	Pi         = "pi"
 
 	EnvCodexHome       = "CODEX_HOME"
 	EnvClaudeConfigDir = "CLAUDE_CONFIG_DIR"
-	EnvGrokHome        = "GROK_HOME"
-	EnvDshHome         = "DSH_HOME"
-	EnvKimiCodeHome    = "KIMI_CODE_HOME"
+	// EnvPiAgentDir is pi's state directory; pi-acp passes it on to the pi
+	// process it starts. EnvPiCommand names that pi executable.
+	EnvPiAgentDir = "PI_CODING_AGENT_DIR"
+	EnvPiCommand  = "PI_ACP_PI_COMMAND"
 )
 
 type Config struct {
@@ -180,6 +179,10 @@ func (m *Manager) SetTransports(remote Transports) {
 }
 
 func (m *Manager) OpenSession(ctx context.Context, at Placement, upstreamID, workdir string, servers []acp.MCPServer) (Runner, error) {
+	// A retired tool never starts new work, wherever it is placed.
+	if err := RetiredError(at.Harness); err != nil {
+		return nil, err
+	}
 	var bindErr error
 	ctx, bindErr = m.bindNodeSession(ctx, at, upstreamID, workdir)
 	if bindErr != nil {
@@ -341,6 +344,9 @@ func (m *Manager) Restart() error {
 }
 
 func (m *Manager) host(at Placement) (*acphost.Host, error) {
+	if err := RetiredError(at.Harness); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.suspended["*"] || m.suspended[at.Node] {
@@ -367,6 +373,11 @@ func (m *Manager) host(at Placement) (*acphost.Host, error) {
 	hostCfg := acphost.Config{
 		WorkspaceFiles: true,
 		Command:        cfg.Command, Args: cfg.Args, ProcessDir: cfg.ProcessDir, Env: cfg.Env, Permission: broker,
+	}
+	if at.Node == "" {
+		if hostCfg.Env, err = envForPolicy(cfg.Env, at.Harness, cfg.Permission); err != nil {
+			return nil, err
+		}
 	}
 	if at.Node != "" {
 		if m.remote == nil {

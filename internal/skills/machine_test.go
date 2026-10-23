@@ -262,3 +262,28 @@ func gzipStream(t *testing.T, archive []byte, trailing int) []byte {
 	}
 	return buf.Bytes()
 }
+
+// pi keeps its own skills under ~/.pi/agent/skills; the retired tools'
+// directories are no longer read.
+func TestScanLocalFindsPiSkillsAndSkipsRetiredTools(t *testing.T) {
+	home := t.TempDir()
+	write := func(rel, name string) {
+		dir := filepath.Join(home, rel, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: "+name+"\ndescription: d\n---\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".pi/agent/skills", "pi-skill")
+	write(".grok/skills", "grok-skill")
+	write(".kimi/skills", "kimi-skill")
+	var names []string
+	for _, f := range ScanLocal(home) {
+		names = append(names, f.Name)
+	}
+	if len(names) != 1 || names[0] != "pi-skill" {
+		t.Fatalf("found %v, want only pi-skill", names)
+	}
+}

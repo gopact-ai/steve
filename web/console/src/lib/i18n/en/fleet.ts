@@ -129,6 +129,7 @@ export const fleetEn = {
     "fleet.whyDetail": ": {detail}",
     "fleet.whyUnknownNode": "its machine is not registered",
     "fleet.whyHarness": "{tool} cannot run on {machine}: {detail}",
+    "fleet.whyRetired": "{tool} is no longer supported and takes no new work. Steve supports Codex, Claude Code and pi; remove this agent.",
     "fleet.whyDisk": "{machine} is nearly out of disk: {free} free",
     "fleet.whyModel": "{machine} does not offer model {model}",
     "fleet.whyBadRequirement": "the requirements are not valid: {detail}",

@@ -21,6 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/datalevel"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -430,12 +431,20 @@ const (
 	ReasonDisk           = "disk_full"
 	ReasonModel          = "model_missing"
 	ReasonBadRequirement = "bad_requirement"
+	// ReasonRetired is an agent on a tool Steve no longer supports; the
+	// detail names the tool. It starts no new work until it is removed.
+	ReasonRetired = "harness_retired"
 )
 
 func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hub place, levels map[string]datalevel.Level) Candidate {
 	c := Candidate{Agent: a, Node: a.Node, Harness: a.Harness, Model: a.Model, Eligible: true, Level: levels[a.Node].OrDefault()}
 	if a.Model != "" {
 		c.Models = []string{a.Model}
+	}
+	if name, retired := harness.Retired(a.Harness); retired {
+		c.Eligible, c.Why = false, harness.RetiredError(a.Harness).Error()
+		c.Reason, c.ReasonDetail = ReasonRetired, name
+		return c
 	}
 	if a.Node == "" {
 		c.Up = true

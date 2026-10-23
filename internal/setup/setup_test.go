@@ -222,14 +222,12 @@ func TestRunOverwritesExistingConfigAndKeepsAgents(t *testing.T) {
 	}
 }
 
-func TestRunAddsMissingGrokAndKimiAgents(t *testing.T) {
+func TestRunAddsMissingPiAgent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "config.json")
 	old := config.Starter("old-app", "old-secret", "ou_old")
-	delete(old.Agents, "grok")
-	delete(old.Agents, "kimi")
-	delete(old.Harnesses, "grok")
-	delete(old.Harnesses, "kimi")
+	delete(old.Agents, "pi")
+	delete(old.Harnesses, "pi")
 	if err := config.Save(path, old); err != nil {
 		t.Fatal(err)
 	}
@@ -256,13 +254,8 @@ func TestRunAddsMissingGrokAndKimiAgents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"grok", "kimi"} {
-		if _, ok := loaded.Agents[id]; !ok {
-			t.Fatalf("missing agent %s: %#v", id, loaded.Agents)
-		}
-		if _, ok := loaded.Harnesses[id]; !ok {
-			t.Fatalf("missing harness %s: %#v", id, loaded.Harnesses)
-		}
+	if loaded.Agents["pi"].Harness != "pi" || loaded.Harnesses["pi"].Adapter != "pi-acp" {
+		t.Fatalf("missing pi: %#v %#v", loaded.Agents, loaded.Harnesses)
 	}
 }
 

@@ -82,7 +82,7 @@ func InitCommand(args []string) error {
 	if len(enrolled.Added) > 0 {
 		fmt.Fprintf(os.Stdout, "Registered %s with read-only permission. Widen it per agent in Settings when you need to.\n", strings.Join(enrolled.Added, ", "))
 	} else if len(enrolled.Failed) == 0 {
-		fmt.Fprintln(os.Stdout, "No new coding agents were registered. Sign in to Codex or Claude Code, then add them from Resources.")
+		fmt.Fprintln(os.Stdout, "No new coding agents were registered. Sign in to Codex, Claude Code or pi, then add them from Resources.")
 	}
 	if len(enrolled.Pending) > 0 {
 		fmt.Fprintf(os.Stdout, "Found but not ready: %s.\n", strings.Join(enrolled.Pending, "; "))

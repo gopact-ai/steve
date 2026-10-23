@@ -19,7 +19,7 @@ func ExecutablePath(home string) string {
 	parts := filepath.SplitList(os.Getenv("PATH"))
 	parts = append(parts, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin")
 	if filepath.IsAbs(home) {
-		for _, dir := range []string{".local/bin", "bin", ".npm-global/bin", ".bun/bin", ".kimi-code/bin"} {
+		for _, dir := range []string{".local/bin", "bin", ".npm-global/bin", ".bun/bin", ".pi/agent/bin"} {
 			parts = append(parts, filepath.Join(home, dir))
 		}
 	}

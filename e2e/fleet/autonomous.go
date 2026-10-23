@@ -292,8 +292,8 @@ func (g *gate) runAutonomous(ctx context.Context) error {
 	g.log("PASS landing dir=%s binary=%s kind=%q checksums=ok readme=校验", releaseDir, binary, strings.TrimSpace(string(kind)))
 
 	// 5. Every child has a successful attempt row, and the spend of at
-	// least one was reported. A harness that reports no usage (grok,
-	// today) is the harness's gap, recorded honestly as reported=false;
+	// least one was reported. A harness that reports no usage is the
+	// harness's gap, recorded honestly as reported=false;
 	// the coordinator picks whichever idle agent it likes, so that gap
 	// is a warning here, not a failure of the platform under test.
 	summary, err := g.readUsage(ctx)

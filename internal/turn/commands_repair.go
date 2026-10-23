@@ -210,7 +210,7 @@ func shellQuote(word string) string {
 }
 
 // repairHint is the /fleet line under a blocked agent that says who could
-// fix it, so the answer to "why is kimi blocked" comes with a next step.
+// fix it, so the answer to "why is this agent blocked" comes with a next step.
 // all is the fleet /fleet already described.
 func (c commands) repairHint(item roster.Candidate, all []roster.Candidate) string {
 	if item.Eligible {

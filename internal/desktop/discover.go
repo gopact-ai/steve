@@ -24,5 +24,5 @@ func Registration(candidate AgentCandidate) (config.Agent, config.Harness, error
 	if err != nil {
 		return config.Agent{}, config.Harness{}, err
 	}
-	return config.Agent{Harness: declared.Harness, Aliases: []string{candidate.ID}}, config.Harness{Adapter: declared.Adapter, Command: declared.Command, Args: declared.Args, Permission: config.PermissionRead}, nil
+	return config.Agent{Harness: declared.Harness, Aliases: []string{candidate.ID}}, config.Harness{Adapter: declared.Adapter, Command: declared.Command, Args: declared.Args, Env: declared.Env, Permission: config.PermissionRead}, nil
 }

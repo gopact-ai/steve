@@ -17,16 +17,16 @@ import (
 
 func TestPreferenceResetAppliesConfiguredDefaultWithoutChangingContext(t *testing.T) {
 	c, rt, _ := selectorCoordinator(t, true)
-	if err := c.catalog.Set("grok", agent.Config{Harness: "grok", Default: true, Model: "m1"}); err != nil {
+	if err := c.catalog.Set("pi", agent.Config{Harness: "pi", Default: true, Model: "m1"}); err != nil {
 		t.Fatal(err)
 	}
 	rt.runner.(*recoveryConfigurable).settings.Model = "m2"
-	selected, _ := c.catalog.Resolve("grok")
+	selected, _ := c.catalog.Resolve("pi")
 	if selected.Model != "m1" {
 		t.Fatalf("fixture default = %q", selected.Model)
 	}
 	before := c.store.Conversation("chat").Sessions
-	if _, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": ""}); err != nil {
+	if _, err := c.SetPreferences(t.Context(), "chat", "pi", map[string]string{"model": ""}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.open(t.Context(), state.Session{ConversationID: "chat", UpstreamID: "sess-1"}, selected, t.TempDir(), nil); err != nil {
@@ -42,11 +42,11 @@ func TestPreferenceResetAppliesConfiguredDefaultWithoutChangingContext(t *testin
 
 func TestPreferenceResetWithoutKnownDefaultDoesNotPretendToSucceed(t *testing.T) {
 	c, _, _ := selectorCoordinator(t, true)
-	if err := c.store.SetPreferences("chat", "grok", map[string]string{"unknown-option": "chosen"}); err != nil {
+	if err := c.store.SetPreferences("chat", "pi", map[string]string{"unknown-option": "chosen"}); err != nil {
 		t.Fatal(err)
 	}
 	before := c.store.Conversation("chat")
-	if _, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"unknown-option": ""}); err == nil {
+	if _, err := c.SetPreferences(t.Context(), "chat", "pi", map[string]string{"unknown-option": ""}); err == nil {
 		t.Fatal("reset without a declared default silently succeeded")
 	}
 	if !reflect.DeepEqual(before, c.store.Conversation("chat")) {
@@ -79,17 +79,17 @@ func TestConcurrentPreferencesKeepSavedAndLiveOrder(t *testing.T) {
 	c, rt, _ := selectorCoordinator(t, true)
 	r := &orderedPreferenceRunner{recoveryConfigurable: rt.runner.(*recoveryConfigurable),
 		entered: make(chan struct{}), release: make(chan struct{})}
-	c.beginTurn("chat", "grok", func() {})
-	c.setRunner("chat", "grok", r)
+	c.beginTurn("chat", "pi", func() {})
+	c.setRunner("chat", "pi", r)
 	first := make(chan error, 1)
 	go func() {
-		_, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": "m1"})
+		_, err := c.SetPreferences(t.Context(), "chat", "pi", map[string]string{"model": "m1"})
 		first <- err
 	}()
 	<-r.entered
 	second := make(chan error, 1)
 	go func() {
-		_, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": "m2"})
+		_, err := c.SetPreferences(t.Context(), "chat", "pi", map[string]string{"model": "m2"})
 		second <- err
 	}()
 	// Release after the second call has had a chance to update the store.
@@ -103,7 +103,7 @@ func TestConcurrentPreferencesKeepSavedAndLiveOrder(t *testing.T) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if saved := c.store.Preferences("chat", "grok")["model"]; saved != r.value {
+	if saved := c.store.Preferences("chat", "pi")["model"]; saved != r.value {
 		t.Fatalf("saved model %q differs from live model %q", saved, r.value)
 	}
 }
@@ -119,11 +119,11 @@ func TestOpenReappliesOptionPreferencesToResumedSession(t *testing.T) {
 		ID: "mode", Category: "mode", Current: "read-only",
 		Choices: []view.Choice{{Value: "read-only"}, {Value: "agent"}, {Value: "agent-full-access"}},
 	})
-	if err := c.store.SetPreferences("chat", "grok", map[string]string{"mode": "agent-full-access"}); err != nil {
+	if err := c.store.SetPreferences("chat", "pi", map[string]string{"mode": "agent-full-access"}); err != nil {
 		t.Fatal(err)
 	}
-	selected, _ := c.catalog.Resolve("grok")
-	saved := state.Session{ConversationID: "chat", AgentID: "grok", HarnessID: "grok", UpstreamID: "sess-1"}
+	selected, _ := c.catalog.Resolve("pi")
+	saved := state.Session{ConversationID: "chat", AgentID: "pi", HarnessID: "pi", UpstreamID: "sess-1"}
 	if _, err := c.open(t.Context(), saved, selected, t.TempDir(), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -159,18 +159,18 @@ func TestApprovalDefaultPrecedenceWhenResuming(t *testing.T) {
 				ID: "mode", Category: "mode", Current: "read-only",
 				Choices: []view.Choice{{Value: "read-only"}, {Value: "agent"}, {Value: "agent-full-access"}},
 			})
-			selected, _ := c.catalog.Resolve("grok")
+			selected, _ := c.catalog.Resolve("pi")
 			selected.Approval = tc.global
 			selected.Options = map[string]string{}
 			if tc.agentMode != "" {
 				selected.Options["mode"] = tc.agentMode
 			}
 			if tc.conversationMode != "" {
-				if err := c.store.SetPreferences("chat", "grok", map[string]string{"mode": tc.conversationMode}); err != nil {
+				if err := c.store.SetPreferences("chat", "pi", map[string]string{"mode": tc.conversationMode}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			saved := state.Session{ConversationID: "chat", AgentID: "grok", HarnessID: "grok", UpstreamID: "sess-1"}
+			saved := state.Session{ConversationID: "chat", AgentID: "pi", HarnessID: "pi", UpstreamID: "sess-1"}
 			if _, err := c.open(t.Context(), saved, selected, t.TempDir(), nil); err != nil {
 				t.Fatal(err)
 			}
@@ -179,7 +179,7 @@ func TestApprovalDefaultPrecedenceWhenResuming(t *testing.T) {
 					t.Fatalf("approval = %q, want %q", option.Current, tc.want)
 				}
 			}
-			if selected.Options["mode"] != tc.agentMode || c.store.Preferences("chat", "grok")["mode"] != tc.conversationMode {
+			if selected.Options["mode"] != tc.agentMode || c.store.Preferences("chat", "pi")["mode"] != tc.conversationMode {
 				t.Fatal("applying defaults mutated an Agent or conversation override")
 			}
 		})
@@ -195,20 +195,20 @@ func TestPreferencesPreserveContextAcrossIdleAndBusyUpdates(t *testing.T) {
 				c, rt, _ := selectorCoordinator(t, true)
 				before := c.store.Conversation("chat")
 				if busy {
-					c.beginTurn("chat", "grok", func() {})
+					c.beginTurn("chat", "pi", func() {})
 				}
 				value := "m1"
 				if same {
 					value = "m2"
 				}
-				if _, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": value}); err != nil {
+				if _, err := c.SetPreferences(t.Context(), "chat", "pi", map[string]string{"model": value}); err != nil {
 					t.Fatal(err)
 				}
 				after := c.store.Conversation("chat")
 				if !reflect.DeepEqual(before.Sessions, after.Sessions) || !reflect.DeepEqual(before.Archived, after.Archived) || len(rt.closed) != 0 {
 					t.Fatal("saving preferences replaced or scheduled replacement of native context")
 				}
-				if after.Preferences["grok"]["model"] != value {
+				if after.Preferences["pi"]["model"] != value {
 					t.Fatal("preference was not recorded")
 				}
 			})
@@ -218,8 +218,8 @@ func TestPreferencesPreserveContextAcrossIdleAndBusyUpdates(t *testing.T) {
 
 func TestResumedSessionAppliesExplicitModelPreference(t *testing.T) {
 	c, rt, _ := selectorCoordinator(t, true)
-	selected, _ := c.catalog.Resolve("grok")
-	saved := state.Session{ConversationID: "chat", AgentID: "grok", HarnessID: "grok", UpstreamID: "sess-1"}
+	selected, _ := c.catalog.Resolve("pi")
+	saved := state.Session{ConversationID: "chat", AgentID: "pi", HarnessID: "pi", UpstreamID: "sess-1"}
 	if _, err := c.open(t.Context(), saved, selected, t.TempDir(), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -235,10 +235,10 @@ func TestLivePreferencesNeverScheduleContextReplacement(t *testing.T) {
 			c, rt, _ := selectorCoordinator(t, true)
 			r := rt.runner.(*recoveryConfigurable)
 			r.refused = refused
-			c.beginTurn("chat", "grok", func() {})
-			c.setRunner("chat", "grok", r)
+			c.beginTurn("chat", "pi", func() {})
+			c.setRunner("chat", "pi", r)
 			before := c.store.Conversation("chat")
-			live, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": "m1"})
+			live, err := c.SetPreferences(t.Context(), "chat", "pi", map[string]string{"model": "m1"})
 			if err != nil || live == refused {
 				t.Fatalf("live=%v err=%v", live, err)
 			}
@@ -254,7 +254,7 @@ func TestRefusedExplicitPreferencesBlockInputWithoutLosingContext(t *testing.T) 
 	c, rt, _ := selectorCoordinator(t, true)
 	rt.runner.(*recoveryConfigurable).refused = true
 	before := c.store.Conversation("chat")
-	selected, _ := c.catalog.Resolve("grok")
+	selected, _ := c.catalog.Resolve("pi")
 	turn := &chatTurn{c: c, req: Request{
 		Source: Source{ConversationID: "chat"},
 	}, selected: selected}

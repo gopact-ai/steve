@@ -17,7 +17,7 @@ const candidates = () => [
     { id: "codex", name: "Codex", harness: "codex", executable: "/remote/bin/codex", adapter: "codex-acp", installed: true, requires: [], configured: false, registered: false, model: "gpt-5-codex", models: ["gpt-5-codex", "gpt-5-codex-mini"], selectors: [{ id: "effort", name: "Reasoning effort", category: "effort", type: "select", current: "medium", choices: ["Medium", "High"], values: ["medium", "high"] }] },
     { id: "gemini", name: "Gemini CLI", harness: "gemini", executable: "/remote/bin/gemini", adapter: "gemini-acp", installed: true, requires: [], configured: false, registered: false },
     { id: "claude", name: "Claude Code", harness: "claude-code", executable: "/remote/bin/claude", adapter: "claude-agent-acp", installed: true, requires: ["npm"], configured: false, registered: false },
-    { id: "kimi", name: "Kimi Code", harness: "kimi", installed: false, requires: [], configured: false, registered: false },
+    { id: "pi", name: "pi", harness: "pi", adapter: "pi-acp", installed: false, requires: [], configured: false, registered: false },
 ];
 const f = { revision: "node-r1", agents: candidates(), reads: 0, posts: [], errors: [], hold: false, release: null, reset: false, partial: false, discoveryError: false };
 page.on("pageerror", (error) => f.errors.push(String(error)));
@@ -61,7 +61,7 @@ try {
     assert.equal(f.posts.length, 0);
     await dialog.getByText("Tool presence is checked on this machine. Sign-in is checked when the agent runs.", { exact: true }).waitFor();
     assert.equal(await dialog.getByRole("checkbox", { name: "Claude Code", exact: true }).isDisabled(), true);
-    assert.equal(await dialog.getByRole("checkbox", { name: "Kimi Code", exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole("checkbox", { name: "pi", exact: true }).isDisabled(), true);
     await dialog.getByText("Codex", { exact: true }).click();
     await dialog.getByText("Gemini CLI", { exact: true }).click();
     const codex = dialog.getByRole("group", { name: "Codex", exact: true });

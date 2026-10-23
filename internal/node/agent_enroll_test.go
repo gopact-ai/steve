@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -30,7 +31,7 @@ func TestConfigurePreservesCommittedSettingsErrorAndRefreshes(t *testing.T) {
 	r := NewRegistry("hub", map[string]Config{"node": {Addr: "test", Token: "test"}})
 	r.live["node"] = &conn{name: "node", mux: mux, advert: nodewire.Advert{Node: "node"}}
 	t.Cleanup(r.Close)
-	set := nodewire.Settings{Revision: "committed-revision", Harnesses: map[string]nodewire.HarnessSetting{"kimi": {Command: "/node/bin/kimi"}}}
+	set := nodewire.Settings{Revision: "committed-revision", Harnesses: map[string]nodewire.HarnessSetting{"pi": {Command: "/node/bin/pi"}}}
 	var refreshed atomic.Bool
 	done := make(chan error, 1)
 	go func() {
@@ -59,7 +60,7 @@ func TestConfigurePreservesCommittedSettingsErrorAndRefreshes(t *testing.T) {
 		done <- err
 	}()
 	got, err := r.Configure(t.Context(), "node", nodewire.Settings{Revision: "before"})
-	if !SettingsCommitted(err) || got.Revision != set.Revision || got.Harnesses["kimi"].Command != "/node/bin/kimi" || !refreshed.Load() {
+	if !SettingsCommitted(err) || got.Revision != set.Revision || got.Harnesses["pi"].Command != "/node/bin/pi" || !refreshed.Load() {
 		t.Fatalf("committed result lost: %+v err=%v refreshed=%v", got, err, refreshed.Load())
 	}
 	if err := <-done; err != nil {
@@ -99,11 +100,16 @@ func TestNodeAgentEnrollmentOverAuthenticatedTransportKeepsToolsNodeLocal(t *tes
 	if err := os.Mkdir(toolDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(bin, filepath.Join(toolDir, "kimi")); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"pi", "node", "npm"} {
+		if err := os.WriteFile(filepath.Join(toolDir, name), []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("PATH", toolDir)
 	cfg := ServerConfig{Name: "worker", Token: "test-token", Source: filepath.Join(root, "node.json"), StateDir: filepath.Join(root, "state"), WorkspaceRoot: filepath.Join(root, "work"), Harnesses: map[string]HarnessSpec{}}
+	// The pinned pi-acp is already in this machine's adapter cache; here it
+	// is the mock agent, so the enrolled tool can serve a prompt.
+	cachedNodeAdapter(t, filepath.Join(cfg.StateDir, "adapters"), "pi-acp", "#!/bin/sh\nexec '"+bin+"' \"$@\"\n")
 	if err := writeConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -116,21 +122,21 @@ func TestNodeAgentEnrollmentOverAuthenticatedTransportKeepsToolsNodeLocal(t *tes
 	}
 	var found agenttools.Candidate
 	for _, candidate := range discovery.Agents {
-		if candidate.ID == "kimi" {
+		if candidate.ID == "pi" {
 			found = candidate
 		}
 	}
-	if !found.Installed || found.Configured || found.Executable != filepath.Join(toolDir, "kimi") {
+	if !found.Installed || found.Configured || found.Executable != filepath.Join(toolDir, "pi") {
 		t.Fatalf("discovery=%+v", found)
 	}
 	if _, err := os.Stat(filepath.Join(cfg.StateDir, "runtimes")); !os.IsNotExist(err) {
 		t.Fatalf("empty node touched unselected runtime: %v", err)
 	}
-	result, err := registry.EnrollAgent(t.Context(), "worker", agenttools.InstallRequest{CandidateID: "kimi", ExpectedRevision: discovery.Revision})
+	result, err := registry.EnrollAgent(t.Context(), "worker", agenttools.InstallRequest{CandidateID: "pi", ExpectedRevision: discovery.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Harness != "kimi" || result.Revision == discovery.Revision {
+	if result.Harness != "pi" || result.Revision == discovery.Revision {
 		t.Fatalf("enrollment=%+v", result)
 	}
 	stored, err := os.ReadFile(cfg.Source)
@@ -141,11 +147,14 @@ func TestNodeAgentEnrollmentOverAuthenticatedTransportKeepsToolsNodeLocal(t *tes
 	if err := json.Unmarshal(stored, &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if len(parsed.Harnesses) != 1 || parsed.Harnesses["kimi"].Command != found.Executable || len(parsed.Harnesses["kimi"].Env) != 0 {
+	enrolled := parsed.Harnesses["pi"]
+	// The adapter's own path is resolved from the cache at start; only the
+	// pi it drives is recorded.
+	if len(parsed.Harnesses) != 1 || enrolled.Adapter != "pi-acp" || enrolled.Command != "" || !slices.Equal(enrolled.Env, []string{"PI_ACP_PI_COMMAND=" + found.Executable}) {
 		t.Fatalf("registered unexpected config: %+v", parsed.Harnesses)
 	}
 	broker, _ := permission.New(permission.PolicyRead)
-	host := acphost.New(acphost.Config{Transport: registry.Transport("worker", "kimi"), Permission: broker})
+	host := acphost.New(acphost.Config{Transport: registry.Transport("worker", "pi"), Permission: broker})
 	t.Cleanup(host.Stop)
 	id, generation, err := host.OpenSession(t.Context(), "", acphost.SessionConfig{Workdir: cfg.WorkspaceRoot})
 	if err != nil {
@@ -213,7 +222,7 @@ func TestEnrollmentRPCRejectsClientCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stream.Close()
-	if _, err := stream.Write([]byte(`{"candidate_id":"kimi","expected_revision":"x","command":"touch /tmp/should-not-run"}` + "\n")); err != nil {
+	if _, err := stream.Write([]byte(`{"candidate_id":"pi","expected_revision":"x","command":"touch /tmp/should-not-run"}` + "\n")); err != nil {
 		t.Fatal(err)
 	}
 	var reply agentToolsReply
@@ -312,4 +321,24 @@ func TestEnrollmentRejectsFailedWrongVersionAndStaleInstallWithoutPublishing(t *
 			}
 		})
 	}
+}
+
+// cachedNodeAdapter places a verified installation of the pinned adapter
+// name running script, the shape adapter.Installer leaves behind.
+func cachedNodeAdapter(t *testing.T, dir, name, script string) string {
+	t.Helper()
+	pin := adapter.Catalog[name]
+	installed := filepath.Join(dir, name+"@"+pin.Version)
+	command := filepath.Join(installed, pin.Bin)
+	if err := os.MkdirAll(filepath.Dir(command), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker, _ := json.Marshal(map[string]string{"package": pin.Package, "version": pin.Version, "integrity": pin.Integrity})
+	if err := os.WriteFile(filepath.Join(installed, ".steve-adapter.json"), marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return command
 }

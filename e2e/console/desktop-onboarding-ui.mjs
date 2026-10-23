@@ -15,7 +15,7 @@ const at = "2026-09-07T01:00:00Z", conversation = "console:desktop-ui";
 const candidates = () => [
     { id: "codex", name: "Codex", harness: "codex-acp", executable: "/test/bin/codex", installed: true, requires: [], registered: false },
     { id: "claude", name: "Claude Code", harness: "claude-code", executable: "/test/bin/claude", installed: true, requires: ["node", "npm"], registered: false },
-    { id: "kimi", name: "Kimi Code", harness: "kimi", installed: false, requires: [], registered: false },
+    { id: "pi", name: "pi", harness: "pi", adapter: "pi-acp", installed: false, requires: [], registered: false },
 ];
 async function waitFor(check, message) { for (let i = 0; i < 100; i++) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 25)); } assert.fail(message); }
 async function fixture(enabled = true, step = "identity", done = false) {
@@ -120,7 +120,7 @@ try {
     const codex = dialog.getByRole("checkbox", { name: "Codex", exact: true });
     await codex.waitFor(); assert.equal(await codex.isChecked(), false);
     assert.equal(await dialog.getByRole("checkbox", { name: "Claude Code", exact: true }).isDisabled(), true);
-    assert.equal(await dialog.getByRole("checkbox", { name: "Kimi Code", exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole("checkbox", { name: "pi", exact: true }).isDisabled(), true);
     assert.deepEqual(f.posts, []);
     await dialog.getByRole("button", { name: "Register selected agents", exact: true }).click();
     await dialog.getByText("Select at least one installed tool.", { exact: true }).waitFor();

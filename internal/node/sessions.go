@@ -83,8 +83,12 @@ type harnessCapabilities struct {
 // started since; a session open refreshes it with the agent's own answer.
 const capabilityTTL = time.Hour
 
-func (s *SessionService) hostConfig(harnessID string, spec HarnessSpec, broker *permission.Broker) acphost.Config {
-	return acphost.Config{NoRestart: true, Command: spec.Command, Args: spec.Args, ProcessDir: s.server.processDir(spec), Env: steveruntime.ApplyEnv(spec.Env, harnessID, s.server.conf().StateDir), Permission: broker}
+func (s *SessionService) hostConfig(harnessID string, spec HarnessSpec, broker *permission.Broker) (acphost.Config, error) {
+	env, err := steveruntime.ForPolicy(steveruntime.ApplyEnv(spec.Env, harnessID, s.server.conf().StateDir), harnessID, broker.Policy())
+	if err != nil {
+		return acphost.Config{}, err
+	}
+	return acphost.Config{NoRestart: true, Command: spec.Command, Args: spec.Args, ProcessDir: s.server.processDir(spec), Env: env, Permission: broker}, nil
 }
 
 // capabilityKey names the binary a capability answer was taken from: the

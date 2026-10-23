@@ -177,3 +177,24 @@ func TestTheCatalogPinsExactVersionsAndDigests(t *testing.T) {
 		}
 	}
 }
+
+// pi-acp is pinned like the other adapters: this exact release, checked
+// against the registry's own digest (npm view pi-acp@0.0.34 dist.integrity).
+func TestPiACPIsPinned(t *testing.T) {
+	pin, ok := Catalog["pi-acp"]
+	want := Pin{
+		Package:   "pi-acp",
+		Version:   "0.0.34",
+		Tarball:   "https://registry.npmjs.org/pi-acp/-/pi-acp-0.0.34.tgz",
+		Integrity: "sha512-MrCp37UbpUzkTkzTIMJQf1RYrT+kr4fgGDGFoLmBN26UupuCZp0XxVIY+7XYsMo3yDnzDeZUJ0jPyM3Si6Bkkg==",
+		Bin:       "node_modules/.bin/pi-acp",
+	}
+	if !ok || pin != want {
+		t.Fatalf("pi-acp pin = %#v", pin)
+	}
+	for _, name := range Names() {
+		if name != "test-acp" && name != "codex-acp" && name != "claude-agent-acp" && name != "pi-acp" {
+			t.Fatalf("unexpected adapter %s", name)
+		}
+	}
+}

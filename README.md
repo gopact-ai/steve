@@ -8,7 +8,7 @@
 
 You 是你，Me 是与你对话的 agent，Steve 是你们的协作伙伴。
 
-Steve 是一个自托管的 AI agent 工作台。你可以在自己的机器上使用 Codex、Claude Code、Kimi Code 或 Grok，让不同 agent 共同处理一个项目，在同一个地方查看对话、任务、文件变更和需要你决定的事。
+Steve 是一个自托管的 AI agent 工作台。你可以在自己的机器上使用 Codex、Claude Code 或 pi，让不同 agent 共同处理一个项目，在同一个地方查看对话、任务、文件变更和需要你决定的事。
 
 它复用你已有的 agent 工具和登录，不要求换一个模型服务。一台机器就能开始；接入更多机器后，工作可以交给具备相应工具、算力或访问权限的 agent。
 

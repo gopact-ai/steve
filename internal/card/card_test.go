@@ -128,7 +128,7 @@ func TestRenderStatusUsesMetricCards(t *testing.T) {
 		Title:  "状态",
 		Status: StatusCompleted,
 		Fields: []Field{
-			{Label: "Agent", Value: "grok", IsMetric: true},
+			{Label: "Agent", Value: "pi", IsMetric: true},
 			{Label: "Mode", Value: "owner", IsMetric: true},
 			{Label: "Home", Value: "/tmp/home", Wide: true},
 		},
@@ -158,13 +158,13 @@ func TestRenderStatusUsesMetricCards(t *testing.T) {
 		t.Fatalf("footer missing: %#v", elements[3])
 	}
 	rawStr := string(raw)
-	if !strings.Contains(rawStr, "color='green'") || !strings.Contains(rawStr, "grok") {
+	if !strings.Contains(rawStr, "color='green'") || !strings.Contains(rawStr, "pi") {
 		t.Fatalf("metric value missing: %s", rawStr)
 	}
 	if !strings.Contains(rawStr, `"background_style":"green-50"`) {
 		t.Fatalf("metric fill missing: %s", rawStr)
 	}
-	if strings.Contains(rawStr, "**Agent**  grok") {
+	if strings.Contains(rawStr, "**Agent**  pi") {
 		t.Fatal("status should not render as a markdown list")
 	}
 }

@@ -39,7 +39,7 @@ func (s *enrollServer) handler(t *testing.T, token string) http.Handler {
 			json.NewEncoder(w).Encode(map[string]int{"agent_count": len(s.agents)})
 		case r.Method == http.MethodGet && r.URL.Path == "/console/desktop/agents":
 			list := []map[string]any{}
-			for _, c := range []struct{ id, name string }{{"codex", "Codex"}, {"claude", "Claude Code"}, {"kimi", "Kimi Code"}} {
+			for _, c := range []struct{ id, name string }{{"codex", "Codex"}, {"claude", "Claude Code"}, {"pi", "pi"}} {
 				list = append(list, map[string]any{"id": c.id, "name": c.name, "installed": true, "registered": s.agents[c.id]})
 			}
 			list = append(list, map[string]any{"id": "gemini", "name": "Gemini CLI", "installed": true, "requires": []string{"node"}})
@@ -85,7 +85,7 @@ func TestEnrollRunningWaitsForTheServiceAndRegistersEachAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got.Added, []string{"Codex", "Claude Code", "Kimi Code"}) || len(got.Pending) != 1 || len(got.Failed) != 0 {
+	if !reflect.DeepEqual(got.Added, []string{"Codex", "Claude Code", "pi"}) || len(got.Pending) != 1 || len(got.Failed) != 0 {
 		t.Fatalf("got %+v", got)
 	}
 	if !reflect.DeepEqual(state.defaults, []string{"codex"}) {
@@ -104,7 +104,7 @@ func TestEnrollRunningResumesAPartialBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(first.Added, []string{"Codex", "Kimi Code"}) || len(first.Failed) != 1 {
+	if !reflect.DeepEqual(first.Added, []string{"Codex", "pi"}) || len(first.Failed) != 1 {
 		t.Fatalf("first run %+v, want Claude reported and the others registered", first)
 	}
 	state.mu.Lock()

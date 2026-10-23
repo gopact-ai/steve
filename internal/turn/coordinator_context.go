@@ -277,6 +277,8 @@ func (c *Coordinator) blocked(cand roster.Candidate) string {
 		return c.text.T(i18n.AgentNodeUnknown)
 	case roster.ReasonHarness:
 		return c.text.T(i18n.AgentHarnessMissing, where, cand.ReasonDetail)
+	case roster.ReasonRetired:
+		return c.text.T(i18n.AgentHarnessRetired, cand.ReasonDetail)
 	case roster.ReasonDisk:
 		return c.text.T(i18n.AgentDiskFull, where, cand.ReasonDetail)
 	case roster.ReasonModel:

@@ -78,7 +78,7 @@ func Snapshot(ctx context.Context, store string, request ImportRequest) (Referen
 		return Reference{}, err
 	}
 	defer root.Close()
-	files, err := inventory(ctx, root, *selected, true)
+	files, err := inventory(ctx, root, *selected)
 	if err != nil {
 		return Reference{}, err
 	}
@@ -212,21 +212,12 @@ func copyHistoryFile(ctx context.Context, root *os.Root, dest string, selected s
 	defer out.Close()
 	_ = json.NewEncoder(h).Encode([]any{selected.path, info.Size()})
 	reader := &contextReader{ctx: ctx, reader: io.LimitReader(source, info.Size()+1)}
-	writers := []io.Writer{out, h}
-	var attachmentHash hash.Hash
-	if strings.HasPrefix(filepath.ToSlash(selected.path), "attachments/v1/objects/") {
-		attachmentHash = sha256.New()
-		writers = append(writers, attachmentHash)
-	}
-	n, err := io.Copy(io.MultiWriter(writers...), reader)
+	n, err := io.Copy(io.MultiWriter(out, h), reader)
 	if err != nil {
 		return err
 	}
 	if n != info.Size() {
 		return ErrChanged
-	}
-	if attachmentHash != nil && hex.EncodeToString(attachmentHash.Sum(nil)) != filepath.Base(selected.path) {
-		return errors.New("DSH attachment content does not match its SHA-256 reference")
 	}
 	current, err := source.Stat()
 	if err != nil {

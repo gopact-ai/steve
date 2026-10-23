@@ -34,7 +34,7 @@ func TestDesktopStatusReportsTheWorkspaceAndWhereTheGuideStands(t *testing.T) {
 	if _, err := admin.DesktopSetup(t.Context(), consoleapi.DesktopSetupRequest{Step: "elsewhere"}); err == nil {
 		t.Fatal("unknown steps are refused")
 	}
-	if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}}); err != nil {
+	if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"pi"}}); err != nil {
 		t.Fatal(err)
 	}
 	status, _ = admin.DesktopStatus(t.Context())

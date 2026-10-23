@@ -24,8 +24,16 @@ import (
 
 func startAgentAdminNode(t *testing.T, harnesses map[string]node.HarnessSpec) *node.Server {
 	t.Helper()
+	return startAgentAdminNodeWithPi(t, harnesses, "#!/bin/sh\nexit 1\n")
+}
+
+// startAgentAdminNodeWithPi runs a machine whose pinned pi-acp adapter is
+// already cached and runs piAdapter, so enrolling pi reaches no network.
+func startAgentAdminNodeWithPi(t *testing.T, harnesses map[string]node.HarnessSpec, piAdapter string) *node.Server {
+	t.Helper()
 	dir := t.TempDir()
 	cfg := node.ServerConfig{Name: "node-test", Token: "test-node-token", Listen: "127.0.0.1:0", StateDir: filepath.Join(dir, "state"), WorkspaceRoot: filepath.Join(dir, "workspace"), Source: filepath.Join(dir, "node.json"), Harnesses: harnesses}
+	cachedAdapter(t, filepath.Join(cfg.StateDir, "adapters"), "pi-acp", piAdapter)
 	if err := os.MkdirAll(cfg.WorkspaceRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -63,14 +71,15 @@ func startAgentAdminNode(t *testing.T, harnesses map[string]node.HarnessSpec) *n
 
 func TestLocalWorkerEnrollmentRefreshesAdvertBeforeFirstSession(t *testing.T) {
 	root := t.TempDir()
-	bin := filepath.Join(root, "kimi")
-	build := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
+	mock := filepath.Join(t.TempDir(), "mockagent")
+	build := exec.Command("go", "build", "-o", mock, "github.com/gopact-ai/steve/cmd/mockagent")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build mockagent: %v %s", err, out)
 	}
+	installedTools(t, root)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("PATH", root)
-	server := startAgentAdminNode(t, map[string]node.HarnessSpec{})
+	server := startAgentAdminNodeWithPi(t, map[string]node.HarnessSpec{}, "#!/bin/sh\nexec '"+mock+"' \"$@\"\n")
 	a := agentAdminFixture(t)
 	a.cfg().Nodes = map[string]config.Node{"node-test": {Addr: server.Addr(), Token: "test-node-token"}}
 	if err := config.Save(a.Path, a.cfg()); err != nil {
@@ -83,14 +92,14 @@ func TestLocalWorkerEnrollmentRefreshesAdvertBeforeFirstSession(t *testing.T) {
 		t.Fatalf("initial advert=%+v %v", before, err)
 	}
 	discovery := server.LocalAgentDiscovery()
-	if _, err := server.LocalEnrollAgent(t.Context(), agenttools.InstallRequest{CandidateID: "kimi", ExpectedRevision: discovery.Revision}); err != nil {
+	if _, err := server.LocalEnrollAgent(t.Context(), agenttools.InstallRequest{CandidateID: "pi", ExpectedRevision: discovery.Revision}); err != nil {
 		t.Fatal(err)
 	}
 	cached, _ := a.Nodes.Advert(t.Context(), "node-test")
 	if len(cached.Harnesses) != 0 {
 		t.Fatal("fixture unexpectedly refreshed the registry")
 	}
-	if err := a.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "fresh", Harness: "kimi", Node: "node-test"}); err != nil {
+	if err := a.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "fresh", Harness: "pi", Node: "node-test"}); err != nil {
 		t.Fatal(err)
 	}
 	manager, err := harness.NewManager(nil)
@@ -99,7 +108,7 @@ func TestLocalWorkerEnrollmentRefreshesAdvertBeforeFirstSession(t *testing.T) {
 	}
 	t.Cleanup(manager.Stop)
 	manager.SetTransports(a.Nodes)
-	runner, err := manager.OpenSession(t.Context(), harness.Placement{Node: "node-test", Harness: "kimi"}, "", t.TempDir(), nil)
+	runner, err := manager.OpenSession(t.Context(), harness.Placement{Node: "node-test", Harness: "pi"}, "", t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("first session after registration failed: %v", err)
 	}
@@ -133,7 +142,7 @@ func TestRemoteAgentMutationRejectsNodeIdentityReplacedAfterRPC(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := a.Nodes.EnrollAgent(t.Context(), "node-test", agenttools.InstallRequest{CandidateID: "kimi", ExpectedRevision: discovery.Revision}); err != nil {
+			if _, err := a.Nodes.EnrollAgent(t.Context(), "node-test", agenttools.InstallRequest{CandidateID: "pi", ExpectedRevision: discovery.Revision}); err != nil {
 				t.Fatal(err)
 			}
 			discovery, err = a.NodeAgents(t.Context(), "node-test")
@@ -149,12 +158,12 @@ func TestRemoteAgentMutationRejectsNodeIdentityReplacedAfterRPC(t *testing.T) {
 			go func() {
 				switch operation {
 				case "enroll":
-					_, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "kimi", AgentID: "later", ExpectedRevision: discovery.Revision})
+					_, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "pi", AgentID: "later", ExpectedRevision: discovery.Revision})
 					done <- err
 				case "add":
-					done <- a.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "later", Harness: "kimi", Node: "node-test"})
+					done <- a.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "later", Harness: "pi", Node: "node-test"})
 				case "update":
-					done <- a.UpdateAgent(t.Context(), "worker", consoleapi.AgentSpec{Harness: "kimi", Node: "node-test"})
+					done <- a.UpdateAgent(t.Context(), "worker", consoleapi.AgentSpec{Harness: "pi", Node: "node-test"})
 				}
 			}()
 			waitForAgentAdminCommit(t, method)
@@ -182,9 +191,7 @@ func remoteAgentAdminFixture(t *testing.T) *Service {
 	if err := os.Mkdir(bin, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, "kimi"), []byte("#!/bin/sh\nprintf 'test version\\n'\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	installedTools(t, bin)
 	t.Setenv("PATH", bin)
 	server := startAgentAdminNode(t, map[string]node.HarnessSpec{})
 	a := agentAdminFixture(t)
@@ -206,23 +213,23 @@ func TestRemoteAgentEnrollmentRequiresSelectionAndNoLocalHarness(t *testing.T) {
 	if len(a.cfg().Agents) != 2 {
 		t.Fatal("discovery registered agents")
 	}
-	if err := a.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "premature", Harness: "kimi", Node: "node-test"}); err == nil {
+	if err := a.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "premature", Harness: "pi", Node: "node-test"}); err == nil {
 		t.Fatal("unregistered remote tool accepted")
 	}
-	result, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "kimi", AgentID: "remote-kimi", ExpectedRevision: discovery.Revision})
+	result, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "pi", AgentID: "remote-pi", ExpectedRevision: discovery.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Registered || result.Harness != "kimi" || a.cfg().Agents["remote-kimi"].Node != "node-test" {
+	if !result.Registered || result.Harness != "pi" || a.cfg().Agents["remote-pi"].Node != "node-test" {
 		t.Fatalf("registration=%+v agents=%+v", result, a.cfg().Agents)
 	}
-	if _, ok := a.cfg().Harnesses["kimi"]; ok {
+	if _, ok := a.cfg().Harnesses["pi"]; ok {
 		t.Fatal("remote command copied into local harnesses")
 	}
-	if err := a.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "remote-second", Harness: "kimi", Node: "node-test"}); err != nil {
+	if err := a.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "remote-second", Harness: "pi", Node: "node-test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.UpdateAgent(t.Context(), "remote-second", consoleapi.AgentSpec{Harness: "kimi", Node: "node-test", Model: "node-model"}); err != nil {
+	if err := a.UpdateAgent(t.Context(), "remote-second", consoleapi.AgentSpec{Harness: "pi", Node: "node-test", Model: "node-model"}); err != nil {
 		t.Fatal(err)
 	}
 	discovery, err = a.NodeAgents(t.Context(), "node-test")
@@ -230,11 +237,11 @@ func TestRemoteAgentEnrollmentRequiresSelectionAndNoLocalHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, candidate := range discovery.Agents {
-		if candidate.ID == "kimi" && (!candidate.Configured || !candidate.Registered) {
+		if candidate.ID == "pi" && (!candidate.Configured || !candidate.Registered) {
 			t.Fatalf("missing registration status: %+v", candidate)
 		}
 	}
-	if _, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "kimi", AgentID: "remote-kimi", ExpectedRevision: discovery.Revision}); err != nil {
+	if _, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "pi", AgentID: "remote-pi", ExpectedRevision: discovery.Revision}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -246,22 +253,22 @@ func TestRemoteEnrollmentCanRetryAfterCoordinatorPersistenceFailure(t *testing.T
 		t.Fatal(err)
 	}
 	a.WriteConfig = func(string, *config.Config) error { return errors.New("disk full") }
-	result, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "kimi", AgentID: "remote-kimi", ExpectedRevision: discovery.Revision})
-	if err == nil || result.Harness != "kimi" || result.Registered {
+	result, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "pi", AgentID: "remote-pi", ExpectedRevision: discovery.Revision})
+	if err == nil || result.Harness != "pi" || result.Registered {
 		t.Fatalf("partial registration result=%+v err=%v", result, err)
 	}
-	if _, ok := a.cfg().Agents["remote-kimi"]; ok {
+	if _, ok := a.cfg().Agents["remote-pi"]; ok {
 		t.Fatal("failed persistence published Agent")
 	}
 	a.WriteConfig = nil
-	if _, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "kimi", AgentID: "remote-kimi", ExpectedRevision: discovery.Revision}); !errors.Is(err, nodewire.ErrSettingsRevisionConflict) {
+	if _, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "pi", AgentID: "remote-pi", ExpectedRevision: discovery.Revision}); !errors.Is(err, nodewire.ErrSettingsRevisionConflict) {
 		t.Fatalf("stale revision accepted: %v", err)
 	}
 	discovery, err = a.NodeAgents(t.Context(), "node-test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "kimi", AgentID: "remote-kimi", ExpectedRevision: discovery.Revision}); err != nil || !result.Registered {
+	if result, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "pi", AgentID: "remote-pi", ExpectedRevision: discovery.Revision}); err != nil || !result.Registered {
 		t.Fatalf("retry=%+v %v", result, err)
 	}
 }
@@ -276,7 +283,7 @@ func TestConfigurationReadDuringARemoteEnrollmentSave(t *testing.T) {
 	}
 	settings := NewSettings(a, a.cfg())
 	finished := readsDuringSave(t, a, func() error {
-		_, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "kimi", AgentID: "remote-kimi", ExpectedRevision: discovery.Revision})
+		_, err := a.EnrollNodeAgent(t.Context(), "node-test", agenttools.EnrollRequest{CandidateID: "pi", AgentID: "remote-pi", ExpectedRevision: discovery.Revision})
 		return err
 	}, func() error {
 		_, err := settings.Settings(t.Context())
@@ -285,7 +292,17 @@ func TestConfigurationReadDuringARemoteEnrollmentSave(t *testing.T) {
 	if !finished {
 		t.Fatal("reading the configuration waited for a remote enrollment save")
 	}
-	if _, ok := a.Catalog.Resolve("remote-kimi"); !ok || a.cfg().Agents["remote-kimi"].Node != "node-test" {
+	if _, ok := a.Catalog.Resolve("remote-pi"); !ok || a.cfg().Agents["remote-pi"].Node != "node-test" {
 		t.Fatal("the saved agent was not published")
+	}
+}
+
+// installedTools puts pi and the Node.js runtime its adapter needs in dir.
+func installedTools(t *testing.T, dir string) {
+	t.Helper()
+	for _, name := range []string{"pi", "node", "npm"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nprintf 'test version\\n'\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

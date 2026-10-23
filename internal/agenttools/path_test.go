@@ -37,11 +37,12 @@ func TestFinderDiscoveryIncludesUserInstallersWithoutExecuting(t *testing.T) {
 	body := "#!/bin/sh\n: > '" + marker + "'\n"
 	nvm := filepath.Join(home, ".nvm", "versions", "node", "v22.22.0", "bin")
 	want := map[string]string{}
-	for _, name := range []string{"codex", "claude", "dsh", "node", "npm"} {
+	for _, name := range []string{"codex", "node", "npm"} {
 		want[name] = pathTestProgram(t, nvm, name, body)
 	}
-	want["kimi"] = pathTestProgram(t, filepath.Join(home, ".kimi-code", "bin"), "kimi", body)
-	want["grok"] = pathTestProgram(t, filepath.Join(home, ".local", "bin"), "grok", body)
+	want["claude"] = pathTestProgram(t, filepath.Join(home, ".local", "bin"), "claude", body)
+	// pi's own installer keeps its launcher in ~/.pi/agent/bin.
+	want["pi"] = pathTestProgram(t, filepath.Join(home, ".pi", "agent", "bin"), "pi", body)
 	// Keep this assertion independent of tools installed in the test host's
 	// system directories, while using the actual sparse-environment expansion.
 	var fixtureDirs []string

@@ -269,14 +269,14 @@ func TestDeleteConversationForgetsSessionsAndPreferences(t *testing.T) {
 func TestOpenDropsDeferredRenewalMarker(t *testing.T) {
 	book := testLedger(t)
 	doc := book.Document("state")
-	if err := doc.Save([]byte(`{"conversations":{"chat":{"active_agent":"grok","sessions":{},"renew":{"grok":true}}}}`)); err != nil {
+	if err := doc.Save([]byte(`{"conversations":{"chat":{"active_agent":"pi","sessions":{},"renew":{"pi":true}}}}`)); err != nil {
 		t.Fatal(err)
 	}
 	store, err := OpenLedger(book)
 	if err != nil {
 		t.Fatalf("open with renew marker: %v", err)
 	}
-	if got := store.Conversation("chat").ActiveAgent; got != "grok" {
+	if got := store.Conversation("chat").ActiveAgent; got != "pi" {
 		t.Fatalf("active agent = %q, want the stored conversation", got)
 	}
 	if err := store.SetActiveAgent("chat", "claude"); err != nil {

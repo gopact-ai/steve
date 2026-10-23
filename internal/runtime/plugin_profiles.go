@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/pihome"
 	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/skills"
 )
@@ -37,12 +38,10 @@ func (p PluginProfiles) materialize(ctx context.Context, dir string, record plug
 		err = PrepareCodex(home, source)
 	case harness.ClaudeCode:
 		err = PrepareClaude(home, source)
-	case harness.Dsh:
-		err = PrepareDsh(home, source)
-	case harness.Grok:
-		err = PrepareGrok(home, source)
-	case harness.Kimi:
-		err = PrepareKimi(home, source)
+	case harness.Pi:
+		// A pinned profile's skills are its own; pi's model access comes
+		// from the operator's pi directory, as for the installation's home.
+		err = PreparePi(home, piSource())
 	default:
 		err = os.MkdirAll(filepath.Join(home, "skills"), 0700)
 	}
@@ -78,6 +77,9 @@ func (p PluginProfiles) Config(record plugins.RuntimeRecord) (harness.Config, er
 	if key != "" {
 		native.Env = replaceProfileEnv(native.Env, key, filepath.Join(dir, "home"))
 	}
+	if key == pihome.EnvHomes {
+		native.Env = replaceProfileEnv(native.Env, harness.EnvPiAgentDir, pihome.Dir(filepath.Join(dir, "home"), pihome.ReadOnly))
+	}
 	native.Env = replaceProfileEnv(native.Env, "STEVE_PLUGIN_SKILLS_DIR", filepath.Join(dir, "home", "skills"))
 	return harness.Config{Command: native.Command, Args: native.Args, Env: native.Env, ProcessDir: native.ProcessDir, Permission: native.Permission}, nil
 }
@@ -89,12 +91,10 @@ func (p PluginProfiles) nativeHome(id string, env []string) (string, string) {
 		key, source = harness.EnvCodexHome, CodexHome(p.StateDir)
 	case harness.ClaudeCode:
 		key, source = harness.EnvClaudeConfigDir, ClaudeHome(p.StateDir)
-	case harness.Dsh:
-		key, source = harness.EnvDshHome, DshHome(p.StateDir)
-	case harness.Grok:
-		key, source = harness.EnvGrokHome, GrokHome(p.StateDir)
-	case harness.Kimi:
-		key, source = harness.EnvKimiCodeHome, KimiHome(p.StateDir)
+	case harness.Pi:
+		// Steve's pi homes are selected per policy under STEVE_PI_HOMES; the
+		// skills the profile copies are the installation's shared ones.
+		key, source = pihome.EnvHomes, PiHome(p.StateDir)
 	}
 	if key != "" {
 		for _, entry := range env {
@@ -147,4 +147,13 @@ func copyProfileSkills(ctx context.Context, source, dest string, excluded ...str
 	}
 	_, err = skills.Unpack(bundle.Data, dest)
 	return err
+}
+
+// piSource is the operator's own pi directory, where model access lives.
+func piSource() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".pi", "agent")
 }

@@ -69,6 +69,8 @@ export function troubleWords(a: Agent, machine: string, tr: Translator): string 
             return tr("fleet.whyUnknownNode");
         case "harness_missing":
             return tr("fleet.whyHarness", { machine, tool: a.harness, detail: a.reason_detail || "" });
+        case "harness_retired":
+            return tr("fleet.whyRetired", { tool: a.reason_detail || a.harness });
         case "disk_full":
             return tr("fleet.whyDisk", { machine, free: a.reason_detail || "" });
         case "model_missing":

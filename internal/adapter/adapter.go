@@ -59,6 +59,13 @@ var Catalog = map[string]Pin{
 		Integrity: "sha512-Un6I4BRkhpCFS3I7kr5C/lkAm8Nc3VuGZU2YQ3xIpJAIxV94iWO0Q2CH2QABxMERpONRu4Le6XC9V+5PImQZ2A==",
 		Bin:       "node_modules/.bin/claude-agent-acp",
 	},
+	"pi-acp": {
+		Package:   "pi-acp",
+		Version:   "0.0.34",
+		Tarball:   "https://registry.npmjs.org/pi-acp/-/pi-acp-0.0.34.tgz",
+		Integrity: "sha512-MrCp37UbpUzkTkzTIMJQf1RYrT+kr4fgGDGFoLmBN26UupuCZp0XxVIY+7XYsMo3yDnzDeZUJ0jPyM3Si6Bkkg==",
+		Bin:       "node_modules/.bin/pi-acp",
+	},
 }
 
 // Names lists the catalog, sorted, for error messages and reporting.

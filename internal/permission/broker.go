@@ -51,6 +51,14 @@ func (b *Broker) Decide(kind acp.ToolKind, options []acp.PermissionOption) acp.R
 	return pickOutcome(options, acp.PermissionOptionKindAllowOnce, acp.PermissionOptionKindAllowAlways)
 }
 
+// Policy is the policy name the broker was made from.
+func (b *Broker) Policy() string {
+	if b == nil {
+		return PolicyDeny
+	}
+	return b.policy
+}
+
 // Allow reports whether the policy allows this tool kind outright.
 func (b *Broker) Allow(kind acp.ToolKind) bool { return b.allows(kind) }
 

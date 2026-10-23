@@ -58,7 +58,7 @@ func TestLazyNodeStartupAndSettingsWakeNeverLaunchConfiguredAgents(t *testing.T)
 			for i := range count {
 				cfg.Harnesses[fmt.Sprintf("custom-%04d", i)] = HarnessSpec{Command: program, Args: []string{"acp", "", "含 空格"}, Env: []string{"MODE=ordinary"}}
 			}
-			for _, id := range []string{"codex", "claude-code", "grok", "kimi"} {
+			for _, id := range []string{"codex", "claude-code", "pi", "kimi"} {
 				cfg.Harnesses[id] = HarnessSpec{Command: program, Adapter: "codex-acp"}
 			}
 			if err := writeConfig(cfg); err != nil {

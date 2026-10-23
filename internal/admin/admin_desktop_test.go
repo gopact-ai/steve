@@ -2,16 +2,19 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/adapter"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -21,12 +24,15 @@ import (
 	"github.com/gopact-ai/steve/internal/skills"
 )
 
+// desktopAdminFixture is a first-launch desktop installation on a machine
+// with pi and Claude Code installed. Their pinned adapters are already in
+// the installation's adapter cache, so enrollment never reaches the network.
 func desktopAdminFixture(t *testing.T) (*Service, string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	bin := t.TempDir()
 	t.Setenv("PATH", bin)
-	for _, tool := range []string{"grok", "kimi"} {
+	for _, tool := range []string{"pi", "claude", "node", "npm"} {
 		if err := os.WriteFile(filepath.Join(bin, tool), []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -38,6 +44,9 @@ func desktopAdminFixture(t *testing.T) (*Service, string) {
 	cfg, err := config.Load(install.Paths.Config)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, name := range []string{"pi-acp", "claude-agent-acp"} {
+		cachedAdapter(t, cfg.AdapterDir(), name, "#!/bin/sh\nexit 1\n")
 	}
 	catalog, err := cfg.AgentCatalog()
 	if err != nil {
@@ -56,6 +65,27 @@ func desktopAdminFixture(t *testing.T) (*Service, string) {
 		LiveSkills: &skills.Live{Map: skillMap, After: func() error { t.Fatal("enrollment restarted existing agents"); return nil }}}, bin
 }
 
+// cachedAdapter places a verified installation of the pinned adapter name
+// running script, the shape adapter.Installer leaves behind.
+func cachedAdapter(t *testing.T, dir, name, script string) string {
+	t.Helper()
+	pin := adapter.Catalog[name]
+	installed := filepath.Join(dir, name+"@"+pin.Version)
+	command := filepath.Join(installed, pin.Bin)
+	if err := os.MkdirAll(filepath.Dir(command), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(command)
+	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker, _ := json.Marshal(map[string]string{"package": pin.Package, "version": pin.Version, "integrity": pin.Integrity})
+	if err := os.WriteFile(filepath.Join(installed, ".steve-adapter.json"), marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return command
+}
+
 func TestDesktopDiscoveryDoesNotEnrollOrPrepareTools(t *testing.T) {
 	admin, bin := desktopAdminFixture(t)
 	before, err := os.ReadFile(admin.Path)
@@ -70,14 +100,14 @@ func TestDesktopDiscoveryDoesNotEnrollOrPrepareTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var grok consoleapi.DesktopAgentCandidate
+	var pi consoleapi.DesktopAgentCandidate
 	for _, candidate := range found.Agents {
-		if candidate.ID == "grok" {
-			grok = candidate
+		if candidate.ID == "pi" {
+			pi = candidate
 		}
 	}
-	if !grok.Installed || grok.Registered || grok.Executable != filepath.Join(bin, "grok") {
-		t.Fatalf("discovered local agent: %+v", grok)
+	if !pi.Installed || pi.Registered || pi.Executable != filepath.Join(bin, "pi") {
+		t.Fatalf("discovered local agent: %+v", pi)
 	}
 	after, err := os.ReadFile(admin.Path)
 	if err != nil || string(before) != string(after) || len(admin.Catalog.List()) != 0 {
@@ -91,24 +121,24 @@ func TestDesktopDiscoveryDoesNotEnrollOrPrepareTools(t *testing.T) {
 func TestDesktopEnrollmentTakesTheNamesAndDefaultTheOwnerChose(t *testing.T) {
 	admin, _ := desktopAdminFixture(t)
 	status, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{Agents: []consoleapi.DesktopEnrollAgent{
-		{CandidateID: "grok", AgentID: "reviewer", About: "代码评审"},
-		{CandidateID: "kimi", AgentID: "coder", Default: true},
+		{CandidateID: "pi", AgentID: "reviewer", About: "代码评审"},
+		{CandidateID: "claude", AgentID: "coder", Default: true},
 	}})
 	if err != nil || status.AgentCount != 2 || status.DefaultAgent != "coder" {
 		t.Fatalf("enrollment result: %+v, %v", status, err)
 	}
 	reviewer, ok := admin.cfg().Agents["reviewer"]
-	if !ok || reviewer.Harness != "grok" || reviewer.About != "代码评审" || reviewer.Default {
+	if !ok || reviewer.Harness != "pi" || reviewer.About != "代码评审" || reviewer.Default {
 		t.Fatalf("named agent: %+v (present %v)", reviewer, ok)
 	}
 	if len(reviewer.Aliases) != 0 {
 		t.Fatalf("a renamed agent kept the tool's own name as an alias: %v", reviewer.Aliases)
 	}
 	coder := admin.cfg().Agents["coder"]
-	if coder.Harness != "kimi" || !coder.Default {
+	if coder.Harness != "claude-code" || !coder.Default {
 		t.Fatalf("chosen default: %+v", coder)
 	}
-	if _, taken := admin.cfg().Agents["grok"]; taken {
+	if _, taken := admin.cfg().Agents["pi"]; taken {
 		t.Fatal("the tool id was registered alongside the name the owner chose")
 	}
 	catalog, err := admin.cfg().AgentCatalog()
@@ -122,8 +152,8 @@ func TestDesktopEnrollmentTakesTheNamesAndDefaultTheOwnerChose(t *testing.T) {
 
 func TestDesktopEnrollmentRefusesNamesItCannotAnswerTo(t *testing.T) {
 	admin, _ := desktopAdminFixture(t)
-	for _, name := range []string{"Review Bot", "-grok", "grok/one"} {
-		if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{Agents: []consoleapi.DesktopEnrollAgent{{CandidateID: "grok", AgentID: name}}}); err == nil {
+	for _, name := range []string{"Review Bot", "-pi", "pi/one"} {
+		if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{Agents: []consoleapi.DesktopEnrollAgent{{CandidateID: "pi", AgentID: name}}}); err == nil {
 			t.Fatalf("name %q was accepted", name)
 		}
 	}
@@ -131,8 +161,8 @@ func TestDesktopEnrollmentRefusesNamesItCannotAnswerTo(t *testing.T) {
 		t.Fatalf("a refused name still registered something: %v", admin.cfg().Agents)
 	}
 	if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{Agents: []consoleapi.DesktopEnrollAgent{
-		{CandidateID: "grok", AgentID: "same"},
-		{CandidateID: "kimi", AgentID: "same"},
+		{CandidateID: "pi", AgentID: "same"},
+		{CandidateID: "claude", AgentID: "same"},
 	}}); err == nil {
 		t.Fatal("two agents were registered under one name")
 	}
@@ -140,23 +170,24 @@ func TestDesktopEnrollmentRefusesNamesItCannotAnswerTo(t *testing.T) {
 
 func TestDesktopEnrollmentPersistsOnlyChosenToolsAndReplaysSafely(t *testing.T) {
 	admin, bin := desktopAdminFixture(t)
-	status, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}})
-	if err != nil || !status.SetupRequired || status.AgentCount != 1 || status.DefaultAgent != "grok" {
+	status, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"pi"}})
+	if err != nil || !status.SetupRequired || status.AgentCount != 1 || status.DefaultAgent != "pi" {
 		t.Fatalf("enrollment result: %+v, %v", status, err)
 	}
-	if admin.cfg().Harnesses["grok"].Command != filepath.Join(bin, "grok") || admin.cfg().Harnesses["grok"].Permission != config.PermissionRead {
-		t.Fatal("enrollment did not preserve the selected executable and permission")
+	enrolled := admin.cfg().Harnesses["pi"]
+	if enrolled.Adapter != "pi-acp" || !slices.Equal(enrolled.Env, []string{"PI_ACP_PI_COMMAND=" + filepath.Join(bin, "pi")}) || enrolled.Permission != config.PermissionRead {
+		t.Fatalf("enrollment did not keep the selected pi and permission: %+v", enrolled)
 	}
 	stateDir := filepath.Dir(admin.cfg().Gateway.StatePath)
-	for _, unselected := range []string{runtime.CodexHome(stateDir), runtime.ClaudeHome(stateDir), runtime.KimiHome(stateDir)} {
+	for _, unselected := range []string{runtime.CodexHome(stateDir), runtime.ClaudeHome(stateDir)} {
 		if _, err := os.Lstat(unselected); !os.IsNotExist(err) {
 			t.Fatalf("unselected runtime prepared: %s, %v", unselected, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(runtime.GrokHome(stateDir), "skills", "skill-creator", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(runtime.PiHome(stateDir), "skills", "skill-creator", "SKILL.md")); err != nil {
 		t.Fatalf("selected runtime did not receive enabled skills: %v", err)
 	}
-	if _, err := os.Lstat(filepath.Join(runtime.GrokHome(stateDir), "skills", "steve")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(runtime.PiHome(stateDir), "skills", "steve")); !os.IsNotExist(err) {
 		t.Fatalf("platform MCP must not be installed as a skill: %v", err)
 	}
 	saved, err := config.Load(admin.Path)
@@ -164,12 +195,12 @@ func TestDesktopEnrollmentPersistsOnlyChosenToolsAndReplaysSafely(t *testing.T) 
 		t.Fatalf("restart config differs from enrolled state: %v", err)
 	}
 	admin.WriteConfig = func(string, *config.Config) error { t.Fatal("replayed enrollment rewrote config"); return nil }
-	if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}}); err != nil {
+	if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"pi"}}); err != nil {
 		t.Fatal(err)
 	}
 	admin.WriteConfig = nil
-	status, err = admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok", "kimi"}})
-	if err != nil || status.AgentCount != 2 || status.DefaultAgent != "grok" {
+	status, err = admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"pi", "claude"}})
+	if err != nil || status.AgentCount != 2 || status.DefaultAgent != "pi" {
 		t.Fatalf("additional enrollment changed the default: %+v, %v", status, err)
 	}
 	found, err := admin.DesktopDiscover(t.Context())
@@ -177,7 +208,7 @@ func TestDesktopEnrollmentPersistsOnlyChosenToolsAndReplaysSafely(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, candidate := range found.Agents {
-		if (candidate.ID == "grok" || candidate.ID == "kimi") && !candidate.Registered {
+		if (candidate.ID == "pi" || candidate.ID == "claude") && !candidate.Registered {
 			t.Fatalf("registered candidate is not marked: %+v", candidate)
 		}
 	}
@@ -199,16 +230,16 @@ func TestDesktopEnrollmentRespectsConfigCommitBoundary(t *testing.T) {
 				}
 				return &config.CommittedError{Err: errors.New("directory sync failed")}
 			}
-			_, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}})
+			_, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"pi"}})
 			if err == nil || config.Committed(err) != committed {
 				t.Fatalf("enrollment lost commit status: %v", err)
 			}
-			_, published := admin.Catalog.Resolve("grok")
+			_, published := admin.Catalog.Resolve("pi")
 			if published != committed || (len(admin.cfg().Harnesses) > 0) != committed {
 				t.Fatal("published config disagrees with persistence")
 			}
 			if !committed {
-				if _, err := admin.Manager.SupportsHTTPMCP(t.Context(), harness.Placement{Harness: "grok"}); err == nil || !strings.Contains(err.Error(), "unknown harness") {
+				if _, err := admin.Manager.SupportsHTTPMCP(t.Context(), harness.Placement{Harness: "pi"}); err == nil || !strings.Contains(err.Error(), "unknown harness") {
 					t.Fatalf("rejected runtime configuration was published: %v", err)
 				}
 			}
@@ -219,7 +250,7 @@ func TestDesktopEnrollmentRespectsConfigCommitBoundary(t *testing.T) {
 func TestDesktopEnrollmentRejectsUnrecognizedSelectionBeforeSideEffects(t *testing.T) {
 	admin, _ := desktopAdminFixture(t)
 	admin.WriteConfig = func(string, *config.Config) error { t.Fatal("invalid selection reached persistence"); return nil }
-	if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok", "/tmp/arbitrary-command"}}); err == nil {
+	if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"pi", "/tmp/arbitrary-command"}}); err == nil {
 		t.Fatal("invalid selection was accepted")
 	}
 	if len(admin.Catalog.List()) != 0 {
@@ -235,11 +266,11 @@ func TestDesktopEnrollmentRejectsConflictingNamesBeforeRuntimePreparation(t *tes
 		t.Run(conflict, func(t *testing.T) {
 			admin, _ := desktopAdminFixture(t)
 			if conflict == "alias" {
-				admin.cfg().Agents["other"] = config.Agent{Harness: "custom", Aliases: []string{"grok"}, Default: true}
+				admin.cfg().Agents["other"] = config.Agent{Harness: "custom", Aliases: []string{"pi"}, Default: true}
 			} else {
-				admin.cfg().Harnesses["grok"] = config.Harness{Command: "/custom-tool", Permission: config.PermissionRead}
+				admin.cfg().Harnesses["pi"] = config.Harness{Command: "/custom-tool", Permission: config.PermissionRead}
 			}
-			if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}}); err == nil {
+			if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"pi"}}); err == nil {
 				t.Fatal("conflicting configuration was accepted")
 			}
 			if _, err := os.Lstat(filepath.Join(filepath.Dir(admin.cfg().Gateway.StatePath), "runtimes")); !os.IsNotExist(err) {
@@ -256,19 +287,15 @@ func TestDesktopEnrollmentRunsSelectedAgentWithoutRestart(t *testing.T) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build mockagent: %v\n%s", err, output)
 	}
-	admin, toolsDir := desktopAdminFixture(t)
-	if err := os.Remove(filepath.Join(toolsDir, "grok")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(bin, filepath.Join(toolsDir, "grok")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}}); err != nil {
+	admin, _ := desktopAdminFixture(t)
+	// The pinned adapter is the agent process; here it is the mock agent.
+	cachedAdapter(t, admin.cfg().AdapterDir(), "pi-acp", "#!/bin/sh\nexec '"+bin+"' \"$@\"\n")
+	if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"pi"}}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	runner, err := admin.Manager.OpenSession(ctx, harness.Placement{Harness: "grok"}, "", t.TempDir(), nil)
+	runner, err := admin.Manager.OpenSession(ctx, harness.Placement{Harness: "pi"}, "", t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +309,7 @@ func TestDesktopConcurrentRegistrationAndReadsRetainBothAgents(t *testing.T) {
 	admin, _ := desktopAdminFixture(t)
 	var workers sync.WaitGroup
 	errorsFound := make(chan error, 6)
-	for _, id := range []string{"grok", "kimi"} {
+	for _, id := range []string{"pi", "claude"} {
 		workers.Go(func() {
 			_, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{id}})
 			if err != nil {
@@ -324,7 +351,7 @@ func TestDesktopStatusReadDuringAnEnrollmentSave(t *testing.T) {
 	admin, _ := desktopAdminFixture(t)
 	var during consoleapi.DesktopStatus
 	finished := readsDuringSave(t, admin, func() error {
-		_, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}})
+		_, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"pi"}})
 		return err
 	}, func() error {
 		var err error
@@ -337,7 +364,7 @@ func TestDesktopStatusReadDuringAnEnrollmentSave(t *testing.T) {
 	if during.AgentCount != 0 {
 		t.Fatal("a reader saw agents that were not saved yet")
 	}
-	if _, ok := admin.Catalog.Resolve("grok"); !ok {
+	if _, ok := admin.Catalog.Resolve("pi"); !ok {
 		t.Fatal("the saved agent was not published")
 	}
 }

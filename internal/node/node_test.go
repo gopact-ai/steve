@@ -540,7 +540,7 @@ func TestSkillsArePushedAndMaterialized(t *testing.T) {
 			t.Errorf("skill not materialized in %s: %v", dest, err)
 		}
 	}
-	for _, unselected := range []string{"grok", "kimi"} {
+	for _, unselected := range []string{"pi"} {
 		if _, err := os.Stat(filepath.Join(state, "runtimes", unselected)); !os.IsNotExist(err) {
 			t.Errorf("unregistered tool %s runtime was created: %v", unselected, err)
 		}
