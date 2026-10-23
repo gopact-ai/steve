@@ -16,12 +16,10 @@ import (
 )
 
 func TestNodeOwnedSessionWorkspaceFileCallbacks(t *testing.T) {
-	t.Parallel()
 	testNodeOwnedSessionWorkspaceFileCallbacks(t, false)
 }
 
 func TestNodeOwnedPluginSessionWorkspaceFileCallbacks(t *testing.T) {
-	t.Parallel()
 	testNodeOwnedSessionWorkspaceFileCallbacks(t, true)
 }
 

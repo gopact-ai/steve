@@ -134,7 +134,6 @@ func TestBudgetStopsTheTaskAndNamesTheLimit(t *testing.T) {
 // behind it. Queueing is the default; the bang is the explicit "no, do it
 // this way instead" — and the interrupted turn is still charged.
 func TestBangMessageInterruptsTheRunningTurn(t *testing.T) {
-	t.Parallel()
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
 	coordinator, tasks := taskCoordinator(t, runner)
 

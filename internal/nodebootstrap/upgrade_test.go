@@ -221,7 +221,6 @@ func TestPeerUpgradeScriptSwapsTheProgramAndRestartsThePeer(t *testing.T) {
 }
 
 func TestPeerUpgradeScriptRestoresThePreviousProgramWhenTheNewOneExits(t *testing.T) {
-	t.Parallel()
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("peer upgrade runs on linux and darwin")
 	}
@@ -372,7 +371,6 @@ func TestPeerUpgradeScriptRefusesAMachineWithoutAPeer(t *testing.T) {
 // Missing it leaves the old process holding the gateway lock, the new
 // program exits on it, and a working upgrade looks like a broken build.
 func TestPeerUpgradeScriptStopsAPeerStartedByARelativePath(t *testing.T) {
-	t.Parallel()
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("peer upgrade runs on linux and darwin")
 	}
@@ -420,7 +418,6 @@ func TestPeerUpgradeScriptStopsAPeerStartedByARelativePath(t *testing.T) {
 // beside the peer that runs, says that peer was not stopped and the
 // machine not upgraded, and exits 31.
 func TestPeerUpgradeScriptPutsTheProgramsBackWhenThePeerWasNotStopped(t *testing.T) {
-	t.Parallel()
 	requirePeerPlatform(t)
 	for _, earlier := range []bool{false, true} {
 		real, home := symlinkedPeer(t)

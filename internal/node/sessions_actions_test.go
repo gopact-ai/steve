@@ -63,7 +63,6 @@ func TestSessionDispatchPreservesObservationAndRejectsClientStart(t *testing.T) 
 // one: the session takes the change while it is answering, keeps its
 // running receipt, and the agent reports the revised selector.
 func TestARunningSessionTakesASettingsChange(t *testing.T) {
-	t.Parallel()
 	server := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}})
 	if err := server.startSessions(t.Context()); err != nil {
 		t.Fatal(err)

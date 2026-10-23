@@ -103,7 +103,6 @@ func TestInspectBinaryUsesHeadersRatherThanExecuting(t *testing.T) {
 }
 
 func TestBootstrapDownloadAndChecksumInIsolatedHome(t *testing.T) {
-	t.Parallel()
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		t.Skip("bootstrap requires a Unix platform")
 	}

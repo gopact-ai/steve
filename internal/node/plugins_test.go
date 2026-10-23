@@ -71,7 +71,6 @@ func TestPluginPrepareUsesAuthenticatedNodeAndKeepsSecretsLocal(t *testing.T) {
 }
 
 func TestPluginPreparationChallengesAuthorityBeforePublishing(t *testing.T) {
-	t.Parallel()
 	server := startNode(t, ServerConfig{Name: "worker", Token: "plugin-test", StateDir: t.TempDir(), PluginAuthorizer: CoordinatorPluginAuthorizer{}})
 	registry := NewRegistry("cluster", map[string]Config{"worker": {Addr: server.Addr(), Token: "plugin-test"}})
 	t.Cleanup(registry.Close)

@@ -164,11 +164,8 @@ func TestAbandonCanonicalRecoverySharesTheCoreCommit(t *testing.T) {
 }
 
 func TestCanonicalRecoveryAndItsHoldShareTheReplicatedAbandonDecision(t *testing.T) {
-	t.Parallel()
 	for _, rejected := range []bool{false, true} {
 		t.Run(map[bool]string{false: "commit", true: "reject"}[rejected], func(t *testing.T) {
-			// Each case builds its own fixture.
-			t.Parallel()
 			c, p, source, _ := recoveryCopyFixture(t, true)
 			book := ledgerOf(t, c)
 			replica := &forceControlReplication{book: book, entered: make(chan struct{}), release: make(chan struct{})}
@@ -286,7 +283,6 @@ func TestRecoveryHoldSurvivesConcurrentStopSnapshotLandingAndAdmission(t *testin
 }
 
 func TestRecoveryDeletionAndSweepKeepSourceAndAcceptedProducerAuthority(t *testing.T) {
-	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	proof := attempt.RetainedEvidence{ObservedAt: time.Now(), Session: nodewire.SessionState{ID: source.Session, Harness: source.Harness, ProcessStopped: true, State: nodewire.SessionClosed, Binding: nodewire.SessionBinding{ProjectID: source.Project, SessionID: attempt.RetainedSessionID("console:recovery", source.TaskID, source.Agent), TaskID: source.TaskID, AttemptID: source.ID, NodeID: source.Node, TaskEpoch: source.Execution.Epoch, ExecutionEpoch: attempt.SessionExecutionEpoch(source)}}}
 	var err error

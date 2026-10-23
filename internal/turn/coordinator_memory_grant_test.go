@@ -68,7 +68,6 @@ func (r *recallContext) Forget(context.Context, string, string, string, string, 
 // it, whose execution has ended by then, does not decide what the turn may
 // read, so the project's memory still reaches it.
 func TestAnOwnerTurnQueuedFromAnEndedToolCallStillGetsItsProjectMemory(t *testing.T) {
-	t.Parallel()
 	book := testLedger(t)
 	grants := &endingGrantStore{scheduleGrantStore: scheduleGrantStore{data: map[string]json.RawMessage{}}}
 	shared := memory.NewLedgerStore(book)

@@ -311,7 +311,6 @@ func TestPeerRestartScriptDefersToAnInstallationInProgress(t *testing.T) {
 // A peer started from its own directory as ./bin/steve is found the way
 // an upgrade finds it, through the pid its gateway lock records.
 func TestPeerRestartScriptStopsAPeerStartedByARelativePath(t *testing.T) {
-	t.Parallel()
 	requirePeerPlatform(t)
 	home, _ := layoutPeer(t)
 	oldPID := relativePeer(t, home)
@@ -360,7 +359,6 @@ func TestPeerRestartScriptWaitsForEveryPeerProcessItStops(t *testing.T) {
 // neither stops it nor takes it for this installation's peer, and starts
 // this installation's own.
 func TestPeerRestartScriptLeavesAnotherInstallationsPeerItsLockNames(t *testing.T) {
-	t.Parallel()
 	requirePeerPlatform(t)
 	byPath, _ := layoutPeer(t)
 	fromItsDirectory, _ := layoutPeer(t)
@@ -467,7 +465,6 @@ func awaitGatewayLock(t *testing.T, home, pid string) {
 // restart stops it and starts the installed program, and starting a peer
 // only when it is down finds it running and leaves it alone.
 func TestPeerRestartScriptFindsThePeerHoldingTheGatewayLock(t *testing.T) {
-	t.Parallel()
 	requirePeerPlatform(t)
 	for _, spelling := range peerSpellings {
 		t.Run(spelling.name, func(t *testing.T) {
@@ -521,7 +518,6 @@ func TestPeerRestartScriptFindsAPeerStartedByTheResolvedPathByItsCommandLine(t *
 // kept as the fallback in place of an earlier one, and the new program
 // runs.
 func TestPeerUpgradeScriptStopsThePeerHoldingTheGatewayLock(t *testing.T) {
-	t.Parallel()
 	requirePeerPlatform(t)
 	for _, spelling := range peerSpellings {
 		t.Run(spelling.name, func(t *testing.T) {
@@ -689,7 +685,6 @@ func TestPeerUpgradeAndRestartFindAndStopThePeerAlike(t *testing.T) {
 // A different executable may open and even flock this installation's lock.
 // The lock's recorded PID and a peer-shaped argv do not make it this peer.
 func TestPeerRestartDoesNotStopAnotherExecutableHoldingItsLock(t *testing.T) {
-	t.Parallel()
 	requirePeerPlatform(t)
 	home, _ := layoutPeer(t)
 	other, _ := layoutPeer(t)

@@ -71,7 +71,6 @@ func TestGuestCannotManageSkills(t *testing.T) {
 }
 
 func TestSkillsBlockedDuringTurn(t *testing.T) {
-	t.Parallel()
 	coordinator, _, live, _ := skillsCoordinator(t)
 	runner := live.runner
 	runner.started = make(chan struct{})

@@ -76,7 +76,6 @@ func (r *lostPreparationReply) NodeSession(ctx context.Context, node string, req
 }
 
 func TestNodePreparationReusesFrozenMCPPayloadAfterOpenResponseIsLost(t *testing.T) {
-	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	server := startNode(t, ServerConfig{Name: "worker", Token: "prepared-open", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority})
 	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "prepared-open"}})

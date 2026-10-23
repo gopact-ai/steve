@@ -31,7 +31,6 @@ func TestLocalArtifactEndpointSharesItsGenerationContract(t *testing.T) {
 }
 
 func TestArtifactDispatchUsesTheSelectedConnectionGeneration(t *testing.T) {
-	t.Parallel()
 	registry, _ := artifactNode(t)
 	c, err := registry.connect(t.Context(), "n")
 	if err != nil {

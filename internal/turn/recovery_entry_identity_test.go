@@ -208,7 +208,6 @@ func recoveryEntryRuns(t *testing.T, queued func(*testing.T, *Coordinator) conte
 // its observer fails. Like Handle, they run on the hub's own authority:
 // nothing they drive is handed the grant of the tool call behind them.
 func TestRecoveryEntriesDoNotRunUnderTheGrantOfTheToolCallThatQueuedThem(t *testing.T) {
-	t.Parallel()
 	runs := recoveryEntryRuns(t, func(t *testing.T, _ *Coordinator) context.Context { return parentToolCallContext(t) })
 	if len(runs) != recoveryEntries {
 		t.Fatalf("entries run: %d", len(runs))
@@ -248,7 +247,6 @@ func endedChildContext(t *testing.T, c *Coordinator) (context.Context, execution
 // of it: nothing they drive, before they open their own scope, identifies
 // as the child's execution.
 func TestRecoveryEntriesDoNotRunAsTheEndedChildWhoseResultQueuedThem(t *testing.T) {
-	t.Parallel()
 	children := map[string]execution.Key{}
 	runs := recoveryEntryRuns(t, func(t *testing.T, c *Coordinator) context.Context {
 		ctx, key := endedChildContext(t, c)

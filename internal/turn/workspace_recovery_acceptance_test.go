@@ -114,7 +114,6 @@ func recoveryCanonicalWriterFixture(t *testing.T, gate *recoverySnapshotGate, qu
 }
 
 func TestRecoveryCanonicalSnapshotRequiresFinalAcceptance(t *testing.T) {
-	t.Parallel()
 	gate := &recoverySnapshotGate{LocalNodes: artifact.LocalNodes{Dir: t.TempDir()}, entered: make(chan struct{}), release: make(chan struct{})}
 	c, p, source, base := recoveryCanonicalWriterFixture(t, gate, false)
 	snapshots := c.artifacts
@@ -321,11 +320,8 @@ func TestRecoveryTransferKeepsTheHoldAfterAllSourceRetirement(t *testing.T) {
 }
 
 func TestRecoveryHoldAndAdmittedLandingHaveBothSafeOrders(t *testing.T) {
-	t.Parallel()
 	for _, afterApplying := range []bool{false, true} {
 		t.Run(map[bool]string{false: "hold wins before applying", true: "applying wins before hold"}[afterApplying], func(t *testing.T) {
-			// Each case builds its own fixture.
-			t.Parallel()
 			gate := &recoverySnapshotGate{LocalNodes: artifact.LocalNodes{Dir: t.TempDir()}, entered: make(chan struct{}), release: make(chan struct{})}
 			if afterApplying {
 				gate.blockOp = ops.Apply

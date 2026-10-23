@@ -85,7 +85,6 @@ func startBlocked(t *testing.T, w *world, member string) (agentmcp.DelegateResul
 }
 
 func TestAChildsResultReachesAnIdleParentOnce(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}
@@ -124,7 +123,6 @@ func TestAChildsResultReachesAnIdleParentOnce(t *testing.T) {
 }
 
 func TestAChildEndingMidTurnWaitsForTheTurnToEnd(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}
@@ -184,7 +182,6 @@ func TestAResultCollectedByAwaitIsNotDeliveredAgain(t *testing.T) {
 }
 
 func TestAClosedParentGetsNoContinuation(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}
@@ -253,7 +250,6 @@ func TestASuppressedResultSaysWhyItsParentNeverReceivedIt(t *testing.T) {
 }
 
 func TestAFailedDeliveryIsRetriedFromTheRecord(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{fail: errors.New("channel down")}
@@ -287,7 +283,6 @@ func TestAFailedDeliveryIsRetriedFromTheRecord(t *testing.T) {
 }
 
 func TestDeliverySaysWhereTheChildsFilesAre(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}
@@ -320,7 +315,6 @@ func TestDeliverySaysWhereTheChildsFilesAre(t *testing.T) {
 // finished child can be handed over. A running parent turn delivers that
 // result itself, so the departing awaiter must not freeze a delivery batch.
 func TestAnAwaiterThatWentAwayLeavesResultsToTheRunningTurn(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}

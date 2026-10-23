@@ -99,11 +99,8 @@ func (t *actualMachineTransport) NodeSession(ctx context.Context, _ string, req 
 }
 
 func TestRecoveryMachineProofAcrossHubRefusalAndNodeRestart(t *testing.T) {
-	t.Parallel()
 	for _, mode := range []string{"hub-refused-close-proof", "node-restart-before-close"} {
 		t.Run(mode, func(t *testing.T) {
-			// Each case builds its own fixture.
-			t.Parallel()
 			c, p, original, ws := sharedCopy(t)
 			spec := recoveryCopySpec(t, c, p, ws, "actual-native-copy")
 			writer, err := c.attempts.Open(t.Context(), spec)

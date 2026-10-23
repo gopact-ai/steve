@@ -14,12 +14,10 @@ import (
 )
 
 func TestNodeSessionWireReattachesAfterOwningManagerAndConnectionClose(t *testing.T) {
-	t.Parallel()
 	testNodeSessionReattachment(t, false)
 }
 
 func TestStandaloneNodeSessionReattachesQuestionAndFencesOldCoordinator(t *testing.T) {
-	t.Parallel()
 	testNodeSessionReattachment(t, true)
 }
 
@@ -133,7 +131,6 @@ func testNodeSessionReattachment(t *testing.T, standalone bool) {
 }
 
 func TestNodeSessionCancelDistinguishesPromptSettlementAndProcessExit(t *testing.T) {
-	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority})
 	if err := s.startSessions(t.Context()); err != nil {
@@ -219,7 +216,6 @@ func TestNodeSessionAbortKeepsTerminalStateAfterPromptCallbackReturns(t *testing
 }
 
 func TestNodeSessionCancelUnblocksTheCoordinatorQuestionWaiter(t *testing.T) {
-	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	server := startNode(t, ServerConfig{Name: "worker", Token: "question-cancel", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority})
 	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "question-cancel"}})

@@ -119,7 +119,6 @@ func closeNodeAdmissionSession(t *testing.T, ctx context.Context, s *Server, req
 }
 
 func TestAcceptedNodeOptionWaitsForOriginalHostAdmission(t *testing.T) {
-	t.Parallel()
 	s, req, one, b := newNodeAdmissionSession(t, nil)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -173,7 +172,6 @@ func TestAcceptedNodeOptionWaitsForOriginalHostAdmission(t *testing.T) {
 }
 
 func TestNodeOptionStillAppliesDuringANativeQuestion(t *testing.T) {
-	t.Parallel()
 	s, req, _, b := newNodeAdmissionSession(t, nil)
 	b.unblock()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -218,7 +216,6 @@ func TestNodeOptionStillAppliesDuringANativeQuestion(t *testing.T) {
 }
 
 func TestNodeOptionAdmissionWaitHonorsCallerCancellation(t *testing.T) {
-	t.Parallel()
 	s, req, one, b := newNodeAdmissionSession(t, nil)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -255,7 +252,6 @@ func TestNodeOptionAdmissionWaitHonorsCallerCancellation(t *testing.T) {
 }
 
 func TestNodeOptionAdmissionWaitEndsOnPreAdmissionFailure(t *testing.T) {
-	t.Parallel()
 	s, req, one, b := newNodeAdmissionSession(t, []string{"MOCKAGENT_NO_MEDIA=1"})
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -292,7 +288,6 @@ func TestNodeOptionAdmissionWaitEndsOnPreAdmissionFailure(t *testing.T) {
 }
 
 func TestNodeOptionAdmissionWaitEndsOnServiceClose(t *testing.T) {
-	t.Parallel()
 	s, req, one, b := newNodeAdmissionSession(t, nil)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -320,7 +315,6 @@ func TestNodeOptionAdmissionWaitEndsOnServiceClose(t *testing.T) {
 }
 
 func TestNodeOptionAdmissionWaitRechecksRevokedAuthority(t *testing.T) {
-	t.Parallel()
 	s, req, one, b := newNodeAdmissionSession(t, nil)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()

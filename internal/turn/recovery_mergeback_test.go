@@ -870,7 +870,6 @@ func TestRecoveryOldResolverSinkCannotRebindAfterAnotherResolutionWins(t *testin
 }
 
 func TestRecoveryFinalizingInputWaitsAndRefreshesOnlyBeforeCanonicalAdmission(t *testing.T) {
-	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	publishBoundRecoveryTurn(t, c, p, ws, "queued-copy-source", map[string]string{"incoming": "accepted\n"})
 	episode := captureBoundCopy(t, c, source)
@@ -1527,7 +1526,6 @@ func (m *recoveryLifecycleSessionConsumer) OpenSession(_ context.Context, at har
 	return nil, m.refuse
 }
 func TestRecoveryWaitingRefreshUpdatesEveryLifecycleSessionInput(t *testing.T) {
-	t.Parallel()
 	c, p, original, ws := sharedCopy(t)
 	completed := publishBoundRecoveryTurn(t, c, p, ws, "copy-before-queue", map[string]string{"incoming": "accepted\n"})
 	cached := state.Session{ConversationID: "console:copy-before-queue", AgentID: "worker", HarnessID: "mock", NodeID: ws.Node, UpstreamID: completed.Session, Workspace: ws.Path, ProjectID: p.ID}

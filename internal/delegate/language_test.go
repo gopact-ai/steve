@@ -21,7 +21,6 @@ func containsHan(s string) bool {
 // A child that cannot be joined is asked about in the service's language:
 // the title, what was tried, what blocks it, why, and both choices.
 func TestRecoveryQuestionIsAskedInTheServiceLanguage(t *testing.T) {
-	t.Parallel()
 	for _, tc := range []struct {
 		locale i18n.Locale
 		tried  string
@@ -85,7 +84,6 @@ func TestDeliveryNoticeIsInTheServiceLanguage(t *testing.T) {
 // A child that never reached the ledger ends with an answer in the
 // service's language; it is shown with the child's result.
 func TestUnrecordedChildAnswersInTheServiceLanguage(t *testing.T) {
-	t.Parallel()
 	w, _ := executionWorld(t)
 	parent := w.running(t, "codex")
 	child := unrecordedChild(t, w, parent, false)
@@ -103,7 +101,6 @@ func TestUnrecordedChildAnswersInTheServiceLanguage(t *testing.T) {
 // A child whose node process stopped is ended with an explanation in the
 // service's language.
 func TestStoppedChildIsExplainedInTheServiceLanguage(t *testing.T) {
-	t.Parallel()
 	w, sessions, _, child := detachedDelegateFixture(t)
 	sessions.mu.Lock()
 	sessions.processStopped = true

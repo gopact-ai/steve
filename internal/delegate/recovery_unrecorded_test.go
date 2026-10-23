@@ -39,7 +39,6 @@ func unrecordedChild(t *testing.T, w *world, parent task.Task, bound bool) task.
 }
 
 func TestRecoverRetainedSettlesAChildThatNeverReachedTheLedger(t *testing.T) {
-	t.Parallel()
 	for name, bound := range map[string]bool{"unbound row": false, "row bound to a missing attempt": true} {
 		t.Run(name, func(t *testing.T) {
 			w, _ := executionWorld(t)
@@ -131,7 +130,6 @@ func TestRecoverRetainedLeavesRowsOpenedSinceItStarted(t *testing.T) {
 // An inherited row whose attempt is in the ledger belongs to that
 // attempt's recovery, whatever state the attempt is in.
 func TestRecoverRetainedLeavesAnInheritedRowWithItsRecord(t *testing.T) {
-	t.Parallel()
 	w, _ := executionWorld(t)
 	parent := w.running(t, "codex")
 	spawned := unrecordedChild(t, w, parent, false)
@@ -161,7 +159,6 @@ func TestRecoverRetainedLeavesAnInheritedRowWithItsRecord(t *testing.T) {
 // A child whose run already failed and answered, but left the row it
 // opened, is owed only the row: its result stands.
 func TestRecoverRetainedClosesOnlyTheRowOfAChildThatAlreadyFailed(t *testing.T) {
-	t.Parallel()
 	w, _ := executionWorld(t)
 	parent := w.running(t, "codex")
 	spawned := unrecordedChild(t, w, parent, false)
@@ -189,7 +186,6 @@ func TestRecoverRetainedClosesOnlyTheRowOfAChildThatAlreadyFailed(t *testing.T) 
 // the row closed and nothing said for it: the next resume opens a row of
 // its own.
 func TestRecoverRetainedLeavesAPausedChildToItsOwner(t *testing.T) {
-	t.Parallel()
 	w, _ := executionWorld(t)
 	parent := w.running(t, "codex")
 	spawned := unrecordedChild(t, w, parent, false)
@@ -220,7 +216,6 @@ func TestRecoverRetainedLeavesAPausedChildToItsOwner(t *testing.T) {
 // as interrupted so its parent is told, and a turn still queued for it
 // opens from there.
 func TestRecoverRetainedFailsAResumedChildWhoseTurnNeverRan(t *testing.T) {
-	t.Parallel()
 	w, _ := executionWorld(t)
 	parent := w.running(t, "codex")
 	spawned := unrecordedChild(t, w, parent, false)
@@ -281,7 +276,6 @@ func (e staleEndpoints) MCPEndpoint(context.Context, string) (string, error) {
 // A run whose bind is refused closes the row its Begin opened: nothing will
 // ever admit an attempt against it, and open it would block the tree.
 func TestDelegateClosesItsRowWhenTheBindIsRefused(t *testing.T) {
-	t.Parallel()
 	w, _ := executionWorld(t)
 	parent := w.running(t, "codex")
 	w.service.SetEndpoints(staleEndpoints{tasks: w.tasks, parent: parent.ID})

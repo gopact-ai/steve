@@ -12,7 +12,6 @@ import (
 )
 
 func TestNodeSessionPermissionWithoutOptionalToolKindCanBeAnsweredOnce(t *testing.T) {
-	t.Parallel()
 	bin := buildMockAgent(t)
 	for _, allow := range []bool{false, true} {
 		name := "reject"

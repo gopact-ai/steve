@@ -95,7 +95,6 @@ func TestLazyNodePendingBatchUsesCurrentToolSelection(t *testing.T) {
 }
 
 func TestLazyNodeAdmissionStartAndPublicationAreAtomic(t *testing.T) {
-	t.Parallel()
 	program, counter := lazyCounterProgram(t, "old-tool")
 	cfg := ServerConfig{Source: filepath.Join(t.TempDir(), "node.json"), Name: "fixture-node", Tools: []string{program}, Harnesses: map[string]HarnessSpec{}}
 	if err := writeConfig(cfg); err != nil {
@@ -169,7 +168,6 @@ func TestLazyAdmissionExpiredBeforeStartDoesNotInventLaunchEvidence(t *testing.T
 }
 
 func TestLazyBackgroundWorkerRequiresAdmissionButExplicitLaunchStillWorks(t *testing.T) {
-	t.Parallel()
 	program, counter := lazyCounterProgram(t, "explicit-host-tool")
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()

@@ -17,11 +17,8 @@ import (
 )
 
 func TestNodeSessionExplicitTaskStopEndsNativePromptWhileLifetimeOnlyDetaches(t *testing.T) {
-	t.Parallel()
 	for _, mode := range []string{"paused", "cancelled", "lifetime"} {
 		t.Run(mode, func(t *testing.T) {
-			// Each case builds its own fixture.
-			t.Parallel()
 			authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 			server := startNode(t, ServerConfig{Name: "worker", Token: "explicit-stop", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority})
 			registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "explicit-stop"}})
@@ -113,7 +110,6 @@ func TestNodeSessionExplicitTaskStopEndsNativePromptWhileLifetimeOnlyDetaches(t 
 }
 
 func TestNodeSessionRetainedAttachmentCanStopTheOriginalNativeCommand(t *testing.T) {
-	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	server := startNode(t, ServerConfig{Name: "worker", Token: "attached-stop", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority})
 	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "attached-stop"}})
@@ -217,7 +213,6 @@ func (a *delayedStopPromptAuthority) AuthorizeNodeReceipt(ctx context.Context, p
 }
 
 func TestNodeSessionStopFencesAnAlreadyAuthorizedButUnacceptedPrompt(t *testing.T) {
-	t.Parallel()
 	authority := &delayedStopPromptAuthority{base: sessionAuthorityTest{epoch: 1, writer: 1}, checked: make(chan struct{}), release: make(chan struct{})}
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(authority.release) }) }

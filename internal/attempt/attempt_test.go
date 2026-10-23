@@ -225,7 +225,6 @@ func TestSupersedeCutsOnlyTheOldAttemptsLeases(t *testing.T) {
 }
 
 func TestHeartbeatReportsLoss(t *testing.T) {
-	t.Parallel()
 	s, _ := newService(t)
 	s.TTL = 90 * time.Millisecond
 	s.now = time.Now

@@ -222,7 +222,6 @@ func (p nodePluginProvider) PluginRuntime(ctx context.Context, at harness.Placem
 }
 
 func TestRemotePluginProcessUsesOriginalRuntimeAndRejectsOtherRuntime(t *testing.T) {
-	t.Parallel()
 	bin := buildMockAgent(t)
 	s := startNode(t, ServerConfig{Name: "worker", Token: "plugin", StateDir: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: bin}}})
 	registry := NewRegistry("owner", map[string]Config{"worker": {Addr: s.Addr(), Token: "plugin"}})

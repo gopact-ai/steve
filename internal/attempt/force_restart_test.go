@@ -221,7 +221,6 @@ func TestForceRestartRefusedProposalRollsBackReservationAndClaim(t *testing.T) {
 }
 
 func TestForceRestartClaimIsInvisibleUntilReplicationCompletes(t *testing.T) {
-	t.Parallel()
 	s, r := restartFixture(t)
 	op, _, err := s.BeginForceRestart(t.Context(), r.ID, 1, "cluster", "holder", ForceRestartSelection{MembershipRevision: 1})
 	if err != nil {

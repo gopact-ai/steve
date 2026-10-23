@@ -108,7 +108,6 @@ func TestTaskStopReachesDetachedDelegateAndRejectsLateSuccess(t *testing.T) {
 // queue is written on no longer ends with the child's; the stop is in the
 // ledger before the queue is written, and the queue checks it there.
 func TestAChildStoppedAsItsLandingIsCutIsNotQueued(t *testing.T) {
-	t.Parallel()
 	hang := &hangingHome{reached: make(chan struct{})}
 	w, r := executionWorldOn(t, "node-a", func(n artifact.LocalNodes) artifact.Nodes {
 		hang.LocalNodes = n

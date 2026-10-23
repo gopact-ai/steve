@@ -82,7 +82,6 @@ func testSettledAgentExit(t *testing.T, interrupted bool) {
 }
 
 func TestConcurrentLiveOpenAndPromptDoNotBlockNode(t *testing.T) {
-	t.Parallel()
 	cfg, req, old := resumedFixture(t, buildMockAgent(t))
 	saveResumeFixture(t, cfg, old)
 	s := NewServer(cfg)

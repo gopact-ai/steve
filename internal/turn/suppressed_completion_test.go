@@ -86,11 +86,8 @@ func suppressedCompletionCoordinator(t *testing.T) (*Coordinator, *ledger.Ledger
 }
 
 func TestSuppressedDescendantCompletionStillRequiresDurableGuards(t *testing.T) {
-	t.Parallel()
 	for _, scenario := range []string{"idle", "reserved", "running", "session-unknown", "session-unsettled", "quarantined", "registry-active", "registry-unresolved", "close-owed", "close-owed-other-task", "landing-queued", "landing-wal", "wrong-execution"} {
 		t.Run(scenario, func(t *testing.T) {
-			// Each case builds its own fixture.
-			t.Parallel()
 			c, book, grandchild, token := suppressedCompletionCoordinator(t)
 			var scope *execution.Scope
 			var owed state.OwedClose
@@ -210,7 +207,6 @@ func TestSuppressedDescendantCompletionStillRequiresDurableGuards(t *testing.T) 
 }
 
 func TestCompleteCommandAcceptsSuppressedDescendantWithoutChangingFinalArtifact(t *testing.T) {
-	t.Parallel()
 	c, _, grandchild, _ := suppressedCompletionCoordinator(t)
 	conversation := c.store.Conversation("chat")
 	before, err := c.attempts.ForTask(t.Context(), "1")

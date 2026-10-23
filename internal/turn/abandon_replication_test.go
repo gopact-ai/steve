@@ -12,11 +12,8 @@ import (
 )
 
 func TestAbandonmentAndAccountingBecomeVisibleOnlyAfterTheSameCommit(t *testing.T) {
-	t.Parallel()
 	for _, rejected := range []bool{false, true} {
 		t.Run(map[bool]string{false: "commit", true: "reject"}[rejected], func(t *testing.T) {
-			// Each case builds its own fixture.
-			t.Parallel()
 			c, tasks, r := abandonFixture(t)
 			book := ledgerOf(t, c)
 			replica := &forceControlReplication{book: book, entered: make(chan struct{}), release: make(chan struct{})}

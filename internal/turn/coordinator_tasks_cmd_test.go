@@ -23,7 +23,6 @@ func tasksCmdText(t *testing.T, c *Coordinator, input string) string {
 // the turn that is burning time now, and let the next message start something
 // new instead of charging the task that was set aside.
 func TestPauseStopsTheRunningTurnAndFreesTheConversation(t *testing.T) {
-	t.Parallel()
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
 	coordinator, tasks := taskCoordinator(t, runner)
 
@@ -76,7 +75,6 @@ func TestPauseStopsTheRunningTurnAndFreesTheConversation(t *testing.T) {
 // Resume hands the channel everything it needs to replay the task: without a
 // fresh anchor message the resumed turn would have nothing to render against.
 func TestResumeReplaysTheTaskThroughTheChannel(t *testing.T) {
-	t.Parallel()
 	resumed := make(chan TaskResume, 1)
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"}, withCallbacks(func(cb *Callbacks) {
 		cb.Resumer = func(r TaskResume) error { resumed <- r; return nil }

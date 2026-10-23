@@ -157,7 +157,6 @@ func waitSessionTestFile(t *testing.T, path string) {
 }
 
 func TestNodeSessionContinuesAfterCoordinatorProcessIsKilled(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "workspace"), 0700); err != nil {
 		t.Fatal(err)

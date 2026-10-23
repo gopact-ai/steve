@@ -37,7 +37,6 @@ func productionNode(t *testing.T, cfg ServerConfig) *Server {
 // node has them, so an advert listing no features is still served, and
 // each operation is answered by the node itself.
 func TestBaselineOperationsNeedNoAdvertisedFeature(t *testing.T) {
-	t.Parallel()
 	bin := buildMockAgent(t)
 	dir := t.TempDir()
 	server := productionNode(t, ServerConfig{
@@ -174,7 +173,6 @@ func TestBaselineOperationsNeedNoAdvertisedFeature(t *testing.T) {
 // re-execute itself. The baseline is the protocol version, not a list, and
 // the snapshot repeats no features.
 func TestAdvertListsOnlyConditionalFeatures(t *testing.T) {
-	t.Parallel()
 	server := productionNode(t, ServerConfig{Name: "host-list", Token: "tok", StateDir: t.TempDir()})
 	registry := NewRegistry("hub-1", map[string]Config{"host-list": {Addr: server.Addr(), Token: "tok"}})
 	t.Cleanup(registry.Close)

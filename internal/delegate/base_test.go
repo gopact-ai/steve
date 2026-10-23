@@ -15,7 +15,6 @@ import (
 // parent's own canonical lock, not the snapshot the parent's turn began
 // from.
 func TestAChildOfAnInPlaceParentStartsFromWhatTheParentWrote(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	turn, err := w.attempts.Open(t.Context(), attempt.Spec{TaskID: parent.ID, Kind: attempt.KindChat, Project: "p", Agent: "codex", Harness: "mock",

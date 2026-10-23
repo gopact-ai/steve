@@ -120,7 +120,6 @@ func (p *prefaceSpy) toldTimes() int {
 // cancel, with ErrTurnCanceled: its own account is given, and that must
 // not lift the hold the stop just placed.
 func TestCancelStopsDelegatedChildrenAndHoldsTheTaskUntilTheNextTurn(t *testing.T) {
-	t.Parallel()
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{}), cancelSettles: true}
 	spy := &prefaceSpy{}
 	coordinator, tasks := taskCoordinator(t, runner, withCallbacks(func(cb *Callbacks) { cb.TurnPreface = spy.preface }))
@@ -195,7 +194,6 @@ func TestCancelStopsDelegatedChildrenAndHoldsTheTaskUntilTheNextTurn(t *testing.
 // cancels was composed under the earlier stop and, settling, gives that
 // account — but the hold it finds is the later stop's, and stays.
 func TestASecondStopDuringTheContinuedTurnKeepsTheTaskHeld(t *testing.T) {
-	t.Parallel()
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{}), cancelSettles: true}
 	spy := &prefaceSpy{}
 	coordinator, tasks := taskCoordinator(t, runner, withCallbacks(func(cb *Callbacks) { cb.TurnPreface = spy.preface }))
@@ -310,7 +308,6 @@ func TestCancelStopsDelegatedChildrenWhenNoTurnIsRunning(t *testing.T) {
 // The agent may still delegate while its turn is being stopped; the stop
 // reaches what it finds once the turn has ended, not what it saw first.
 func TestCancelStopsAChildDelegatedWhileTheTurnWasStopping(t *testing.T) {
-	t.Parallel()
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{}), cancelSettles: true}
 	coordinator, tasks := taskCoordinator(t, runner)
 	var late *drivenChild

@@ -10,11 +10,8 @@ import (
 )
 
 func TestRetirementAdmissionRejectsAlreadyParsedSessionControls(t *testing.T) {
-	t.Parallel()
 	for _, command := range []string{"new", "history", "project", "rotation"} {
 		t.Run(command, func(t *testing.T) {
-			// Each case builds its own fixture.
-			t.Parallel()
 			c, sessions, req, taskID := retirementCoordinator(t)
 			current := c.store.Conversation(req.Source.ConversationID).Sessions["codex"]
 			archived := current
@@ -77,7 +74,6 @@ func TestRetirementAdmissionRejectsAlreadyParsedSessionControls(t *testing.T) {
 }
 
 func TestScheduledRotationCannotCloseDuringSessionRetirement(t *testing.T) {
-	t.Parallel()
 	sessions := &nodeSessions{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}}
 	c, _, _ := owedCloseCoordinator(t, sessions)
 	req := ownerChannels[0].req

@@ -28,7 +28,6 @@ func completedChild(t *testing.T, w *world, parent task.Task, goal string) task.
 }
 
 func TestInlineCancelledChildIsNotDeliveredAgain(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	tracked, err := w.tasks.Create(task.Task{Parent: parent.ID, Channel: parent.Channel, Member: "builder", Origin: "delegate:" + parent.ID})
@@ -143,7 +142,6 @@ func TestReconcilerHonorsBackoffForEachBatch(t *testing.T) {
 }
 
 func TestUncertainDeliveryIsNeverAutomaticallyReplayed(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	child := completedChild(t, w, parent, "result")
@@ -196,7 +194,6 @@ func TestFailedParentRetainsChildResult(t *testing.T) {
 }
 
 func TestCancelledResultKeepsItsStateInParentDelivery(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	child, err := w.tasks.Create(task.Task{Parent: parent.ID, Channel: parent.Channel, Member: "builder", Origin: "delegate:" + parent.ID})

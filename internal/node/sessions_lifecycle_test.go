@@ -72,11 +72,8 @@ func (w sessionGateWriter) Write(data []byte) (int, error) {
 }
 
 func TestNodeSessionLifecycleRPCReservesBeforeCallingNativeAgent(t *testing.T) {
-	t.Parallel()
 	for _, operation := range []nodewire.SessionAction{"close", "option"} {
 		t.Run(string(operation), func(t *testing.T) {
-			// Each case builds its own fixture.
-			t.Parallel()
 			s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}})
 			if err := s.startSessions(t.Context()); err != nil {
 				t.Fatal(err)

@@ -20,7 +20,6 @@ func (sessionAuthorizerFunc) AuthorizeNodeReceipt(context.Context, string, nodew
 }
 
 func TestSessionAuthorityChallengeCannotAuthorizeUnrelatedActions(t *testing.T) {
-	t.Parallel()
 	for _, mode := range []string{"unrelated-action", "too-many-challenges"} {
 		t.Run(mode, func(t *testing.T) {
 			delegate := CoordinatorSessionAuthorizer{}
@@ -57,7 +56,6 @@ func TestSessionAuthorityChallengeCannotAuthorizeUnrelatedActions(t *testing.T) 
 }
 
 func TestStandaloneSessionRequiresCoordinatorAuthorityAndFreshStartAdmission(t *testing.T) {
-	t.Parallel()
 	for _, mode := range []string{"missing-verifier", "expired-start", "wrong-cluster", "lost-connection"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()

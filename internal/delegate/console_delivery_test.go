@@ -22,7 +22,6 @@ func (f continuationProcessor) Handle(ctx context.Context, r turn.Request) (turn
 }
 
 func TestPauseBetweenBatchPreparationAndQueueAdmissionRetainsTheAnswer(t *testing.T) {
-	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	child := completedChild(t, w, parent, "unique child answer")

@@ -13,7 +13,6 @@ import (
 )
 
 func TestAutomaticRestartTracksItsOwnChildRatherThanANumericPID(t *testing.T) {
-	t.Parallel()
 	requirePeerPlatform(t)
 	for _, live := range []bool{false, true} {
 		t.Run(map[bool]string{false: "child-exited", true: "child-running"}[live], func(t *testing.T) {

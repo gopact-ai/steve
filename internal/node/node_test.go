@@ -92,7 +92,6 @@ func startNode(t *testing.T, cfg ServerConfig, prepare ...func(*Server)) *Server
 // an agent running under a node, driven by a host on the other side of a
 // socket, answering an ordinary prompt.
 func TestRemoteAgentRoundTrip(t *testing.T) {
-	t.Parallel()
 	agent := buildMockAgent(t)
 	server := startNode(t, ServerConfig{
 		Name: "host-3", Token: "s3cret", StateDir: t.TempDir(),
@@ -134,7 +133,6 @@ func TestRemoteAgentRoundTrip(t *testing.T) {
 // TestAdvertIsTheAuthority: the node reports what it can really run, and a
 // placement the advert does not support is refused before a session opens.
 func TestAdvertIsTheAuthority(t *testing.T) {
-	t.Parallel()
 	server := startNode(t, ServerConfig{
 		Name: "host-2", Token: "tok", StateDir: t.TempDir(),
 		Harnesses: map[string]HarnessSpec{
@@ -319,7 +317,6 @@ func TestExecRunsCommandsOnTheNode(t *testing.T) {
 // node to check itself again — without a reconnect, so nothing running on
 // the node notices.
 func TestRefreshSeesARepairedHarness(t *testing.T) {
-	t.Parallel()
 	bin := filepath.Join(t.TempDir(), "later-installed")
 	server := startNode(t, ServerConfig{
 		Name: "host-3", Token: "tok", StateDir: t.TempDir(),
@@ -376,7 +373,6 @@ func TestRefreshSeesARepairedHarness(t *testing.T) {
 // the declarations it was given — each with its evidence, and coverage
 // saying which kinds were fully checked. Nothing secret rides along.
 func TestNodeReportsASnapshot(t *testing.T) {
-	t.Parallel()
 	bin := buildMockAgent(t)
 	server := startNode(t, ServerConfig{
 		Name: "host-4", Token: "tok", StateDir: t.TempDir(),
@@ -421,7 +417,6 @@ func TestNodeReportsASnapshot(t *testing.T) {
 // A node serves one hub at a time: a second hub with the right token is
 // refused while the first is connected.
 func TestNodeRefusesASecondHub(t *testing.T) {
-	t.Parallel()
 	server := startNode(t, ServerConfig{Name: "host-5", Token: "tok", StateDir: t.TempDir(), Harnesses: map[string]HarnessSpec{"codex": {Command: buildMockAgent(t)}}})
 	first := NewRegistry("hub-1", map[string]Config{"host-5": {Addr: server.Addr(), Token: "tok"}})
 	t.Cleanup(first.Close)
@@ -440,7 +435,6 @@ func TestNodeRefusesASecondHub(t *testing.T) {
 // sequence than the advert, and a tool that is not there is refused with
 // the atom that failed rather than an error.
 func TestNodeAdmitsOnAFreshObservation(t *testing.T) {
-	t.Parallel()
 	bin := buildMockAgent(t)
 	server := startNode(t, ServerConfig{
 		Name: "host-6", Token: "tok", StateDir: t.TempDir(),
@@ -512,7 +506,6 @@ func TestHubRefreshesSnapshotsOnItsOwn(t *testing.T) {
 // so "skill:deploy" places only where deploy is really on disk. The
 // harness homes themselves are the node's own, not the user's.
 func TestSkillsArePushedAndMaterialized(t *testing.T) {
-	t.Parallel()
 	bin := buildMockAgent(t)
 	state := t.TempDir()
 	server := startNode(t, ServerConfig{
@@ -597,7 +590,6 @@ func TestSkillsArePushedAndMaterialized(t *testing.T) {
 // have refuses the admission; a binding the broker never minted goes
 // nowhere.
 func TestMCPBindingKeepsSecretsOnTheNode(t *testing.T) {
-	t.Parallel()
 	bin := buildMockAgent(t)
 	state := brokerTempDir(t)
 	// A real HTTP MCP server would live here; this one shows what reached
@@ -722,7 +714,6 @@ func TestMCPBindingKeepsSecretsOnTheNode(t *testing.T) {
 // A node keeps its owner through both clean disconnects and silence. The
 // same hub may reconnect; another must wait for explicit offline adoption.
 func TestNodeRemembersItsHub(t *testing.T) {
-	t.Parallel()
 	bin := buildMockAgent(t)
 	state := t.TempDir()
 	server := startNode(t, ServerConfig{Name: "host-10", Token: "tok", StateDir: state, Harnesses: map[string]HarnessSpec{"codex": {Command: bin}}})
@@ -781,7 +772,6 @@ func TestNodeRemembersItsHub(t *testing.T) {
 // while calling itself hub-2 is refused, so the name a node remembers is
 // one its configuration tied to a secret, not whatever the caller said.
 func TestHubTokenVouchesForTheName(t *testing.T) {
-	t.Parallel()
 	bin := buildMockAgent(t)
 	server := startNode(t, ServerConfig{Name: "host-11", StateDir: t.TempDir(), Hubs: map[string]string{"hub-1": "secret-1"},
 		Harnesses: map[string]HarnessSpec{"codex": {Command: bin}}})
@@ -811,7 +801,6 @@ func TestHubTokenVouchesForTheName(t *testing.T) {
 // with a control token. Listing, binding, launching and releasing all
 // work the same; a caller without the token gets nothing.
 func TestExternalBrokerHoldsTheSecrets(t *testing.T) {
-	t.Parallel()
 	bin := buildMockAgent(t)
 	dir := brokerTempDir(t)
 	socket := filepath.Join(dir, "mcp.sock")
@@ -879,7 +868,6 @@ func TestExternalBrokerHoldsTheSecrets(t *testing.T) {
 // next snapshot shows the new tool, declaration and AI tool. A bad
 // setting is refused whole and changes nothing.
 func TestHubConfiguresANode(t *testing.T) {
-	t.Parallel()
 	bin := buildMockAgent(t)
 	state := t.TempDir()
 	source := filepath.Join(state, "node.json")

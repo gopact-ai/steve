@@ -253,7 +253,6 @@ func TestRecoveryRetryUsesThePinnedArtifactRatherThanALaterCanonicalRef(t *testi
 }
 
 func TestRecoveryPreparationReplaysAfterReadyCommitFailureAndSurvivesSweep(t *testing.T) {
-	t.Parallel()
 	c, _, source, _ := recoveryCopyFixture(t, true)
 	r, err := NewAbandonControl(c).AbandonAttempt(t.Context(), source.ID, "owner", 1)
 	if err != nil {

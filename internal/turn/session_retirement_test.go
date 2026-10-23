@@ -161,7 +161,6 @@ func (r *retirementGateRuntime) CloseSession(ctx context.Context, at harness.Pla
 }
 
 func TestConversationRetirementFencesNewTurnsOnlyInItsConversation(t *testing.T) {
-	t.Parallel()
 	c, sessions, req, _ := retirementCoordinator(t)
 	gate := &retirementGateRuntime{nodeSessions: sessions, entered: make(chan struct{}), release: make(chan struct{})}
 	c.runtime = gate

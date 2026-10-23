@@ -552,7 +552,6 @@ func TestCoordinatorRejectsCapabilityDrift(t *testing.T) {
 }
 
 func TestCoordinatorCancelsRunningTurn(t *testing.T) {
-	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
@@ -712,7 +711,6 @@ func handle(c *Coordinator, ctx context.Context, input string) (Result, error) {
 // queueing is the default, so follow-up needs no prefix and nothing the
 // agent is doing gets killed by accident.
 func TestNewMessageQueuesBehindRunningTurn(t *testing.T) {
-	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
@@ -782,7 +780,6 @@ func TestPlusPrefixStillQueuesAndStrips(t *testing.T) {
 // Chinese keyboards produce the fullwidth "！"; it interrupts exactly like
 // the halfwidth bang.
 func TestFullwidthBangInterrupts(t *testing.T) {
-	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}

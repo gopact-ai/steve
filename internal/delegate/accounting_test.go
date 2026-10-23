@@ -38,7 +38,6 @@ func TestDelegateKnownExecutionNeverSettlesALaterUnboundRow(t *testing.T) {
 }
 
 func TestDelegateAdmissionFailureSettlesOnlyItsPreboundAccountingRow(t *testing.T) {
-	t.Parallel()
 	w, db, _, _ := boundDelegatePersistenceFixture(t)
 	if _, err := db.Exec(`CREATE TRIGGER reject_delegate_admission BEFORE INSERT ON operations WHEN NEW.kind = 'attempt' AND json_extract(NEW.data, '$.kind') = 'delegate' BEGIN SELECT RAISE(FAIL, 'admission storage unavailable'); END`); err != nil {
 		t.Fatal(err)
