@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/procgroup"
 )
 
 // A session whose receipt journal refused a write latches that failure and
@@ -33,6 +34,12 @@ func (s *SessionService) doFailed(ctx context.Context, one *ownedSession, failur
 		return s.durableState(req)
 	case nodewire.SessionActionCancel, nodewire.SessionActionAbort, nodewire.SessionActionKill, nodewire.SessionActionClose:
 		// Only the execution the session is bound to may end its process.
+		//
+		// Cancel here ends the whole native process, not just the current
+		// turn as it does on a healthy owner: a failed owner can't record
+		// what a surviving agent does next, so the only stop it can prove
+		// is the process's exit. The session is left Interrupted rather
+		// than Closed, as after a node restart.
 		if req.Binding != binding {
 			return nodewire.SessionState{}, sessionError("conflict", "session belongs to another execution")
 		}
@@ -71,11 +78,15 @@ func (s *SessionService) durableState(req nodewire.SessionRequest) (nodewire.Ses
 }
 
 // retireFailed ends a failed owner's native process and records the stop.
-// The recorded process group is the proof, as after a node restart; when
-// the record names no group the host that started the agent may prove it
-// instead, having seen every process it started exit, unless retained
-// terminals need their own proof. On success the owner is released, so
-// later requests are answered from the durable record.
+// The recorded process group is the proof, as after a node restart. When
+// the group can't be checked at all (none was recorded, or this node can't
+// track groups) the host that started the agent may prove it instead,
+// having seen every process it started exit, unless retained terminals
+// need their own proof. A group check that ran and found members gets no
+// fallback. Once the stop is durable the owner is released, so later
+// requests are answered from the durable record; moving the session and
+// its commands out of their running states is attempted, not required,
+// since the journal may refuse it the way it refused the write that failed.
 func (s *SessionService) retireFailed(ctx context.Context, one *ownedSession, failure error, closed bool) error {
 	one.mu.Lock()
 	id, host := one.record.State.ID, one.host
@@ -114,7 +125,7 @@ func (s *SessionService) retireFailed(ctx context.Context, one *ownedSession, fa
 	if !record.State.ProcessStopped {
 		deadline := time.Now().Add(recordedGroupWithin)
 		if err := s.endRecordedGroup(fresh, deadline); err != nil {
-			if !hostStopped || len(record.Terminals) != 0 || fresh.failure != nil {
+			if !hostStopped || len(record.Terminals) != 0 || fresh.failure != nil || !groupUncheckable(record.Process, err) {
 				return errors.Join(failure, killFailure(err))
 			}
 			if err := fresh.commitRecordedStop(deadline); err != nil {
@@ -122,45 +133,50 @@ func (s *SessionService) retireFailed(ctx context.Context, one *ownedSession, fa
 			}
 		}
 	}
-	// The stop is durable now. The session and its commands then leave the
-	// running states, which the journal accepts as it accepted the stop.
-	// Its questions are what it may keep refusing, as it did when its
-	// owner failed: marking them interrupted is attempted, not required.
-	next := fresh.copyLocked()
-	switch {
-	case next.State.State == nodewire.SessionClosed:
-	case closed:
-		next.State.State = nodewire.SessionClosed
-	default:
-		next.State.State = nodewire.SessionInterrupted
-	}
-	for cid, command := range next.Commands {
-		if command.State.Active() {
-			command.State = nodewire.SessionCommandUncertain
-			command.Error, command.ErrorCode = "node session journal failed; the native process was ended", nodewire.SessionErrorFailed
-			command.Settled = false
-			next.Commands[cid] = command
+	// The stop is durable now. Each further transition is its own commit,
+	// so one the journal refuses doesn't take the others with it.
+	settle := func(what string, change func(*sessionRecord) bool) {
+		next := fresh.copyLocked()
+		if !change(&next) {
+			return
 		}
-	}
-	if err := fresh.commitLocked(next); err != nil {
-		return errors.Join(failure, err)
-	}
-	next = fresh.copyLocked()
-	interrupted := false
-	for i := range next.State.Questions {
-		if next.State.Questions[i].State == nodewire.SessionQuestionPending {
-			next.State.Questions[i].State = nodewire.SessionQuestionInterrupted
-			interrupted = true
-		}
-	}
-	if interrupted {
 		probe := &ownedSession{service: s, record: fresh.record, changed: make(chan struct{})}
 		if err := probe.commitLocked(next); err != nil {
-			slog.Warn("steve-node: failed session's pending questions not recorded as interrupted", "session", id, "error", err)
-		} else {
-			fresh = probe
+			slog.Warn("steve-node: failed session's "+what+" not recorded", "session", id, "error", err)
+			return
 		}
+		fresh = probe
 	}
+	settle("final state", func(next *sessionRecord) bool {
+		changed := false
+		switch {
+		case next.State.State == nodewire.SessionClosed:
+		case closed:
+			next.State.State, changed = nodewire.SessionClosed, true
+		case next.State.State != nodewire.SessionInterrupted:
+			next.State.State, changed = nodewire.SessionInterrupted, true
+		}
+		for cid, command := range next.Commands {
+			if command.State.Active() {
+				command.State = nodewire.SessionCommandUncertain
+				command.Error, command.ErrorCode = "node session journal failed; the native process was ended", nodewire.SessionErrorFailed
+				command.Settled = false
+				next.Commands[cid] = command
+				changed = true
+			}
+		}
+		return changed
+	})
+	settle("pending questions", func(next *sessionRecord) bool {
+		changed := false
+		for i := range next.State.Questions {
+			if next.State.Questions[i].State == nodewire.SessionQuestionPending {
+				next.State.Questions[i].State = nodewire.SessionQuestionInterrupted
+				changed = true
+			}
+		}
+		return changed
+	})
 	if err := s.endStoppedRuntime(fresh.record); err != nil {
 		slog.Error("steve-node: plugin shutdown receipt failed", "session", id, "error", err)
 	}
@@ -174,6 +190,10 @@ func (s *SessionService) retireFailed(ctx context.Context, one *ownedSession, fa
 		delete(s.sessions, id)
 	}
 	delete(s.unverifiedProcesses, id)
+	if s.retiredFailed == nil {
+		s.retiredFailed = map[string]bool{}
+	}
+	s.retiredFailed[id] = true
 	s.mu.Unlock()
 	one.mu.Lock()
 	close(one.changed)
@@ -181,4 +201,11 @@ func (s *SessionService) retireFailed(ctx context.Context, one *ownedSession, fa
 	one.mu.Unlock()
 	slog.Warn("steve-node: ended the native process of a session whose journal failed", "session", id, "cause", failure)
 	return nil
+}
+
+// groupUncheckable reports whether ending the recorded group failed because
+// it couldn't be checked, rather than because members were seen: no group
+// was recorded, or this node can't prove one.
+func groupUncheckable(process sessionProcess, err error) bool {
+	return process.Identity == (procgroup.Identity{}) || errors.Is(err, procgroup.ErrUnsupported) || errors.Is(err, procgroup.ErrUnproven)
 }

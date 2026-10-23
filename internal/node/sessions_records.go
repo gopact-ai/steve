@@ -120,8 +120,8 @@ func sessionRecordsSchema() []string {
 		fmt.Sprintf(`CREATE TABLE sessions (
 			id TEXT PRIMARY KEY, sequence INTEGER NOT NULL, header BLOB NOT NULL,
 			command_count INTEGER NOT NULL DEFAULT 0 CHECK(command_count BETWEEN 0 AND 512),
-			question_count INTEGER NOT NULL DEFAULT 0 CHECK(question_count BETWEEN 0 AND 256),
-			retained_bytes INTEGER NOT NULL DEFAULT 0 CHECK(retained_bytes BETWEEN 0 AND %d))`, nodewire.NodeSessionMaxBytes),
+			question_count INTEGER NOT NULL DEFAULT 0 CHECK(question_count BETWEEN 0 AND %d),
+			retained_bytes INTEGER NOT NULL DEFAULT 0 CHECK(retained_bytes BETWEEN 0 AND %d))`, sessionQuestionLimit, nodewire.NodeSessionMaxBytes),
 		`CREATE TABLE session_progress (session_id TEXT PRIMARY KEY REFERENCES sessions(id), progress BLOB NOT NULL)`,
 		`CREATE TABLE session_commands (
 			session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL,
@@ -339,7 +339,8 @@ func (s *sessionRecords) pending(id string) (int, error) {
 	return count, err
 }
 
-// sessionQuestionLimit is the CHECK bound on sessions.question_count.
+// sessionQuestionLimit bounds sessions.question_count. It is part of the
+// schema text existing stores are validated against.
 const sessionQuestionLimit = 256
 
 // questions counts every question the journal retains for a session, across

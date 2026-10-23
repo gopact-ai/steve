@@ -68,6 +68,11 @@ type SessionService struct {
 	placeKnown bool
 	settleMu   sync.Mutex
 	settle     func(id procgroup.Identity, ran, here procgroup.Place, within time.Duration) error
+
+	// retiredFailed names, under mu, the sessions whose failed owner this
+	// node process ended and released with the stop recorded, possibly
+	// without the state change that should have followed it.
+	retiredFailed map[string]bool
 }
 
 // harnessCapabilities is what starting a harness once said about the agent
@@ -211,7 +216,7 @@ func (s *Server) startSessions(ctx context.Context) error {
 		return sessionError("invalid", "node sessions require durable node state and identity")
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	service := &SessionService{server: s, ctx: ctx, cancel: cancel, sessions: map[string]*ownedSession{}, unverifiedProcesses: map[string]bool{}, settle: procgroup.Settle}
+	service := &SessionService{server: s, ctx: ctx, cancel: cancel, sessions: map[string]*ownedSession{}, unverifiedProcesses: map[string]bool{}, retiredFailed: map[string]bool{}, settle: procgroup.Settle}
 	if settle := s.conf().settleGroup; settle != nil {
 		service.settle = settle
 	}

@@ -1,13 +1,16 @@
 package node
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/gopact-ai/steve/internal/nodewire"
-	"github.com/gopact-ai/steve/internal/procgroup"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/procgroup"
 )
 
 // failedSession is a running session whose journal has failed and whose
@@ -78,22 +81,8 @@ func TestFailedSessionStopRefusesAnotherExecution(t *testing.T) {
 
 func TestFailedSessionStopProvedByRecordedGroup(t *testing.T) {
 	s, one, _ := failedSession(t)
-	place, err := procgroup.Here()
-	if err != nil {
-		t.Skip("process groups are not tracked here")
-	}
-	s.place, s.placeKnown = place, true
 	settled := 0
-	s.settle = func(procgroup.Identity, procgroup.Place, procgroup.Place, time.Duration) error { settled++; return nil }
-	// The group is recorded before the journal fails.
-	one.failure = nil
-	next := one.copyLocked()
-	next.Process = sessionProcess{Identity: procgroup.Identity{Group: 4242, Leader: 4242, Start: 1, Mark: "m"}, Place: place}
-	if err := one.commitLocked(next); err != nil {
-		t.Fatal(err)
-	}
-	failure := errors.New("node session persistence failed")
-	one.failure = failure
+	recordGroup(t, s, one, func() error { settled++; return nil })
 	req := nodeSessionRequest(nodewire.SessionActionCancel)
 	req.ID, req.CommandID = one.record.State.ID, "input-1"
 	state, err := s.Do(t.Context(), "cluster-1", req)
@@ -128,5 +117,162 @@ func TestNodeQuestionBoundCountsTheWholeJournal(t *testing.T) {
 	one.mu.Unlock()
 	if failure != nil {
 		t.Fatalf("question bound latched the session failed: %v", failure)
+	}
+}
+
+// recordGroup records a process group on a failed session's record and
+// makes the node prove groups with settle.
+func recordGroup(t *testing.T, s *SessionService, one *ownedSession, settle func() error) {
+	t.Helper()
+	place, err := procgroup.Here()
+	if err != nil {
+		t.Skip("process groups are not tracked here")
+	}
+	s.place, s.placeKnown = place, true
+	s.settle = func(procgroup.Identity, procgroup.Place, procgroup.Place, time.Duration) error { return settle() }
+	failure := one.failure
+	one.failure = nil
+	next := one.copyLocked()
+	next.Process = sessionProcess{Identity: procgroup.Identity{Group: 4242, Leader: 4242, Start: 1, Mark: "m"}, Place: place}
+	if err := one.commitLocked(next); err != nil {
+		t.Fatal(err)
+	}
+	one.failure = failure
+}
+
+// Once the stop is durable the owner is released even when the journal
+// refuses the state change after it, as a journal at its byte bound does:
+// the stop's own small write fits, the command's error text does not. Every
+// later stop is then answered from the durable record, never wedged.
+func TestFailedSessionStopSurvivesByteBoundAfterRecordedStop(t *testing.T) {
+	s, one, _ := failedSession(t)
+	recordGroup(t, s, one, func() error { return nil })
+	// Leave room for exactly the recorded stop, computed as
+	// commitRecordedStop writes it, and a few bytes more.
+	before := one.copyLocked()
+	stopped := one.copyLocked()
+	stopped.State.Sequence++
+	stopped.State.ProcessStopped = true
+	growth := 0
+	for _, pair := range [][2]any{{sessionHeader(before), sessionHeader(stopped)}} {
+		a, _ := sessionRecordJSON(pair[0])
+		b, _ := sessionRecordJSON(pair[1])
+		growth += len(b) - len(a)
+	}
+	command := before.Commands["input-1"]
+	a, _ := sessionRecordJSON(command)
+	command.ProcessStopped = true
+	b, _ := sessionRecordJSON(command)
+	growth += len(b) - len(a)
+	store, err := s.recordsStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE sessions SET retained_bytes=? WHERE id=?`, nodewire.NodeSessionMaxBytes-growth-8, one.record.State.ID); err != nil {
+		t.Fatal(err)
+	}
+	req := nodeSessionRequest(nodewire.SessionActionCancel)
+	req.ID, req.CommandID = one.record.State.ID, "input-1"
+	state, err := s.Do(t.Context(), "cluster-1", req)
+	if err != nil || !state.ProcessStopped {
+		t.Fatalf("stop behind a byte-bound journal = %+v %v", state, err)
+	}
+	durable, _, err := s.readRecord(req.ID)
+	if err != nil || !durable.State.ProcessStopped || durable.State.State != "running" {
+		t.Fatalf("fixture did not refuse the state change after the stop: %+v %v", durable.State, err)
+	}
+	if _, live := s.sessions[req.ID]; live {
+		t.Fatal("owner with a durable stop was not released")
+	}
+	for _, action := range []nodewire.SessionAction{nodewire.SessionActionKill, nodewire.SessionActionCancel, nodewire.SessionActionAttach} {
+		req.Action = action
+		if state, err := s.Do(t.Context(), "cluster-1", req); err != nil || !state.ProcessStopped {
+			t.Fatalf("%s after a durable stop = %+v %v", action, state, err)
+		}
+	}
+}
+
+// failedHost is a host whose agent is running; stopped says whether the
+// host can see that agent's process exit once it is killed.
+func failedHost(t *testing.T, one *ownedSession, stopped bool) {
+	t.Helper()
+	broker, _ := permission.New("read")
+	local := acphost.LocalTransport{Command: buildMockAgent(t), ProcessDir: t.TempDir()}
+	var transport acphost.Transport = local
+	if !stopped {
+		// The host can neither kill this agent nor see it exit; the test
+		// ends it itself.
+		unproven := &unprovenTransport{inner: local}
+		t.Cleanup(func() {
+			if unproven.started != nil {
+				unproven.started.Kill()
+			}
+		})
+		transport = unproven
+	}
+	host := acphost.New(acphost.Config{NoRestart: true, Permission: broker, Transport: transport})
+	t.Cleanup(host.Close)
+	if _, _, err := host.OpenSession(t.Context(), "", acphost.SessionConfig{Workdir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	one.mu.Lock()
+	one.host = host
+	one.mu.Unlock()
+}
+
+// unprovenTransport starts agents whose exit the host can never see.
+type unprovenTransport struct {
+	inner   acphost.Transport
+	started acphost.Process
+}
+
+func (tr *unprovenTransport) Name() string { return "unproven-mock" }
+func (tr *unprovenTransport) Start(ctx context.Context) (acphost.Process, error) {
+	p, err := tr.inner.Start(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tr.started = p
+	return unprovenProcess{p}, nil
+}
+
+type unprovenProcess struct{ acphost.Process }
+
+func (unprovenProcess) Stopped() bool { return false }
+
+// With no group recorded, the host that started the agent proves its exit
+// once it has seen every process it started end. A host that can't see
+// that, or a group check that found members, proves nothing.
+func TestFailedSessionStopProvedByHostWithoutRecordedGroup(t *testing.T) {
+	for _, mode := range []string{"host-proves", "host-unproven", "group-running"} {
+		t.Run(mode, func(t *testing.T) {
+			s, one, failure := failedSession(t)
+			if mode == "group-running" {
+				recordGroup(t, s, one, func() error { return procgroup.ErrRunning })
+			}
+			failedHost(t, one, mode != "host-unproven")
+			req := nodeSessionRequest(nodewire.SessionActionKill)
+			req.ID, req.CommandID = one.record.State.ID, "input-1"
+			state, err := s.Do(t.Context(), "cluster-1", req)
+			durable, _, readErr := s.readRecord(req.ID)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if mode == "host-proves" {
+				if err != nil || !state.ProcessStopped || !durable.State.ProcessStopped || durable.Process.Identity != (procgroup.Identity{}) {
+					t.Fatalf("host did not prove the stop: %+v %v", state, err)
+				}
+				if _, live := s.sessions[req.ID]; live {
+					t.Fatal("proved owner was not released")
+				}
+				return
+			}
+			if !errors.Is(err, failure) || durable.State.ProcessStopped {
+				t.Fatalf("unproved stop was confirmed: stopped=%v err=%v", durable.State.ProcessStopped, err)
+			}
+			if s.sessions[req.ID] != one {
+				t.Fatal("unproved stop released the failed owner")
+			}
+		})
 	}
 }

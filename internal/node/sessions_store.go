@@ -373,7 +373,13 @@ func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.Sess
 	if !exists {
 		return nodewire.SessionState{}, sessionError("absent", "unknown node-owned session; reconcile the original execution")
 	}
-	if record.State.State != nodewire.SessionClosed && record.State.State != nodewire.SessionInterrupted {
+	// A failed owner this process retired recorded its stop, but the
+	// journal may have refused the state change that should have followed.
+	// Its recorded stop is final; any other unsettled record is not.
+	s.mu.Lock()
+	retired := s.retiredFailed[req.ID]
+	s.mu.Unlock()
+	if record.State.State != nodewire.SessionClosed && record.State.State != nodewire.SessionInterrupted && !(retired && record.State.ProcessStopped) {
 		return nodewire.SessionState{}, sessionError("unavailable", "unknown node-owned session; reconcile the original execution")
 	}
 	if record.ClusterID != req.Authority.ClusterID {
