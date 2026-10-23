@@ -68,8 +68,19 @@ jobs:
         run: |
           go list ./cmd/... ./internal/... ./e2e/... > "$RUNNER_TEMP/all.txt"
           scripts/ci/shard.py verify "$RUNNER_TEMP/all.txt" "$RUNNER_TEMP"/shards/go-shard-*.txt
-  console:
+  # `make test-console` split by measured command time
+  # (scripts/ci/console-weights.txt). Each shard runs the gate's setup lines,
+  # including the console build, then its share of the test commands;
+  # `console` checks that the shards together ran every command once.
+  console-shard:
+    name: console shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+    env:
+      SHARDS: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -84,9 +95,39 @@ jobs:
         working-directory: web/console
       - run: npx playwright install --with-deps chromium
         working-directory: web/console
-      - run: make test-console
+      - name: Plan shard
+        run: |
+          node scripts/ci/console-shards.mjs plan "$SHARDS" "${{ matrix.shard }}" > "$RUNNER_TEMP/console-shard-${{ matrix.shard }}.txt"
+          cat "$RUNNER_TEMP/console-shard-${{ matrix.shard }}.txt"
+      - name: make test-console (this shard)
+        run: node scripts/ci/console-shards.mjs run "$RUNNER_TEMP/console-shard-${{ matrix.shard }}.txt"
       - name: Verify embedded console matches source
         run: test -z "$(git status --porcelain -- internal/readmodel/web/dist)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: console-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/console-shard-${{ matrix.shard }}.txt
+          retention-days: 3
+  console:
+    needs: [console-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Console shards passed
+        run: test "${{ needs.console-shard.result }}" = success
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: console-shard-*
+          path: ${{ runner.temp }}/shards
+          merge-multiple: true
+      - name: Shards cover every console test exactly once
+        run: |
+          node scripts/ci/console-shards.mjs all > "$RUNNER_TEMP/all.txt"
+          node scripts/ci/console-shards.mjs verify "$RUNNER_TEMP/all.txt" "$RUNNER_TEMP"/shards/console-shard-*.txt
   desktop:
     runs-on: macos-latest
     steps:
