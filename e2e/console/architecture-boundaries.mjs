@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import ts from "../../web/console/node_modules/typescript/lib/typescript.js";
+import { assign, coverage, gatePlan, loadWeights } from "../../scripts/ci/console-shards.mjs";
 
 const root = fileURLToPath(new URL("../../web/console/", import.meta.url));
 const config = ts.readConfigFile(path.join(root, "tsconfig.app.json"), ts.sys.readFile);
@@ -66,14 +67,71 @@ test("the standard console gate reaches every registered regression suite", () =
     assert.deepEqual(missing, [], "registered regressions must not silently sit outside make test-console");
 });
 
-test("console CI invokes the complete standard gate instead of a separate suite list", () => {
+function workflowJobs() {
     const workflow = readFileSync(path.join(root, "../../.github/workflows/test.yml"), "utf8");
-    const job = workflow.split(/^  console:\s*$/m)[1]?.split(/^  [\w-]+:\s*$/m)[0];
-    assert.ok(job, "the console CI job must remain present");
-    assert.match(job, /^\s+(?:-\s+)?run:\s*make test-console\s*$/m);
-    assert.doesNotMatch(job, /\bnpm run test:/, "CI must not maintain a second regression list");
-    assert.match(job, /uses: actions\/setup-go@/, "Go wire fixtures need the repository toolchain");
-    assert.match(job, /go-version-file: go\.mod/);
+    const jobs = new Map();
+    for (const block of workflow.split(/^(?=  [\w-]+:\s*$)/m).slice(1)) jobs.set(block.match(/^  ([\w-]+):/)[1], block);
+    return jobs;
+}
+
+// A required check that only aggregates other jobs must run even when they
+// fail: a job skipped because a need failed is reported to branch protection
+// as Success. So it runs `if: always()` and fails unless each need succeeded.
+function assertAggregate(jobs, name, required) {
+    const job = jobs.get(name);
+    assert.ok(job, `the required ${name} check must remain a job named ${name}`);
+    const needs = job.match(/^    needs:\s*\[([^\]]*)\]\s*$/m)?.[1].split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+    for (const need of required) assert.ok(needs.includes(need), `${name} must wait for ${need} so the required check reflects it`);
+    assert.match(job, /^    if: always\(\)\s*$/m, `${name} must run with if: always(); skipped after a failed need, it would report Success`);
+    for (const need of needs) {
+        assert.ok(jobs.has(need), `${name} needs a missing job ${need}`);
+        assert.match(job, new RegExp(`^\\s+(?:run: )?test "\\$\\{\\{ needs\\.${need}\\.result \\}\\}" = success\\s*$`, "m"), `${name} must fail when ${need} does not succeed`);
+    }
+}
+
+test("the Go test check fails when any shard or check fails", () => {
+    const jobs = workflowJobs();
+    assertAggregate(jobs, "test", ["go-shard", "go-checks"]);
+    assert.match(jobs.get("test"), /shard\.py verify /, "test must check the shards' recorded package coverage");
+});
+
+test("console CI runs every command of make test-console exactly once", () => {
+    const jobs = workflowJobs();
+    assert.ok(jobs.has("console"), "the required console check must remain a job named console");
+
+    // The commands come from the Makefile recipe, so a script added to the
+    // gate is in this list without anyone touching CI.
+    const { commands } = gatePlan();
+    assert.ok(commands.length > 0, "make test-console must run console tests");
+    const runs = [];
+    for (const [name, job] of jobs) {
+        const whole = /^\s+(?:-\s+)?run:\s*make test-console\s*$/m.test(job);
+        const sharded = /console-shards\.mjs run /.test(job);
+        if (!whole && !sharded) continue;
+        assert.doesNotMatch(job, /\bnpm (?:--prefix \S+ )?run test:/, `${name}: CI must not maintain a second regression list`);
+        assert.match(job, /uses: actions\/setup-go@[^\n]*\n\s+with:\n(?:\s+[\w-]+:[^\n]*\n)*?\s+go-version-file: go\.mod\n/, `${name}: Go wire fixtures need the repository toolchain from go.mod`);
+        const gate = job.search(whole ? /run:\s*make test-console/ : /console-shards\.mjs run /);
+        const dist = job.indexOf('test -z "$(git status --porcelain -- internal/readmodel/web/dist)"');
+        assert.ok(dist > gate, `${name}: the embedded console must be checked against the build after the gate`);
+        if (whole) {
+            runs.push(commands);
+            continue;
+        }
+        // A shard runs `plan $SHARDS <matrix.shard>`; every index of the
+        // matrix must be present, so the shards are exactly the planned bins.
+        const shards = Number(job.match(/^\s+SHARDS:\s*(\d+)\s*$/m)?.[1]);
+        const matrix = job.match(/^\s+shard:\s*\[([\d,\s]+)\]\s*$/m)?.[1].split(",").map(Number);
+        assert.ok(shards > 0 && matrix, `${name}: a sharded console job declares SHARDS and its shard matrix`);
+        assert.match(job, /console-shards\.mjs plan "\$SHARDS" "\$\{\{ matrix\.shard \}\}"/, `${name}: each shard runs its planned share`);
+        assert.deepEqual([...matrix].sort((a, b) => a - b), [...Array(shards).keys()], `${name}: the matrix must run every one of the ${shards} shards`);
+        runs.push(...assign(commands, loadWeights(), shards).map((bin) => bin.commands));
+        if (name !== "console") {
+            assertAggregate(jobs, "console", [name]);
+            assert.match(jobs.get("console"), /console-shards\.mjs verify /, "console must check the shards' recorded coverage");
+        }
+    }
+    assert.ok(runs.length > 0, "CI must run make test-console, whole or sharded");
+    assert.deepEqual(coverage(commands, runs), [], "every console test command runs in CI exactly once");
 });
 
 test("force-stop presentation receives its request callback from page composition", () => {
