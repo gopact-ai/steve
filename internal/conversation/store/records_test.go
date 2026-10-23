@@ -64,15 +64,20 @@ func TestConsoleSmallWritesHaveBoundedPayloadAsHistoryGrows(t *testing.T) {
 	for i, history := range consoleBoundHistories {
 		costs[i] = consoleSmallWriteCosts(t, history)
 	}
+	// Compare only mutations measured at both sizes: -run can select a
+	// subset of the subtests, and a mutation that ran at one size only has
+	// no cost at the other to compare with.
 	for name, small := range costs[0] {
-		if large := costs[1][name]; !large.sameAs(small) {
+		large, ok := costs[1][name]
+		if ok && !large.sameAs(small) {
 			t.Errorf("mutation %s grew with history: history=%d %+v, history=%d %+v", name, consoleBoundHistories[0], small, consoleBoundHistories[1], large)
 		}
 	}
 }
 
 // consoleSmallWriteCosts applies each small mutation to a console holding
-// history keyed exchanges and returns the rows and bytes each one wrote.
+// history keyed exchanges and returns the rows and bytes each one that ran
+// wrote.
 func consoleSmallWriteCosts(t *testing.T, history int) map[string]consoleWriteCost {
 	t.Helper()
 	costs := map[string]consoleWriteCost{}
@@ -137,9 +142,6 @@ func consoleSmallWriteCosts(t *testing.T, history int) map[string]consoleWriteCo
 			t.Logf("history=%d mutation=%s rows=%d payload=%d bytes", history, mutation.name, rows, payload)
 			costs[mutation.name] = consoleWriteCost{rows, payload}
 		})
-	}
-	if len(costs) != 6 {
-		t.Fatalf("history=%d measured %d of 6 mutations", history, len(costs))
 	}
 	return costs
 }
