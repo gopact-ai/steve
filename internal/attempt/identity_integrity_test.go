@@ -6,6 +6,7 @@ import (
 )
 
 func TestIdentityReadsRejectCorruptLedgerEnvelope(t *testing.T) {
+	t.Parallel()
 	for _, selected := range []bool{false, true} {
 		for _, field := range []string{"revision", "incarnation", "created_at", "updated_at"} {
 			name := "unrelated/" + field

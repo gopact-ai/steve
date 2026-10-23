@@ -218,6 +218,7 @@ func TestSessionRecordsDatabaseIdentityVersionAndLifetime(t *testing.T) {
 }
 
 func TestSessionRecordsCreationIsPrivateBeforeSQLite(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("STEVE_TEST_SESSION_UMASK") == "" {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestSessionRecordsCreationIsPrivateBeforeSQLite$")
 		cmd.Env = append(os.Environ(), "STEVE_TEST_SESSION_UMASK=1")

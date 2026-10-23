@@ -63,6 +63,7 @@ func requirePeerPlatform(t *testing.T) {
 // and starts the installed program again. Nothing is uploaded and no
 // program is moved: the same bytes run afterwards under a new process.
 func TestPeerRestartScriptRestartsARunningPeer(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	home, oldPID := installedPeer(t)
 	bin := filepath.Join(home, ".steve-peer", "bin")
@@ -92,6 +93,7 @@ func TestPeerRestartScriptRestartsARunningPeer(t *testing.T) {
 // started as it is, and the script says the peer was started rather than
 // restarted. An earlier fallback or rejected program stays where it is.
 func TestPeerRestartScriptStartsAPeerThatIsNotRunning(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	home, _ := layoutPeer(t)
 	bin := filepath.Join(home, ".steve-peer", "bin")
@@ -121,6 +123,7 @@ func TestPeerRestartScriptStartsAPeerThatIsNotRunning(t *testing.T) {
 // one. The script says so, with the last lines the peer wrote to its log,
 // and keeps the installed program in place for whoever looks next.
 func TestPeerRestartScriptReportsAPeerThatDoesNotStayRunning(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	home, _ := layoutPeer(t)
 	bin := filepath.Join(home, ".steve-peer", "bin")
@@ -165,6 +168,7 @@ func TestPeerRestartScriptLeavesARunningPeerAloneWhenOnlyStartingAStoppedOne(t *
 // what the program just wrote counts: an earlier run's line further up
 // the log says nothing about this one.
 func TestPeerRestartScriptTellsALockHeldByAPeerItDidNotFind(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	home, _ := layoutPeer(t)
 	state := filepath.Join(home, ".steve-peer")
@@ -207,6 +211,7 @@ func lockMessage(state string) string {
 // hide it, and a log cut shorter while the program ran is read from its
 // start.
 func TestPeerRestartScriptTellsTheLockByWhatThisStartWrote(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	home, _ := layoutPeer(t)
 	state := filepath.Join(home, ".steve-peer")
@@ -261,6 +266,7 @@ func TestPeerRestartScriptTellsTheLockByWhatThisStartWrote(t *testing.T) {
 
 // Bringing up a stopped peer when it is down starts it like a restart.
 func TestPeerRestartScriptStartsAStoppedPeerWhenOnlyStartingAStoppedOne(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	home, _ := layoutPeer(t)
 	out, err := runRestart(t, home, RestartSpec{IfStopped: true})
@@ -330,6 +336,7 @@ func TestPeerRestartScriptStopsAPeerStartedByARelativePath(t *testing.T) {
 // winding down, and the program is started again only once all are gone:
 // started earlier, it would find the gateway lock still held.
 func TestPeerRestartScriptWaitsForEveryPeerProcessItStops(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	home, quick := installedPeer(t)
 	slow := startPeer(t, home, "STEVE_NODEBOOTSTRAP_STUB_LINGER=8s")
@@ -488,6 +495,7 @@ func TestPeerRestartScriptFindsThePeerHoldingTheGatewayLock(t *testing.T) {
 // command line still does: a peer started by the path the installation
 // resolves to is found whether the lock records its pid or not.
 func TestPeerRestartScriptFindsAPeerStartedByTheResolvedPathByItsCommandLine(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	for _, recorded := range []bool{true, false} {
 		real, home := symlinkedPeer(t)
@@ -550,6 +558,7 @@ func TestPeerUpgradeScriptStopsThePeerHoldingTheGatewayLock(t *testing.T) {
 // anything: taking the peer for stopped would start a second one beside
 // it, or stop one that cannot start again over a lock it cannot open.
 func TestPeerRestartScriptFailsWhereItCannotLookForThePeer(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	for name, spoil := range unsearchable(t) {
 		t.Run(name, func(t *testing.T) {

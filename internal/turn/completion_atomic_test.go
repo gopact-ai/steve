@@ -18,6 +18,7 @@ import (
 )
 
 func TestTurnCompletionFailureDoesNotPublishItsName(t *testing.T) {
+	t.Parallel()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -72,6 +73,7 @@ func TestTurnCompletionFailureDoesNotPublishItsName(t *testing.T) {
 }
 
 func TestTurnCompletionRequiresReadableProject(t *testing.T) {
+	t.Parallel()
 	for _, missing := range []bool{false, true} {
 		book, err := ledger.Open(t.TempDir(), ledger.Options{})
 		if err != nil {

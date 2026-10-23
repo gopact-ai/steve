@@ -38,6 +38,7 @@ func TestForTurnListsEveryAttemptOfTheTurnNewestFirst(t *testing.T) {
 }
 
 func TestForTurnSeeksTheTurnIndex(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	book, err := ledger.Open(dir, ledger.Options{})
 	if err != nil {
@@ -60,6 +61,7 @@ func TestForTurnSeeksTheTurnIndex(t *testing.T) {
 }
 
 func TestTurnReadsAndReadabilityCheckFailOnMalformedHistory(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{`null`, `{`, `{"id":"different"}`, `{"id":"bad","usage":{"input":"invalid"}}`} {
 		t.Run(raw, func(t *testing.T) {
 			s := identityStore(t)

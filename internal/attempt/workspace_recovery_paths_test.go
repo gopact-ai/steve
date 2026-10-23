@@ -126,6 +126,7 @@ func storeRecoveryPathEpisode(t *testing.T, s *Service, r WorkspaceRecovery) {
 }
 
 func TestRecoveryGuardsProtectQualifiedWindowsContainerUntilRemoved(t *testing.T) {
+	t.Parallel()
 	for _, location := range []struct{ name, target, work, container, within, sibling string }{
 		{"drive", `C:\root\repo`, `C:\root\container\work`, `c:/root/container`, `c:/root/container/marker`, `c:/root/container-other`},
 		{"unc", `\\server\share\repo`, `\\server\share\container\work`, `\\server\share\container`, `\\server\share\container\marker`, `\\server\share\container-other`},

@@ -188,6 +188,7 @@ func (w *world) running(t *testing.T, member string) task.Task {
 // --- tests -------------------------------------------------------------
 
 func TestDelegateOpensAChildOnTheRightMachine(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 
@@ -246,6 +247,7 @@ func TestDelegateOpensAChildOnTheRightMachine(t *testing.T) {
 // What the child sees is assembled by the hub, typed and bounded — and the
 // parent's transcript is not in it.
 func TestChildSeesContextNotTranscript(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.running(t, "codex")
 	_, err := w.service.Delegate(t.Context(), "chat", "codex", agentmcp.DelegateRequest{
@@ -275,6 +277,7 @@ func TestChildSeesContextNotTranscript(t *testing.T) {
 }
 
 func TestCannotDelegateWithoutARunningTask(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	_, err := w.service.Delegate(t.Context(), "chat", "codex", agentmcp.DelegateRequest{Goal: "x", Requires: []string{"gpu"}})
 	if err == nil || !strings.Contains(err.Error(), "no running task") {
@@ -283,6 +286,7 @@ func TestCannotDelegateWithoutARunningTask(t *testing.T) {
 }
 
 func TestCannotDelegateToSelf(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.running(t, "codex")
 	_, err := w.service.Delegate(t.Context(), "chat", "codex", agentmcp.DelegateRequest{Goal: "x", Agent: "codex"})
@@ -304,6 +308,7 @@ func TestCannotDelegateToSelf(t *testing.T) {
 // A→B→A is refused by the tree, and the refusal reaches the caller as a
 // tool error it can act on.
 func TestCycleIsRefusedAtTheTool(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.running(t, "codex")
 	// The child, when it runs, tries to delegate back up to codex.
@@ -331,6 +336,7 @@ func TestCycleIsRefusedAtTheTool(t *testing.T) {
 // A failed child comes back as an error the parent can handle, and the
 // spend is still charged.
 func TestChildFailureIsAResultNotAHang(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	w.sessions.reply = func(string) (string, error) { return "", errors.New("node-a blew up") }
@@ -353,6 +359,7 @@ func TestChildFailureIsAResultNotAHang(t *testing.T) {
 
 // A spent parent cannot delegate: the tree is the brake.
 func TestExhaustedParentIsRefused(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.tasks.SetBudget(1, time.Hour)
 	w.running(t, "codex") // Begin consumed the one turn
@@ -370,6 +377,7 @@ var _ = permission.New
 // The tool form: start returns quickly with a running child, await returns
 // the result, and a caller cannot await someone else's child.
 func TestStartAndAwaitOutliveTheRequest(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.running(t, "codex")
 	w.service.InlineWait = 10 * time.Millisecond
@@ -680,6 +688,7 @@ func TestAChildWhoseLandingHangsQueuesItsResult(t *testing.T) {
 
 // The child's answer is the result whether or not its files landed.
 func TestAChildsAnswerSurvivesLanding(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.running(t, "codex")
 	w.sessions.reply = func(string) (string, error) { return "I wrote it.\nREF: git abc123 — the change", nil }

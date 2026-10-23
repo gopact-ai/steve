@@ -18,6 +18,7 @@ import (
 // turn opens in the new directory, and the task that was open keeps the
 // project it was created under.
 func TestProjectVerbShowsBindsAndArchives(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 		"other": {Harness: "codex", Aliases: []string{"other"}},
@@ -79,6 +80,7 @@ func TestProjectVerbShowsBindsAndArchives(t *testing.T) {
 // TestProjectSwitchRefusedWhileATurnRuns: a session in flight cannot be
 // pulled out from under its directory.
 func TestProjectSwitchRefusedWhileATurnRuns(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 		"other": {Harness: "codex", Aliases: []string{"other"}},
@@ -110,6 +112,7 @@ func TestProjectSwitchRefusedWhileATurnRuns(t *testing.T) {
 // conversation on the same project is told who holds it; when it ends the
 // attempt is bound and the lock is free.
 func TestChatTurnIsAnAttemptUnderTheCanonicalLock(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 	})
@@ -193,6 +196,7 @@ var errBoom = fmt.Errorf("boom")
 // conversation's project closes what it held, and a turn never continues
 // a task under a different project than the one it is bound to.
 func TestProjectSwitchClosesTheConversationsTasks(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 		"other": {Harness: "codex", Aliases: []string{"other"}},

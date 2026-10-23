@@ -9,6 +9,7 @@ import (
 )
 
 func TestUnconfirmedWriterPreventsDeclarationReassignment(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	projects := project.Open(s.l, CheckDeclarationsTx)
 	p := project.Project{ID: "p", Home: project.Home{Path: t.TempDir()}}

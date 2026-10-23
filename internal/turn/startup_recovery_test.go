@@ -17,6 +17,7 @@ import (
 )
 
 func TestRejectedRunningTransitionNeverPromptsTheAgent(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{reply: "must not run"}
 	c, tasks, book := taskCoordinatorBook(t, runner)
 	// A trigger fails only the durable Running transition, after session setup.

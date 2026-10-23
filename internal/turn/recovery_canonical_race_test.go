@@ -46,14 +46,17 @@ func (a *canonicalRecoveryRaceAttempts) Open(ctx context.Context, spec attempt.S
 }
 
 func TestCanonicalRecoveryAdmissionRefreshesAnEmptyRefusal(t *testing.T) {
+	t.Parallel()
 	checkCanonicalRecoveryAdmission(t, false, false)
 }
 
 func TestCanonicalRecoveryAdmissionWaitsForTheRefreshedCopy(t *testing.T) {
+	t.Parallel()
 	checkCanonicalRecoveryAdmission(t, true, false)
 }
 
 func TestCanonicalRecoveryAdmissionKeepsContinuationSlotWaiting(t *testing.T) {
+	t.Parallel()
 	checkCanonicalRecoveryAdmission(t, true, true)
 }
 
@@ -129,6 +132,7 @@ func checkCanonicalRecoveryAdmission(t *testing.T, contention, continuation bool
 }
 
 func TestRecoveryReleaseClearsThePreviousDiagnostic(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	publishBoundRecoveryTurn(t, c, p, ws, "diagnostic-source", map[string]string{"accepted": "preserved\n"})
 	episode := captureBoundCopy(t, c, source)
@@ -154,8 +158,11 @@ func TestRecoveryReleaseClearsThePreviousDiagnostic(t *testing.T) {
 }
 
 func TestCanonicalRecoveryRefreshStopsAtAcceptedOrUnexplainedRefusals(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"accepted", "unexplained", "other-project", "worktree"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, _, _ := recoveryCopyFixture(t, true)
 			req := Request{
 				Source: Source{

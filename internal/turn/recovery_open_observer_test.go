@@ -46,6 +46,7 @@ func (m *uncertainOpenManager) OpenSession(ctx context.Context, place harness.Pl
 }
 
 func TestLostFreshNodeOpenKeepsOriginalTaskUnsettledWhileObserverCanExit(t *testing.T) {
+	t.Parallel()
 	lifetime, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	c, _, _, original, req := retainedChatFixture(t, withExecutionLifetime(lifetime))

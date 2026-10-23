@@ -18,6 +18,7 @@ func noticeCoordinator(t *testing.T, runner *fakeRunner, after time.Duration) (*
 // A long turn whose asker never came back has to be announced, not just
 // rendered: the card is delivery to a chat, the ping is delivery to a person.
 func TestOfflineReminderFiresWhenTheAskerWentQuiet(t *testing.T) {
+	t.Parallel()
 	coordinator, notices := noticeCoordinator(t, &fakeRunner{reply: "ok"}, time.Nanosecond)
 
 	if _, err := coordinator.Handle(t.Context(), Request{
@@ -47,6 +48,7 @@ func TestOfflineReminderFiresWhenTheAskerWentQuiet(t *testing.T) {
 
 // Somebody who is still typing does not need to be told their answer arrived.
 func TestOfflineReminderStaysQuietWhenTheAskerIsPresent(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
 	coordinator, notices := noticeCoordinator(t, runner, time.Nanosecond)
 
@@ -71,6 +73,7 @@ func TestOfflineReminderStaysQuietWhenTheAskerIsPresent(t *testing.T) {
 }
 
 func TestOfflineReminderStaysQuietForShortAndFailedTurns(t *testing.T) {
+	t.Parallel()
 	coordinator, notices := noticeCoordinator(t, &fakeRunner{reply: "ok"}, time.Hour)
 	if _, err := handle(coordinator, t.Context(), "quick one"); err != nil {
 		t.Fatalf("turn: %v", err)
@@ -97,6 +100,7 @@ func TestOfflineReminderStaysQuietForShortAndFailedTurns(t *testing.T) {
 // The brake has to say where the work got to. "Budget spent" alone leaves the
 // user unable to tell a stop from a loss.
 func TestBudgetStopSaysWhereItGotTo(t *testing.T) {
+	t.Parallel()
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
 	tasks.SetBudget(3, time.Hour) // a budget is opt-in now; this test is about the brake
 

@@ -9,6 +9,7 @@ import (
 )
 
 func TestProcessExitConvergesAnOutstandingForceStop(t *testing.T) {
+	t.Parallel()
 	for _, level := range []string{"kill", "exhausted"} {
 		t.Run(level, func(t *testing.T) {
 			s, now, r, proof, tasks := retainedFixture(t)
@@ -48,6 +49,7 @@ func TestProcessExitConvergesAnOutstandingForceStop(t *testing.T) {
 }
 
 func TestProcessExitCannotConfirmForceStopOnWrongOrRefusedProof(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"binding", "write"} {
 		t.Run(failure, func(t *testing.T) {
 			s, _, r, proof, tasks := retainedFixture(t)
@@ -78,6 +80,7 @@ func TestProcessExitCannotConfirmForceStopOnWrongOrRefusedProof(t *testing.T) {
 }
 
 func TestOrdinaryProcessReceiptClearsExhaustedForceFields(t *testing.T) {
+	t.Parallel()
 	s, now, r, proof, tasks := retainedFixture(t)
 	_, _ = tasks.SetAside(r.TaskID, task.StateCancelled)
 	if _, err := s.RequestForceStop(t.Context(), r.ID, "owner"); err != nil {

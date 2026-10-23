@@ -49,6 +49,7 @@ func TestSettlingAFailedTaskFromTheCardAndTakingItBack(t *testing.T) {
 // Work that is still in play is paused or cancelled, never settled: the card
 // says so rather than quietly closing something that is running.
 func TestSettlingRefusesWorkThatHasNotFailed(t *testing.T) {
+	t.Parallel()
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
 	if _, err := handle(coordinator, t.Context(), "still going"); err != nil {
 		t.Fatal(err)

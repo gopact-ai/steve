@@ -116,6 +116,7 @@ func (p unsupportedGroupProcess) KillNow(ctx context.Context) error {
 	return procgroup.ErrUnsupported
 }
 func TestLiveKillPreservesUnsupportedGroupClassification(t *testing.T) {
+	t.Parallel()
 	h := acphost.New(acphost.Config{Transport: unsupportedGroupTransport{acphost.LocalTransport{Command: buildMockAgent(t), ProcessDir: t.TempDir()}}})
 	defer h.Close()
 	sid, generation, err := h.OpenSession(t.Context(), "", acphost.SessionConfig{Workdir: t.TempDir()})

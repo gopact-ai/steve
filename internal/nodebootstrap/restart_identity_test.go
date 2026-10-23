@@ -8,6 +8,7 @@ import (
 )
 
 func TestAutomaticPeerRestartCannotStartAfterUnprovedInstallation(t *testing.T) {
+	t.Parallel()
 	requirePeerPlatform(t)
 	for _, verdict := range []string{"unsupported", "unproven", "missing-helper"} {
 		t.Run(verdict, func(t *testing.T) {

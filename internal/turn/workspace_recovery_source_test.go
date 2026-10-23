@@ -36,6 +36,7 @@ func retireOriginalRecoverySource(t *testing.T, c *Coordinator, source attempt.R
 }
 
 func TestRecoveryOriginalSourceTaskMustMatchItsAbandonedAttempt(t *testing.T) {
+	t.Parallel()
 	c, _, source, _ := sharedCopy(t)
 	source = retireOriginalRecoverySource(t, c, source)
 	episode, err := c.attempts.WorkspaceRecovery(t.Context(), source.Abandoned.WorkspaceRecoveryID)
@@ -128,8 +129,11 @@ func twoOriginalRecoverySources(t *testing.T, abandonAdded ...bool) (*Coordinato
 }
 
 func TestRecoveryOriginalSourcesAreACompleteExactSet(t *testing.T) {
+	t.Parallel()
 	for _, which := range []string{"task", "revision", "at", "recovery", "duplicate", "missing-first", "missing-added", "record-missing", "record-broken", "project", "target"} {
 		t.Run(which, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, first, second, episode := twoOriginalRecoverySources(t)
 			for _, source := range []attempt.Record{first, second} {
 				if err := NewAbandonControl(c).ProjectAbandoned(t.Context(), source.ID); err != nil {
@@ -194,6 +198,7 @@ func TestRecoveryOriginalSourcesAreACompleteExactSet(t *testing.T) {
 }
 
 func TestRecoveryOriginalSourceSetAllowsReorderingAndRetiredFacts(t *testing.T) {
+	t.Parallel()
 	c, first, second, episode := twoOriginalRecoverySources(t)
 	for _, source := range []attempt.Record{first, second} {
 		if err := NewAbandonControl(c).ProjectAbandoned(t.Context(), source.ID); err != nil {
@@ -229,8 +234,11 @@ func TestRecoveryOriginalSourceSetAllowsReorderingAndRetiredFacts(t *testing.T) 
 }
 
 func TestRecoveryOriginalSourceFinalValidationSharesTheEntireABTransaction(t *testing.T) {
+	t.Parallel()
 	for _, joining := range []bool{false, true} {
 		t.Run(map[bool]string{false: "new", true: "join"}[joining], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			var c *Coordinator
 			var source attempt.Record
 			var previous attempt.WorkspaceRecovery
@@ -294,6 +302,7 @@ func TestRecoveryOriginalSourceFinalValidationSharesTheEntireABTransaction(t *te
 }
 
 func TestRecoveryCreationSourceAnchorCannotBeReplacedByAnotherAssociatedSource(t *testing.T) {
+	t.Parallel()
 	c, first, second, episode := twoOriginalRecoverySources(t)
 	for _, source := range []attempt.Record{first, second} {
 		if err := NewAbandonControl(c).ProjectAbandoned(t.Context(), source.ID); err != nil {

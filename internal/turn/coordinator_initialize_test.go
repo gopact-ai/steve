@@ -14,6 +14,7 @@ import (
 )
 
 func TestInitializeConversationBindsWithoutTouchingSessionsOrTasks(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}, "other": {Harness: "codex"}})
 	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {
@@ -54,6 +55,7 @@ func TestInitializeConversationBindsWithoutTouchingSessionsOrTasks(t *testing.T)
 }
 
 func TestInitializeConversationRequiresProjectReadAccess(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, err := state.OpenLedger(testLedger(t))
 	if err != nil {

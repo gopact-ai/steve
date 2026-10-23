@@ -18,6 +18,7 @@ import (
 // changes nothing, so an idle pass writes nothing: not the child's
 // record, and no write transaction either.
 func TestAContinuationStillQueuedIsNotRewrittenEachPass(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	book := testLedger(t)
 	var err error
@@ -58,6 +59,7 @@ func TestAContinuationStillQueuedIsNotRewrittenEachPass(t *testing.T) {
 // suppressed, says why in the Hub's language, and is left alone by later
 // passes, which keep the reason as it was written.
 func TestAnEndedParentSuppressesAContinuationItsConversationStillHolds(t *testing.T) {
+	t.Parallel()
 	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
 		for _, end := range []task.State{task.StateDone, task.StateCancelled} {
 			t.Run(string(locale)+"/"+string(end), func(t *testing.T) {
@@ -100,6 +102,7 @@ func TestAnEndedParentSuppressesAContinuationItsConversationStillHolds(t *testin
 // so one it has queued stays queued: nothing is suppressed, and each pass
 // keeps reading the receipt.
 func TestAPausedOrFailedParentKeepsItsContinuationQueued(t *testing.T) {
+	t.Parallel()
 	for _, held := range []task.State{task.StatePaused, task.StateFailed} {
 		t.Run(string(held), func(t *testing.T) {
 			w := newWorld(t)

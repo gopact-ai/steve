@@ -47,8 +47,11 @@ func rejectResolutionAccounting(t *testing.T, book *ledger.Ledger, taskID string
 }
 
 func TestSetTaskAsideResolvesOnlyAccountedOriginalExecution(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"settles-first", "settlement-failure", "other-task", "new-epoch"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, _, book, old, _ := retainedChatFixture(t)
 			unresolvedResolutionScope(t, c, execution.Key{TaskID: old.TaskID, AttemptID: old.ID, InstanceID: "original"})
 			if err := c.attempts.MarkUnsettled(t.Context(), old.ID, "test", errResolutionObserver, &attempt.Usage{Input: 17, Output: 8, Reported: true, Model: "original-model"}); err != nil {
@@ -115,8 +118,11 @@ func TestSetTaskAsideResolvesOnlyAccountedOriginalExecution(t *testing.T) {
 }
 
 func TestStoppedExecutionResolutionRejectsIncompleteEvidenceAndIdentity(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"missing-token", "wrong-task-token", "wrong-turn", "wrong-epoch", "missing-stop-evidence", "unsettled", "missing-session-settlement"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, _, _, old, _ := retainedChatFixture(t)
 			unresolvedResolutionScope(t, c, execution.Key{TaskID: old.TaskID, AttemptID: old.ID, InstanceID: "original"})
 			if err := c.attempts.MarkUnsettled(t.Context(), old.ID, "test", errResolutionObserver, nil); err != nil {
@@ -180,8 +186,11 @@ func resolutionRelocationPlan(t *testing.T, c *Coordinator, old attempt.Record) 
 }
 
 func TestRelocationResolutionPreservesAccountingAndReplacement(t *testing.T) {
+	t.Parallel()
 	for _, entry := range []string{"open", "replay", "already-bound", "new-epoch"} {
 		t.Run(entry, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, _, book, old, _ := retainedChatFixture(t)
 			unresolvedResolutionScope(t, c, execution.Key{TaskID: old.TaskID, AttemptID: old.ID, InstanceID: "original"})
 			old, plan, approval := resolutionRelocationPlan(t, c, old)

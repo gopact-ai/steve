@@ -192,6 +192,7 @@ func say(t *testing.T, c *Coordinator, input string) Result {
 // the same machine, verified by a command there, and re-checks the machine
 // afterwards so the roster — not the helper — says whether it worked.
 func TestRepairRunsAHelperAndReChecksTheMachine(t *testing.T) {
+	t.Parallel()
 	probes := &recordProbes{}
 	c, sup, nodes, cmds, tasks := repairCoordinator(t, withDeps(func(d *Deps) { d.Prober = probes }))
 
@@ -266,6 +267,7 @@ func TestRepairRunsAHelperAndReChecksTheMachine(t *testing.T) {
 // machine for its PATH or to check itself again: the helper is told the
 // PATH is unknown, and the reply goes by the advert the machine last sent.
 func TestRepairWithoutNodesKeepsTheLastAdvert(t *testing.T) {
+	t.Parallel()
 	probes := &recordProbes{}
 	c, sup, nodes, cmds, _ := repairCoordinator(t, withDeps(func(d *Deps) { d.Nodes, d.Prober = nil, probes }))
 	res := say(t, c, "/repair kimi")
@@ -306,6 +308,7 @@ func TestFleetProbeReportsEveryHarness(t *testing.T) {
 // missing afterwards, is reported as such — the helper's word is not the
 // verdict.
 func TestRepairReportsFailureHonestly(t *testing.T) {
+	t.Parallel()
 	c, sup, nodes, _, _ := repairCoordinator(t)
 	sup.fail = errors.New("verify: command -v kimi exited 1")
 	if res := say(t, c, "/repair kimi"); !strings.Contains(res.Text, "没成功") || !strings.Contains(res.Text, "exited 1") {
