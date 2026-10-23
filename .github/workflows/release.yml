@@ -40,7 +40,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build Steve.app
-        run: STEVE_DESKTOP_SKIP_UPX=1 ./scripts/build-desktop.sh "$RUNNER_TEMP/desktop"
+        run: STEVE_DESKTOP_SKIP_UPX=1 STEVE_VERSION="$GITHUB_REF_NAME" ./scripts/build-desktop.sh "$RUNNER_TEMP/desktop"
       - name: Attach to the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

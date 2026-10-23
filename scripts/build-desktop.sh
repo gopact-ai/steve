@@ -7,6 +7,10 @@ if [[ "$(uname -s)" != Darwin ]]; then
 fi
 
 task_root="$(cd "$(dirname "$0")/.." && pwd)"
+source "$task_root/scripts/desktop-version.sh"
+task_version="$(desktop_version "$task_root")"
+task_steve_ldflags="$(desktop_steve_ldflags "$task_version")"
+task_node_ldflags="$(desktop_node_ldflags)"
 task_output="${1:-${TMPDIR:-/tmp}/steve-desktop-build}"
 mkdir -p "$task_output"
 task_output="$(cd "$task_output" && pwd)"
@@ -59,16 +63,16 @@ if [[ "${STEVE_DESKTOP_SKIP_CONSOLE_BUILD:-0}" != 1 ]]; then
   (cd "$task_root/web/console" && npm ci --no-audit --no-fund --replace-registry-host=never && npm run build)
 fi
 
-(cd "$task_root" && GOOS=darwin GOARCH="$task_goarch" CGO_ENABLED=0 "${GO:-go}" build -trimpath -o "$task_bundle/Contents/Resources/steve" ./cmd/steve)
+(cd "$task_root" && GOOS=darwin GOARCH="$task_goarch" CGO_ENABLED=0 "${GO:-go}" build -trimpath -ldflags="$task_steve_ldflags" -o "$task_bundle/Contents/Resources/steve" ./cmd/steve)
 for task_platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   task_nodeos="${task_platform%/*}"
   task_nodearch="${task_platform#*/}"
   task_nodepath="$task_bundle/Contents/Resources/node-binaries/$task_nodeos-$task_nodearch/steve-node"
   mkdir -p "$(dirname "$task_nodepath")"
-  (cd "$task_root" && GOOS="$task_nodeos" GOARCH="$task_nodearch" CGO_ENABLED=0 "${GO:-go}" build -trimpath -o "$task_nodepath" ./cmd/steve-node)
+  (cd "$task_root" && GOOS="$task_nodeos" GOARCH="$task_nodearch" CGO_ENABLED=0 "${GO:-go}" build -trimpath -ldflags="$task_node_ldflags" -o "$task_nodepath" ./cmd/steve-node)
   task_peerpath="$task_bundle/Contents/Resources/peer-binaries/$task_nodeos-$task_nodearch/steve"
   mkdir -p "$(dirname "$task_peerpath")"
-  (cd "$task_root" && GOOS="$task_nodeos" GOARCH="$task_nodearch" CGO_ENABLED=0 "${GO:-go}" build -trimpath -o "$task_peerpath" ./cmd/steve)
+  (cd "$task_root" && GOOS="$task_nodeos" GOARCH="$task_nodearch" CGO_ENABLED=0 "${GO:-go}" build -trimpath -ldflags="$task_steve_ldflags" -o "$task_peerpath" ./cmd/steve)
   if [[ "$task_nodeos" == darwin ]]; then
     codesign --force --sign - "$task_nodepath"
     codesign --force --sign - "$task_peerpath"
@@ -81,6 +85,7 @@ xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter \
   -arch "$task_arch" -mmacosx-version-min=13.0 -framework Cocoa -framework WebKit \
   "$task_root/desktop/macos/main.m" -o "$task_bundle/Contents/MacOS/Steve"
 cp "$task_root/desktop/macos/Info.plist" "$task_bundle/Contents/Info.plist"
+stamp_info_plist "$task_bundle/Contents/Info.plist" "$task_version"
 bash "$task_root/scripts/build-app-icon.sh" "$task_root/desktop/macos/Assets/AppIcon.png" "$task_bundle/Contents/Resources/AppIcon.icns"
 plutil -lint "$task_bundle/Contents/Info.plist"
 codesign --force --sign - "$task_bundle/Contents/Resources/steve"
