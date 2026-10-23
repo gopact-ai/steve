@@ -114,6 +114,12 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		s.mu.Unlock()
 		return nodewire.SessionState{}, notStarted(sessionError("unavailable", "harness is not registered on this node"))
 	}
+	// A tool Steve no longer supports never starts, whatever this node's
+	// configuration still says.
+	if err := harness.RetiredError(req.Harness); err != nil {
+		s.mu.Unlock()
+		return nodewire.SessionState{}, notStarted(sessionError("unavailable", err.Error()))
+	}
 	// Observing a previously accepted open is permitted during reconciliation;
 	// creating a native process requires a fresh execution admission as well.
 	start := req

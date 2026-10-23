@@ -19,7 +19,8 @@ import (
 func (s *SessionService) prepareSessionHost(ctx context.Context, id, resumeRuntime string, req *nodewire.SessionRequest, spec HarnessSpec, broker *permission.Broker) (acphost.Config, string, error) {
 	cfg, err := s.hostConfig(req.Harness, spec, broker)
 	if err != nil {
-		return cfg, "", err
+		// Nothing is reserved or started yet: a definite refusal.
+		return cfg, "", notStarted(err)
 	}
 	instructions := ""
 	if req.NativeImport != nil {
@@ -41,7 +42,13 @@ func (s *SessionService) prepareSessionHost(ctx context.Context, id, resumeRunti
 			return cfg, "", err
 		}
 		instructions = prepared.Instructions
-		cfg = acphost.Config{WorkspaceFiles: true, NoRestart: true, Command: prepared.Config.Command, Args: prepared.Config.Args, Env: prepared.Config.Env, ProcessDir: prepared.Config.ProcessDir, Permission: broker}
+		// The runtime's own environment replaces the node's, so pi's home
+		// is chosen again from it by this session's policy.
+		env, err := steveruntime.ForPolicy(prepared.Config.Env, req.Harness, broker.Policy())
+		if err != nil {
+			return cfg, "", notStarted(err)
+		}
+		cfg = acphost.Config{WorkspaceFiles: true, NoRestart: true, Command: prepared.Config.Command, Args: prepared.Config.Args, Env: env, ProcessDir: prepared.Config.ProcessDir, Permission: broker}
 		req.MCPServers = append(append([]acp.MCPServer(nil), req.MCPServers...), prepared.Servers...)
 	} else if req.Binding.PluginRuntimeID != "" {
 		return cfg, "", fmt.Errorf("%w: session binding names plugin runtime %s but the request carries none", plugins.ErrInvalid, req.Binding.PluginRuntimeID)

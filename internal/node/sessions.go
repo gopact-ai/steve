@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/procgroup"
@@ -84,6 +85,9 @@ type harnessCapabilities struct {
 const capabilityTTL = time.Hour
 
 func (s *SessionService) hostConfig(harnessID string, spec HarnessSpec, broker *permission.Broker) (acphost.Config, error) {
+	if err := harness.RetiredError(harnessID); err != nil {
+		return acphost.Config{}, err
+	}
 	env, err := steveruntime.ForPolicy(steveruntime.ApplyEnv(spec.Env, harnessID, s.server.conf().StateDir), harnessID, broker.Policy())
 	if err != nil {
 		return acphost.Config{}, err

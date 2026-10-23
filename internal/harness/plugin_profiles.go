@@ -142,12 +142,14 @@ func (m *Manager) pluginHost(at Placement, ref plugins.RuntimeRef, cfg Config) (
 	if err != nil {
 		return nil, err
 	}
-	env, err := envForPolicy(cfg.Env, at.Harness, policy)
-	if err != nil {
-		return nil, err
-	}
-	hostCfg := acphost.Config{WorkspaceFiles: true, Command: cfg.Command, Args: cfg.Args, Env: env, ProcessDir: cfg.ProcessDir, Permission: broker}
-	if at.Node != "" {
+	hostCfg := acphost.Config{WorkspaceFiles: true, Command: cfg.Command, Args: cfg.Args, Env: cfg.Env, ProcessDir: cfg.ProcessDir, Permission: broker}
+	if at.Node == "" {
+		// A remote runtime's environment is the node's; the node fits pi's
+		// home to the policy the transport carries.
+		if hostCfg.Env, err = envForPolicy(cfg.Env, at.Harness, policy); err != nil {
+			return nil, err
+		}
+	} else {
 		remote, ok := m.remote.(PluginTransports)
 		if !ok {
 			return nil, fmt.Errorf("%w: remote plugin transport unavailable", plugins.ErrIncompatible)

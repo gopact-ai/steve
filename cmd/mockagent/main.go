@@ -162,8 +162,14 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	input := promptText(req.Prompt)
 	// "mockenv NAME" answers with this process's NAME, so a test can see
 	// which environment the session it prompts actually runs in.
-	if name, ok := strings.CutPrefix(strings.TrimSpace(input), "mockenv "); ok {
-		if err := a.say(ctx, req.SessionID, "env "+name+"="+os.Getenv(strings.TrimSpace(name))); err != nil {
+	if fields := strings.Fields(input); len(fields) >= 2 && slices.Contains(fields[:len(fields)-1], "mockenv") {
+		var answers []string
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "mockenv" {
+				answers = append(answers, "env "+fields[i+1]+"="+os.Getenv(fields[i+1]))
+			}
+		}
+		if err := a.say(ctx, req.SessionID, strings.Join(answers, "\n")); err != nil {
 			return nil, err
 		}
 		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil

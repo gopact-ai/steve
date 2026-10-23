@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node/journal"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -109,6 +110,11 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	if !ok {
 		s.processMu.Unlock()
 		closeStream(stream, "unknown harness")
+		return
+	}
+	if err := harness.RetiredError(req.Harness); err != nil {
+		s.processMu.Unlock()
+		closeStream(stream, err.Error())
 		return
 	}
 	// The hub names the policy the process runs under (read when it names
