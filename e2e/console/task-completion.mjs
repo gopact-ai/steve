@@ -204,14 +204,15 @@ async function check(locale) {
         await page.keyboard.press("Escape");
 
         await context.close();
-        const overrides = [{ can_complete: false }, { parent: "147" }, { execution: "running" }, { execution: "unknown" }, { attention: 1 }, { pending_results: 1 }, { uncertain_results: 1 }, { origin: "plan" }, { plan_id: "p1" }, { lifecycle: "paused" }, { lifecycle: "failed" }, { lifecycle: "cancelled" }];
-        await pool(overrides.map((override) => async () => {
-            const probe = await session(locale);
-            probe.fixture.task = { ...root(), ...override };
-            const dialog = await probe.open();
-            assert.equal(await dialog.getByRole("button", { name: completeName, exact: true }).count(), 0, JSON.stringify(override));
-            await probe.context.close();
-        }));
+}
+// A task that cannot be completed offers no Complete button.
+const overrides = [{ can_complete: false }, { parent: "147" }, { execution: "running" }, { execution: "unknown" }, { attention: 1 }, { pending_results: 1 }, { uncertain_results: 1 }, { origin: "plan" }, { plan_id: "p1" }, { lifecycle: "paused" }, { lifecycle: "failed" }, { lifecycle: "cancelled" }];
+async function probe(locale, override) {
+    const { fixture, context, open } = await session(locale);
+    fixture.task = { ...root(), ...override };
+    const dialog = await open();
+    assert.equal(await dialog.getByRole("button", { name: locale === "en" ? "Complete task" : "完成任务", exact: true }).count(), 0, JSON.stringify(override));
+    await context.close();
 }
 const concurrency = Math.max(1, Number(process.env.TASK_COMPLETION_CONCURRENCY) || Math.min(6, Math.max(1, Math.floor(os.availableParallelism() / 2))));
 async function pool(jobs) {
@@ -221,7 +222,9 @@ async function pool(jobs) {
 
 try {
     await mkdir(artifacts, { recursive: true });
-    await Promise.all(["en", "zh"].map(check));
+    // One queue and one concurrency budget for every context: the two locale
+    // workflows and each locale's override probes.
+    await pool(["en", "zh"].flatMap((locale) => [() => check(locale), ...overrides.map((override) => () => probe(locale, override))]));
     assert.deepEqual(errors, []);
     console.log("TASK COMPLETION UI PASS: en/zh, wide/narrow, keyboard, pending, retries, rejection, completion, ending a task by hand and settling a failure");
 } finally {

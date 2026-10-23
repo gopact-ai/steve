@@ -26,8 +26,13 @@ async function eventually(predicate, message) {
     assert.fail(message);
 }
 
-async function fixture({ history = false, running = false, sandboxed = false } = {}) {
-    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: sandboxed ? "allow" : "block" });
+async function fixture(options = {}) {
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: options.sandboxed ? "allow" : "block" });
+    // A setup failure must not leave its page polling while the pool moves on.
+    try { return await setup(context, options); } catch (error) { await context.close().catch(() => {}); throw error; }
+}
+
+async function setup(context, { history = false, running = false, sandboxed = false }) {
     // Playwright's serviceWorkers:"block" init script reads this getter without
     // a guard and throws in opaque-origin previews. Keep registration blocked
     // without masking application pageerrors or changing the frame's sandbox.
