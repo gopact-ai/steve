@@ -52,7 +52,7 @@ func buildPlan(files []string) (*plan, error) {
 			p.vetGate = path.Ext(f) == ".go"
 			continue
 		}
-		if inert(f) && !g.embeds[f] {
+		if inert(f) && !g.embeds[f] && !dataRead(f) {
 			p.skipped = append(p.skipped, f)
 			continue
 		}
@@ -186,7 +186,7 @@ func (p *plan) print(base string, n int) {
 		fmt.Printf("console: %d step(s) from %s\n", len(p.console), strings.Join(p.consoleScripts(), " "))
 	}
 	if p.desktop {
-		fmt.Println("desktop: make test-desktop")
+		fmt.Println("desktop: make test-desktop + package app icon")
 	}
 	for _, d := range p.providers {
 		fmt.Printf("provider: npm test in %s\n", d)

@@ -39,7 +39,7 @@ func (p *plan) run() bool {
 		section("console", p.runConsole)
 	}
 	if p.desktop {
-		section("desktop", func() bool { return sh(".", "make", "test-desktop") })
+		section("desktop", func() bool { return sh(".", "make", "test-desktop") && packageIcon() })
 	}
 	for _, dir := range p.providers {
 		section("provider "+dir, func() bool {
@@ -237,4 +237,16 @@ func (p *plan) runConsole() bool {
 		}
 	}
 	return ok
+}
+
+// packageIcon is the desktop job's icon packaging step, into a temporary
+// directory the gate removes afterwards.
+func packageIcon() bool {
+	dir, err := os.MkdirTemp("", "steve-gate-icon-")
+	if err != nil {
+		fmt.Println(err)
+		return false
+	}
+	defer os.RemoveAll(dir)
+	return sh(".", "bash", "scripts/build-app-icon.sh", "desktop/macos/Assets/AppIcon.png", filepath.Join(dir, "AppIcon.icns"))
 }

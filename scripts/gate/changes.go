@@ -28,7 +28,9 @@ func changedFiles(base string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("no merge base with %s (git fetch origin?): %w", base, err)
 	}
-	if err := add("diff", "--name-only", strings.TrimSpace(string(mergeBase))); err != nil { // committed + working tree
+	// --no-renames lists both sides of a move: the source package loses a
+	// file as surely as the destination gains one.
+	if err := add("diff", "--name-only", "--no-renames", strings.TrimSpace(string(mergeBase))); err != nil { // committed + working tree
 		return nil, err
 	}
 	if err := add("ls-files", "--others", "--exclude-standard"); err != nil {
@@ -78,6 +80,16 @@ var dataReaders = []struct {
 	{"examples/", []string{"internal/app", "internal/contentreplica", "internal/node", "internal/plugins", "internal/plugins/pluginledger", "internal/runtime"}},
 	{"plugins/", []string{"internal/plugins"}},
 	{"web/console/src/lib/i18n/", []string{"internal/i18n"}},
+}
+
+// dataRead reports whether a Go test reads f, which then outranks inert.
+func dataRead(f string) bool {
+	for _, r := range dataReaders {
+		if strings.HasPrefix(f, r.prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // consoleDist is the built console embedded into the binary. Only
