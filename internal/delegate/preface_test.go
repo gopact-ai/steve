@@ -190,6 +190,7 @@ func TestPrefaceLandsQueuedFilesUnderTheTurnsLease(t *testing.T) {
 // neither closed nor marked delivered — the result it ends with is still
 // to reach the parent.
 func TestPrefaceToldLeavesAChildResumedMeanwhileAlone(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	child, err := w.tasks.Spawn(parent.ID, task.Task{Goal: "review the API", Member: "builder", Node: "node-a", Origin: "delegate:" + parent.ID})

@@ -48,6 +48,7 @@ func seedUnconfirmedWriter(t *testing.T, c *Coordinator, req Request) Result {
 // words the owner can act on: which task, how to see and cancel it, and the
 // recovery choice that rechecks the original execution.
 func TestTurnOnAnOpenAttemptIsRefusedInWords(t *testing.T) {
+	t.Parallel()
 	for _, tc := range ownerChannels {
 		t.Run(tc.name, func(t *testing.T) {
 			c, tasks, _ := taskCoordinatorOn(t, &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "must not run"}}}, withOwner("owner"), withChannelOwner("feishu", "owner"))
@@ -86,8 +87,11 @@ func TestTurnOnAnOpenAttemptIsRefusedInWords(t *testing.T) {
 // A turn refused because an earlier execution in the same workspace has not
 // been confirmed stopped says so in words the owner can act on.
 func TestTurnBehindAnUnconfirmedWriterIsRefusedInWords(t *testing.T) {
+	t.Parallel()
 	for _, tc := range ownerChannels {
 		t.Run(tc.name, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			runner := &fakeRunner{reply: "earlier answer"}
 			c, _, _ := taskCoordinatorOn(t, &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}, withOwner("owner"), withChannelOwner("feishu", "owner"))
 			req := tc.req

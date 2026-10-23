@@ -29,6 +29,7 @@ func putHistoryAttempt(t testing.TB, book *ledger.Ledger, r Record) {
 }
 
 func TestNativeHistoryPagesPreserveCompletionOrderAndScope(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	for _, id := range []string{"old", "new", "empty"} {
 		if err := s.l.PutBinding(t.Context(), "task", id, map[string]any{"id": id, "transport": "console", "channel": "opaque"}); err != nil {
@@ -104,6 +105,7 @@ func TestNativeHistoryPagesPreserveCompletionOrderAndScope(t *testing.T) {
 }
 
 func TestNativeHistoryIndexesDoNotHideCorruptRows(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{
 		`null`, `[]`, `{`, `{"id":"bad","task_id":8}`, `{"id":"bad","usage":{"input":"no"}}`, `{"id":"wrong"}`,
 	} {
@@ -120,6 +122,7 @@ func TestNativeHistoryIndexesDoNotHideCorruptRows(t *testing.T) {
 }
 
 func TestNativeTaskHistoryUsesIndexedBoundedSeeks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	book, err := ledger.Open(dir, ledger.Options{})
 	if err != nil {
@@ -182,6 +185,7 @@ func TestNativeTaskHistoryUsesIndexedBoundedSeeks(t *testing.T) {
 }
 
 func TestNativeHistoryScopeAndRowsUseOneReadSnapshot(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	book, err := ledger.Open(dir, ledger.Options{})
 	if err != nil {
@@ -224,6 +228,7 @@ func TestNativeHistoryScopeAndRowsUseOneReadSnapshot(t *testing.T) {
 }
 
 func TestNativeHistoryReadIndexSurvivesReplicaRestore(t *testing.T) {
+	t.Parallel()
 	source, _ := newService(t)
 	putHistoryAttempt(t, source.l, Record{Spec: Spec{ID: "one", TaskID: "task"}, State: Bound, StartedAt: time.Unix(1, 0)})
 	if _, err := source.l.DB().Exec(`DROP INDEX operations_task_history`); err != nil {
@@ -248,8 +253,11 @@ func TestNativeHistoryReadIndexSurvivesReplicaRestore(t *testing.T) {
 }
 
 func TestNativeHistoryRejectsCorruptLedgerEnvelope(t *testing.T) {
+	t.Parallel()
 	for _, column := range []string{"created_at", "updated_at", "revision", "incarnation"} {
 		t.Run(column, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			s, _ := newService(t)
 			putHistoryAttempt(t, s.l, Record{Spec: Spec{ID: "valid", TaskID: "selected"}, State: Bound, StartedAt: time.Unix(1, 0)})
 			putHistoryAttempt(t, s.l, Record{Spec: Spec{ID: "corrupt", TaskID: "unrelated"}, State: Bound, StartedAt: time.Unix(1, 0)})

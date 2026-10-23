@@ -32,6 +32,7 @@ func nodeReceiptCompletion(t *testing.T) (*Service, Record, Completion) {
 }
 
 func TestNodeReceiptAndPendingCommitAtomicallyWithResult(t *testing.T) {
+	t.Parallel()
 	service, record, completion := nodeReceiptCompletion(t)
 	completed, err := service.Complete(t.Context(), record.ID, "test", completion)
 	if err != nil || completed.NodeReceipt == nil || *completed.NodeReceipt != *completion.NodeReceipt {
@@ -60,8 +61,11 @@ func TestNodeReceiptAndPendingCommitAtomicallyWithResult(t *testing.T) {
 }
 
 func TestNodeReceiptCASFailureAndWrongBindingCannotCreatePending(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"cas-conflict", "wrong-command", "wrong-binding"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			service, record, completion := nodeReceiptCompletion(t)
 			switch mode {
 			case "cas-conflict":
@@ -90,6 +94,7 @@ func TestNodeReceiptCASFailureAndWrongBindingCannotCreatePending(t *testing.T) {
 }
 
 func TestNodeReceiptPendingQueryDoesNotDecodeClosedHistory(t *testing.T) {
+	t.Parallel()
 	service, record, completion := nodeReceiptCompletion(t)
 	if _, err := service.Complete(t.Context(), record.ID, "test", completion); err != nil {
 		t.Fatal(err)

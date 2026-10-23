@@ -40,6 +40,7 @@ func importedNodeFixture(t *testing.T) (*Server, nativehistory.Reference, string
 }
 
 func TestNativeLoadFailureRetainsInterruptedExecutionWithoutFreshFallback(t *testing.T) {
+	t.Parallel()
 	s, ref, _ := importedNodeFixture(t)
 	cfg := s.conf()
 	spec := cfg.Harnesses["codex"]
@@ -62,6 +63,7 @@ func TestNativeLoadFailureRetainsInterruptedExecutionWithoutFreshFallback(t *tes
 }
 
 func TestImportedHistoryOpensTheSelectedNativeSessionUnderANewManagedIdentity(t *testing.T) {
+	t.Parallel()
 	s, ref, sourcePath := importedNodeFixture(t)
 	before, err := os.ReadFile(sourcePath)
 	if err != nil {
@@ -99,6 +101,7 @@ func TestImportedHistoryOpensTheSelectedNativeSessionUnderANewManagedIdentity(t 
 }
 
 func TestNativeImportRejectsMissingBindingAndWorkspaceRemapping(t *testing.T) {
+	t.Parallel()
 	s, ref, _ := importedNodeFixture(t)
 	req := nodeSessionRequest("open")
 	req.Harness, req.Workdir, req.CommandID, req.NativeImport = "codex", ref.SourceWorkdir, "invalid-import", ref.Clone()
@@ -116,6 +119,7 @@ func TestNativeImportRejectsMissingBindingAndWorkspaceRemapping(t *testing.T) {
 }
 
 func TestNativeHistoryPOSTChecksResumeBeforeSnapshot(t *testing.T) {
+	t.Parallel()
 	s, ref, _ := importedNodeFixture(t)
 	cfg := s.conf()
 	spec := cfg.Harnesses["codex"]

@@ -44,6 +44,7 @@ func retainedFixture(t *testing.T) (*Service, *clock, Record, RetainedEvidence, 
 }
 
 func TestRetainedExecutionRecoversExpiredSameHolderWithoutNewAttempt(t *testing.T) {
+	t.Parallel()
 	s, now, old, proof, _ := retainedFixture(t)
 	if err := s.MarkUnsettled(t.Context(), old.ID, "startup", errors.New("observer restarted"), nil); err != nil {
 		t.Fatal(err)
@@ -68,8 +69,11 @@ func TestRetainedExecutionRecoversExpiredSameHolderWithoutNewAttempt(t *testing.
 }
 
 func TestRetainedRecoveryRejectsDifferentHolderOrTaskEpochAtomically(t *testing.T) {
+	t.Parallel()
 	for _, changed := range []string{"holder", "task", "command", "node", "uncertain"} {
 		t.Run(changed, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			s, now, old, proof, tasks := retainedFixture(t)
 			now.t = now.t.Add(3 * time.Minute)
 			proof.ObservedAt = now.t
@@ -106,6 +110,7 @@ func TestRetainedRecoveryRejectsDifferentHolderOrTaskEpochAtomically(t *testing.
 }
 
 func TestRetainedRecoveryAcceptsDurableSettledResultButNotMissingReceipt(t *testing.T) {
+	t.Parallel()
 	s, now, r, proof, _ := retainedFixture(t)
 	now.t = now.t.Add(3 * time.Minute)
 	proof.ObservedAt = now.t
@@ -123,6 +128,7 @@ func TestRetainedRecoveryAcceptsDurableSettledResultButNotMissingReceipt(t *test
 }
 
 func TestStartupKeepsManagedSettledRunningAttemptForResultRecovery(t *testing.T) {
+	t.Parallel()
 	s, _, r, _, _ := retainedFixture(t)
 	if err := s.MarkSessionSettled(t.Context(), r.ID, "node response received"); err != nil {
 		t.Fatal(err)
@@ -137,8 +143,11 @@ func TestStartupKeepsManagedSettledRunningAttemptForResultRecovery(t *testing.T)
 }
 
 func TestRetainedRecoveryOnlyAcceptsRegisteredKinds(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []Kind{KindChat, KindDelegate, KindStep, KindPlan, KindVerify, Kind("arbitrary")} {
 		t.Run(string(kind), func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			s, _, r, proof, _ := retainedFixture(t)
 			_, err := s.l.Transition(t.Context(), r.ID, string(Running), string(Running), "test", nil, nil, func(tx *ledger.Tx, op *ledger.Operation) error {
 				var updated Record
@@ -160,6 +169,7 @@ func TestRetainedRecoveryOnlyAcceptsRegisteredKinds(t *testing.T) {
 }
 
 func TestRetainedPostPromptPhaseRequiresSettlementAndNeverRewinds(t *testing.T) {
+	t.Parallel()
 	s, _, r, proof, _ := retainedFixture(t)
 	if _, err := s.Advance(t.Context(), r.ID, Snapshotted, "exec", nil); err != nil {
 		t.Fatal(err)
@@ -177,6 +187,7 @@ func TestRetainedPostPromptPhaseRequiresSettlementAndNeverRewinds(t *testing.T) 
 }
 
 func TestRecordSessionCannotReplaceNativeIdentity(t *testing.T) {
+	t.Parallel()
 	s, _, r, _, _ := retainedFixture(t)
 	if _, err := s.RecordSession(t.Context(), r.ID, "exec", r.Session); err != nil {
 		t.Fatal(err)

@@ -14,6 +14,7 @@ import (
 )
 
 func TestRecoveryReservationBeforeNativePreparationCanBeReleasedWithoutChangingFiles(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	r, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "never-prepared"))
 	if err != nil {
@@ -36,8 +37,11 @@ func TestRecoveryReservationBeforeNativePreparationCanBeReleasedWithoutChangingF
 }
 
 func TestRecoveryPreparationAndLostOpenKeepTheirMonotonicWriteObligation(t *testing.T) {
+	t.Parallel()
 	for _, arm := range []bool{false, true} {
 		t.Run(map[bool]string{false: "prepared", true: "open may have started"}[arm], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, source, ws := sharedCopy(t)
 			r, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "prepared-input"))
 			if err != nil {
@@ -73,8 +77,11 @@ func TestRecoveryPreparationAndLostOpenKeepTheirMonotonicWriteObligation(t *test
 }
 
 func TestRecoveryWriteGateCommitsBeforePreparationAndRejectsWithoutExternalWork(t *testing.T) {
+	t.Parallel()
 	for _, rejected := range []bool{false, true} {
 		t.Run(map[bool]string{false: "commit", true: "reject"}[rejected], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, source, ws := sharedCopy(t)
 			r, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "preparing-input"))
 			if err != nil {
@@ -107,6 +114,7 @@ func TestRecoveryWriteGateCommitsBeforePreparationAndRejectsWithoutExternalWork(
 }
 
 func TestRecoveryArmWithoutPreparedStillRetainsItsWriteObligation(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	r, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "armed-only"))
 	if err != nil {
@@ -131,6 +139,7 @@ func TestRecoveryArmWithoutPreparedStillRetainsItsWriteObligation(t *testing.T) 
 }
 
 func TestUnusedRecoveryReleaseRequiresExplicitSettlementAndPreservesFiles(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	r, err := c.attempts.Open(t.Context(), recoveryCopySpec(t, c, p, ws, "unused-input"))
 	if err != nil {

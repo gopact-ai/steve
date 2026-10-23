@@ -64,6 +64,7 @@ func TestIdentityReadsDoNotDecodeUnrelatedHistory(t *testing.T) {
 }
 
 func TestIdentityReadsRejectMiskeyedOrMalformedOwnerRows(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{
 		`null`, `{`, `{"id":"different","task_id":"other"}`,
 		`{"id":"bad","usage":{"input":"invalid"}}`,
@@ -86,6 +87,7 @@ func TestIdentityReadsRejectMiskeyedOrMalformedOwnerRows(t *testing.T) {
 }
 
 func TestIdentityReadsPreserveOwnerJSONAndNanosecondOrder(t *testing.T) {
+	t.Parallel()
 	s := identityStore(t)
 	for _, row := range []struct{ id, raw string }{
 		{"early", `{"id":"early","task_id":"task","turn_id":"turn","started_at":"2026-09-01T00:00:00.000000001Z"}`},
@@ -111,6 +113,7 @@ func TestIdentityReadsPreserveOwnerJSONAndNanosecondOrder(t *testing.T) {
 }
 
 func TestIdentityQueryPlansSeekOwnerKeys(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	book, err := ledger.Open(dir, ledger.Options{})
 	if err != nil {
@@ -161,6 +164,7 @@ func TestIdentityQueryPlansSeekOwnerKeys(t *testing.T) {
 }
 
 func TestIdentityIndexesRestoreAndAdvanceWithOwnerWrites(t *testing.T) {
+	t.Parallel()
 	s := identityStore(t)
 	insertIdentityRecord(t, s, "wanted", "running", `{"id":"wanted","task_id":"task","turn_id":"turn"}`)
 	if _, err := s.l.Transition(t.Context(), "wanted", "running", "bound", "test", nil, nil, nil); err != nil {

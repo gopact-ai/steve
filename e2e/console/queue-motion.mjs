@@ -101,62 +101,76 @@ export function assertQueueBurst(value, expected = { initial:80, pending:48, dep
     assert.equal(value.overflow, false, "the neon queue overflowed the viewport");
 }
 
-export async function checkQueueBurst(page, snapshot) {
-    await page.unroute("**/console/event-flow");
-    await page.addInitScript(queueBurstProbe);
-    await page.addInitScript(queueGrowthProbe);
+// Each case owns a fresh page from open(width), so independent cases run on
+// a bounded pool of concurrent contexts; the probes keep their real-time
+// animation windows. The adaptive density walk stays ordered within a width.
+export async function checkQueueBurst(open, target, snapshot, concurrency = 2) {
+    const cases = [];
     for (const width of [1280, 390]) {
-        await page.setViewportSize({ width, height: 900 });
-        for(const [initial,departures] of [[80,32],[24,16]]) {
+        const fresh = async (flow) => {
+            const page = await open(width);
+            await page.addInitScript(queueBurstProbe);
+            await page.addInitScript(queueGrowthProbe);
+            await page.route("**/console/event-flow", flow);
+            await page.goto(target);
+            return page;
+        };
+        for(const [initial,departures] of [[80,32],[24,16]]) cases.push(async () => {
             const values=queueBurstSnapshots(snapshot,initial,departures);
             let burst=false;
-            await page.route("**/console/event-flow", route=>route.fulfill({json:burst?values.after:values.before}));
-            await page.reload();
+            const page = await fresh(route=>route.fulfill({json:burst?values.after:values.before}));
             await page.waitForFunction(initial=>document.querySelector('.bus-flow-values strong')?.textContent===String(initial),initial);
             burst=true;
             await page.getByRole("button",{name:"Refresh",exact:true}).first().click();
             await page.waitForFunction(()=>document.body.dataset.queueBurst,undefined,{timeout:15000});
             assertQueueBurst(await page.evaluate(()=>JSON.parse(document.body.dataset.queueBurst)),{initial,pending:initial-departures,departures});
-            await page.unroute("**/console/event-flow");
-        }
-        const values=queueBurstSnapshots(snapshot);
-        const growth=queueGrowthSnapshots(snapshot);
-        let growing=false;
-        await page.route("**/console/event-flow",route=>route.fulfill({json:growing?growth.after:growth.before}));
-        await page.reload();
-        await page.waitForFunction(()=>document.querySelector('.bus-flow-values strong')?.textContent==='24');
-        growing=true;
-        await page.getByRole("button",{name:"Refresh",exact:true}).first().click();
-        await page.waitForFunction(()=>document.body.dataset.queueGrowth,undefined,{timeout:15000});
-        assertQueueGrowth(await page.evaluate(()=>JSON.parse(document.body.dataset.queueGrowth)));
-        await page.unroute("**/console/event-flow");
+            await page.context().close();
+        });
+        cases.push(async () => {
+            const growth=queueGrowthSnapshots(snapshot);
+            let growing=false;
+            const page = await fresh(route=>route.fulfill({json:growing?growth.after:growth.before}));
+            await page.waitForFunction(()=>document.querySelector('.bus-flow-values strong')?.textContent==='24');
+            growing=true;
+            await page.getByRole("button",{name:"Refresh",exact:true}).first().click();
+            await page.waitForFunction(()=>document.body.dataset.queueGrowth,undefined,{timeout:15000});
+            assertQueueGrowth(await page.evaluate(()=>JSON.parse(document.body.dataset.queueGrowth)));
+            await page.context().close();
+        });
         // Actual counts remain visible as the grid grows; server capacity must
         // not collapse 40 deliveries into a single aggregate light.
-        let previousSlots = 0;
-        for (const pending of [0,1,40,80,128,2048,4096]) {
-            const value = { ...values.before, capacity:4096, queues: { ...values.before.queues, pending: { pending } } };
-            await page.route("**/console/event-flow", (route) => route.fulfill({ json: value }));
-            await page.reload();
-            await page.waitForFunction((pending) => {
-                const view=document.querySelector('.bus-flow-track')?.flowState?.();
-                return view && Math.abs(view.fill * view.units - pending) < .001;
-            }, pending);
-            const view = await page.evaluate(() => {
-                const state=document.querySelector('.bus-flow-track').flowState();
-                return {slots:state.slots, units:state.units, lit:state.lit.length, width:state.width, fill:state.fill, marker:document.querySelector('.bus-flow-scale')?.textContent, queueRatio:state.span/state.length, overflow:document.documentElement.scrollWidth>innerWidth};
-            });
-            assert.ok(view.slots>=previousSlots, "more backlog produced fewer display columns");
-            previousSlots=view.slots;
-            if(pending<=128) {
-                assert.equal(view.units,1,"normal backlog was prematurely aggregated");
-                assert.equal(view.lit,pending,"one delivery did not produce one resting light");
-                assert.equal(view.marker,undefined,"normal backlog retained an explanatory scale legend");
-            } else assert.equal(view.marker,'×'+view.units,"unavoidable grouping was undisclosed");
-            assert.ok(view.fill<view.slots,"the adaptive display has no space for another arrival");
-            assert.ok(view.width>=1,"adaptive lights shrank below a discernible pixel");
-            assert.ok(view.queueRatio>=.85,"adaptive columns shortened the queue");
-            assert.equal(view.overflow,false,"adaptive columns overflowed the viewport");
-            await page.unroute("**/console/event-flow");
-        }
+        cases.push(async () => {
+            const values=queueBurstSnapshots(snapshot);
+            let value;
+            const page = await fresh((route) => route.fulfill({ json: value }));
+            let previousSlots = 0;
+            for (const pending of [0,1,40,80,128,2048,4096]) {
+                value = { ...values.before, capacity:4096, queues: { ...values.before.queues, pending: { pending } } };
+                await page.reload();
+                await page.waitForFunction((pending) => {
+                    const view=document.querySelector('.bus-flow-track')?.flowState?.();
+                    return view && Math.abs(view.fill * view.units - pending) < .001;
+                }, pending);
+                const view = await page.evaluate(() => {
+                    const state=document.querySelector('.bus-flow-track').flowState();
+                    return {slots:state.slots, units:state.units, lit:state.lit.length, width:state.width, fill:state.fill, marker:document.querySelector('.bus-flow-scale')?.textContent, queueRatio:state.span/state.length, overflow:document.documentElement.scrollWidth>innerWidth};
+                });
+                assert.ok(view.slots>=previousSlots, "more backlog produced fewer display columns");
+                previousSlots=view.slots;
+                if(pending<=128) {
+                    assert.equal(view.units,1,"normal backlog was prematurely aggregated");
+                    assert.equal(view.lit,pending,"one delivery did not produce one resting light");
+                    assert.equal(view.marker,undefined,"normal backlog retained an explanatory scale legend");
+                } else assert.equal(view.marker,'×'+view.units,"unavoidable grouping was undisclosed");
+                assert.ok(view.fill<view.slots,"the adaptive display has no space for another arrival");
+                assert.ok(view.width>=1,"adaptive lights shrank below a discernible pixel");
+                assert.ok(view.queueRatio>=.85,"adaptive columns shortened the queue");
+                assert.equal(view.overflow,false,"adaptive columns overflowed the viewport");
+            }
+            await page.context().close();
+        });
     }
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, cases.length)) }, async () => {
+        while (cases.length) await cases.shift()();
+    }));
 }

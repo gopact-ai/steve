@@ -96,6 +96,7 @@ func TestNodeReceiptAckDeletesOnlyExactOriginalInputAndPreservesHighwater(t *tes
 }
 
 func TestNodeReceiptAckFailsClosedAndTransactionFailurePublishesNothing(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"denied", "no-authorizer", "wrong-digest", "wrong-binding", "wrong-sequence", "pending-question", "sqlite-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			one, req, authority := ackFixture(t)

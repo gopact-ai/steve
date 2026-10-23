@@ -26,6 +26,7 @@ func (a openingAttempts) Open(ctx context.Context, spec attempt.Spec) (attempt.R
 }
 
 func TestContinuationRetriesOnlyDefinitivelyUnopenedAttempts(t *testing.T) {
+	t.Parallel()
 	for _, refusal := range []error{attempt.Busy{Resource: "canonical:p"}, attempt.NoSlot{Endpoint: "worker", Slots: 1}} {
 		calls, notifications, id := 0, 0, ""
 		opener := waitingAttempts{passes: continuationPasses, Attempts: openingAttempts{open: func(ctx context.Context, spec attempt.Spec) (attempt.Record, error) {
@@ -162,6 +163,7 @@ func TestOrdinaryPromptExplainsNonAgentWorkspaceWriter(t *testing.T) {
 // cut takes and gives it back by itself: an in-place prompt waits it out
 // instead of being told the project is being written.
 func TestOrdinaryPromptWaitsOutACanonicalSnapshot(t *testing.T) {
+	t.Parallel()
 	c, _ := completionCoordinator(t, &fakeRunner{reply: "after the snapshot"})
 	release, err := c.attempts.Hold(t.Context(), "", "canonical:p", artifact.SnapshotHolder("plan"))
 	if err != nil {

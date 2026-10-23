@@ -41,6 +41,7 @@ func historyOpen(t *testing.T, service *Service, id, taskID string) Record {
 }
 
 func TestNativeHistoryRevisionTracksSameStateWritesAndScopes(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	for _, id := range []string{"a", "b", "c"} {
 		historyOpen(t, s, id, "selected")
@@ -82,6 +83,7 @@ func TestNativeHistoryRevisionTracksSameStateWritesAndScopes(t *testing.T) {
 }
 
 func TestNativeHistoryScopeClosureInvalidatesOnlyItsConversation(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	tasks, err := task.OpenLedger(s.l)
 	if err != nil {
@@ -131,6 +133,7 @@ func (r *historyReplicator) Propose(_ context.Context, write ledger.ReplicatedWr
 }
 
 func TestNativeHistoryRevisionReplicationRollbackRestoreAndReopen(t *testing.T) {
+	t.Parallel()
 	s, now := newService(t)
 	replica := &historyReplicator{book: s.l}
 	if err := s.l.AttachReplication(replica); err != nil {
@@ -205,8 +208,11 @@ func TestNativeHistoryRevisionReplicationRollbackRestoreAndReopen(t *testing.T) 
 }
 
 func TestNativeHistoryRevisionMissingOrCorruptFailsClosedWithoutLazyWrites(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{"", `"short"`, `null`, `{}`} {
 		t.Run(raw, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			s, _ := newService(t)
 			historyOpen(t, s, "a", "selected")
 			if raw == "" {
@@ -250,6 +256,7 @@ func TestNativeHistoryRevisionMissingOrCorruptFailsClosedWithoutLazyWrites(t *te
 }
 
 func TestNativeHistoryImportRevisionSharesAtomicOwnerBoundary(t *testing.T) {
+	t.Parallel()
 	source, _ := newService(t)
 	historyOpen(t, source, "a", "selected")
 	facts, err := source.l.ExportOperations(t.Context(), []string{"a"})
@@ -289,6 +296,7 @@ func TestNativeHistoryImportRevisionSharesAtomicOwnerBoundary(t *testing.T) {
 }
 
 func TestNativeHistoryRevisionRelocationAndSessionWrites(t *testing.T) {
+	t.Parallel()
 	s, _, old, plan, _, _ := relocationFixture(t)
 	before := historyToken(t, s.l, old.TaskID)
 	if _, err := s.OpenRelocation(t.Context(), plan.ID, RelocationApproval{}); err == nil {
@@ -314,8 +322,11 @@ func TestNativeHistoryRevisionRelocationAndSessionWrites(t *testing.T) {
 }
 
 func TestNativeHistoryRevisionRetainedAndStopOwnerWrites(t *testing.T) {
+	t.Parallel()
 	for _, action := range []string{"record-session", "retained", "task-stop", "process-stop", "expire"} {
 		t.Run(action, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			s, _, old, proof, tasks := retainedFixture(t)
 			before := historyToken(t, s.l, old.TaskID)
 			var err error
@@ -413,6 +424,7 @@ func TestNativeHistoryReadAndWriteCostDoNotScaleWithTaskHistory(t *testing.T) {
 }
 
 func TestRecoveryOperationSaveKeepsItsTypedKindRevisionAndEventBoundary(t *testing.T) {
+	t.Parallel()
 	for _, ordinary := range []bool{false, true} {
 		t.Run(map[bool]string{false: "recovery", true: "ordinary attempt"}[ordinary], func(t *testing.T) {
 			s, clock := newService(t)

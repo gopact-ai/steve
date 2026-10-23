@@ -107,6 +107,9 @@ if (process.env.PURE_ONLY !== "1") {
     if (screenshots) await mkdir(screenshots, { recursive: true });
     try {
         const context = await browser.newContext({ locale: "zh-CN", reducedMotion: "reduce", viewport: { width: 1280, height: 960 } });
+        // Page time flows naturally; the channel-poll checks at the end advance
+        // it instead of sleeping through the real 2-30 second cadences.
+        await context.clock.install();
         const page = await context.newPage(); page.setDefaultTimeout(7000);
         let state = fixtureView(), channels = channelView(), configRevision = "revision-a", conflict = false, loseRestart = true, restartUnknown = true;
         const writes = [], errors = [], external = [], operations = new Map(), restartPosts = [], queries = [], approvalSyncs = [];
@@ -446,7 +449,7 @@ if (process.env.PURE_ONLY !== "1") {
         await page.getByRole("heading", { name: "通用", exact: true }).waitFor();
         await nav.getByRole("link", { name: "节点与服务", exact: true }).click();
         await hubRow.getByText("重启结果尚未确认", { exact: true }).waitFor();
-        await page.waitForTimeout(2000); assert.equal(restartPosts.length, 3, "Polling must never resend a restart");
+        await page.clock.runFor(2000); await page.waitForTimeout(300); assert.equal(restartPosts.length, 3, "Polling must never resend a restart");
         assert.ok(queries.some((query) => query.id === id));
         await hubRow.getByRole("button", { name: "重试原请求", exact: true }).click();
         await hubRow.getByText("已接受，等待重启确认", { exact: true }).waitFor();
@@ -645,6 +648,17 @@ if (process.env.PURE_ONLY !== "1") {
         await channelHint("feishu.group_policy").filter({ hasText: restartHint }).waitFor();
         await page.getByRole("alert").filter({ hasText: "Channel startup failed" }).waitFor();
         assert.equal(await page.locator('[data-channel-apply]').filter({ hasText: "no restart" }).count(), 0);
+        // Poll timers run on page time: advance it in steps until the locator
+        // reaches its state, within the same page-time bound as before.
+        const pageTime = async () => page.evaluate(() => Date.now());
+        const within = async (locator, ms, state = "visible") => {
+            for (let elapsed = 0; ; elapsed += 500) {
+                try { return await locator.waitFor({ state, timeout: 150 }); } catch (error) { if (elapsed >= ms) throw error; }
+                await page.clock.runFor(500);
+            }
+        };
+        // A read reaches the route a moment after its timer fires.
+        const quiet = async (ms) => { await page.clock.runFor(ms); await page.waitForTimeout(500); };
         // A startup that may still succeed is shown as retrying, with its last error.
         delete channels.runtime_error;
         channels.startup_retry = { attempts: 3, next_at: new Date(Date.now() + 1_000).toISOString(), last_error: "dial tcp: network is unreachable" };
@@ -658,44 +672,44 @@ if (process.env.PURE_ONLY !== "1") {
         // outcome appears without a reload, and the notice goes once connected.
         const readsBefore = channelReads;
         await page.getByRole("textbox", { name: "App ID", exact: true }).fill("draft-app-fixture");
-        channels.startup_retry = { attempts: 4, next_at: new Date(Date.now() + 1_000).toISOString(), last_error: "dial tcp: i/o timeout" };
-        await retrying.filter({ hasText: "Failed attempts: 4;" }).waitFor({ timeout: 10_000 });
+        channels.startup_retry = { attempts: 4, next_at: new Date(await pageTime() + 1_000).toISOString(), last_error: "dial tcp: i/o timeout" };
+        await within(retrying.filter({ hasText: "Failed attempts: 4;" }), 10_000);
         delete channels.startup_retry;
-        await retrying.waitFor({ state: "detached", timeout: 10_000 });
+        await within(retrying, 10_000, "detached");
         assert.ok(channelReads > readsBefore, "the retry status was not read again");
         assert.equal(await page.getByRole("textbox", { name: "App ID", exact: true }).inputValue(), "draft-app-fixture");
         const readsAfter = channelReads;
-        await page.waitForTimeout(2_500);
+        await quiet(2_500);
         assert.equal(channelReads, readsAfter, "a connected channel is still read as often as a retrying one");
         // A started channel whose connection was lost is shown as reconnecting,
         // followed without a reload until the connection is back.
-        channels.reconnect = { since: new Date().toISOString(), attempts: 0 };
+        channels.reconnect = { since: new Date(await pageTime()).toISOString(), attempts: 0 };
         await page.getByRole("button", { name: "Reload", exact: true }).click();
         await page.getByRole("button", { name: "Discard draft and reload", exact: true }).click();
         const reconnecting = page.getByRole("status").filter({ hasText: "reconnecting on its own" });
         await reconnecting.filter({ hasText: "no attempt has failed yet" }).waitFor();
         assert.match(await reconnecting.innerText(), /with the default settings the first attempt starts within 30 seconds, so if there is still no result after 5 minutes, restart the coordinator/);
         assert.equal(await reconnecting.getByText("Error details", { exact: true }).count(), 0);
-        channels.reconnect = { ...channels.reconnect, attempts: 2, last_attempt_at: new Date().toISOString(), last_error: "503: system busy" };
-        await reconnecting.filter({ hasText: "Failed attempts: 2. Last failure:" }).waitFor({ timeout: 15_000 });
+        channels.reconnect = { ...channels.reconnect, attempts: 2, last_attempt_at: new Date(await pageTime()).toISOString(), last_error: "503: system busy" };
+        await within(reconnecting.filter({ hasText: "Failed attempts: 2. Last failure:" }), 15_000);
         assert.match(await reconnecting.innerText(), /with the default settings it retries every 2 minutes, so if the last failure is more than 5 minutes old, reconnecting has stopped: restart the coordinator/);
         await reconnecting.getByText("Error details", { exact: true }).click();
         await reconnecting.getByText("503: system busy", { exact: true }).waitFor();
         delete channels.reconnect;
-        await reconnecting.waitFor({ state: "detached", timeout: 15_000 });
+        await within(reconnecting, 15_000, "detached");
         const readsConnected = channelReads;
-        await page.waitForTimeout(6_000);
+        await quiet(6_000);
         assert.equal(channelReads, readsConnected, "a reconnected channel is still read with each attempt");
         // A refused reconnect stops the channel: without a reload the page no
         // longer says access rules apply without a restart, and keeps drafts.
-        Object.assign(channels, { apply_mode: "mixed", live_fields: [...channelLiveFields], reconnect: { since: new Date().toISOString(), attempts: 1, last_attempt_at: new Date().toISOString(), last_error: "503: system busy" } });
+        Object.assign(channels, { apply_mode: "mixed", live_fields: [...channelLiveFields], reconnect: { since: new Date(await pageTime()).toISOString(), attempts: 1, last_attempt_at: new Date(await pageTime()).toISOString(), last_error: "503: system busy" } });
         await page.getByRole("button", { name: "Reload", exact: true }).click();
         await reconnecting.waitFor();
         await channelHint("feishu.group_policy").filter({ hasText: /no restart/i }).waitFor();
         await page.getByRole("textbox", { name: "Blocked senders", exact: true }).fill("draft-blocked-fixture");
         channels.apply_mode = "restart"; delete channels.live_fields; delete channels.reconnect;
         channels.runtime_error = "Feishu connection failed: application disabled";
-        await page.getByRole("alert").filter({ hasText: "Channel startup failed" }).waitFor({ timeout: 15_000 });
+        await within(page.getByRole("alert").filter({ hasText: "Channel startup failed" }), 15_000);
         for (const path of channelLiveFields) assert.match(await channelHint(path).innerText(), restartHint, `${path} still applies without a restart`);
         assert.equal(await page.getByRole("textbox", { name: "Blocked senders", exact: true }).inputValue(), "draft-blocked-fixture");
         assert.deepEqual(errors, []); assert.deepEqual(external, []);

@@ -243,6 +243,7 @@ func TestASecondStopDuringTheContinuedTurnKeepsTheTaskHeld(t *testing.T) {
 // A turn that fails before the harness answers keeps the hold and leaves
 // the account to the next turn, like a delivery without its receipt.
 func TestPrefaceIsToldAgainWhenTheTurnNeverSettled(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{err: errors.New("session lost before the prompt")}
 	spy := &prefaceSpy{}
 	coordinator, tasks := taskCoordinator(t, runner, withCallbacks(func(cb *Callbacks) { cb.TurnPreface = spy.preface }))
@@ -335,6 +336,7 @@ func TestCancelStopsAChildDelegatedWhileTheTurnWasStopping(t *testing.T) {
 // the stop begins, so the cancelled turn's own delivery pass finds it
 // held, and the child's result waits for the user's next message.
 func TestAChildEndingOnItsOwnDuringTheStopFindsTheTaskHeld(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{}), cancelSettles: true}
 	afterTurn := func(string) {}
 	coordinator, tasks := taskCoordinator(t, runner, withCallbacks(func(cb *Callbacks) {
@@ -483,6 +485,7 @@ func TestATurnStoppedWhileComposingDoesNotLiftTheStopsHold(t *testing.T) {
 // turn was not the one a stop cancelled: a later stop re-stamps the hold,
 // and neither the earlier turn's settling nor the stopped turn's lifts it.
 func TestAPrefaceLiftsOnlyTheHoldItWasComposedUnder(t *testing.T) {
+	t.Parallel()
 	// The spy takes over after the first turn, which runs without one.
 	preface := func(context.Context, string) Preface { return Preface{} }
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"}, withCallbacks(func(cb *Callbacks) {
@@ -553,6 +556,7 @@ func TestCancelReplyLeadsWithTheTurnsErrorBeforeTheStoppedChildren(t *testing.T)
 // the recovery flow. It does not make every later stop hold the task
 // again: with nothing else delegated, that stop is what it always was.
 func TestAChildStoppedUnconfirmedDoesNotHoldEveryLaterStop(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
 	coordinator, tasks := taskCoordinator(t, runner)
 	first := make(chan error, 1)
@@ -588,6 +592,7 @@ func TestAChildStoppedUnconfirmedDoesNotHoldEveryLaterStop(t *testing.T) {
 // without confirmation, and leaves it so: that child is still owed to
 // the next turn, and only that turn may lift the hold.
 func TestASecondStopBeforeTheNextMessageKeepsTheTaskHeld(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
 	coordinator, tasks := taskCoordinator(t, runner)
 	first := make(chan error, 1)
@@ -622,6 +627,7 @@ func TestASecondStopBeforeTheNextMessageKeepsTheTaskHeld(t *testing.T) {
 
 // A plain cancel with nothing delegated is what it always was.
 func TestCancelWithoutChildrenLeavesTheTaskUnheld(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
 	coordinator, tasks := taskCoordinator(t, runner)
 	first := make(chan error, 1)

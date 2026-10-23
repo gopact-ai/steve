@@ -8,6 +8,7 @@ import (
 )
 
 func TestRegisteredProviderTurnKeepsNativeIdentityAndExecutionReceipt(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{reply: "done"}
 	c, tasks := taskCoordinator(t, runner, withOwner("console-owner"), withChannelOwner("mail", "mail-account"))
 	var admittedTask, admittedAttempt string

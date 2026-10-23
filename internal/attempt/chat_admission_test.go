@@ -45,6 +45,7 @@ func TestChatOpenCannotAdmitAnAlreadyEndedTurn(t *testing.T) {
 }
 
 func TestChatOpenRechecksEndedAccountingAfterLeaseAcquisition(t *testing.T) {
+	t.Parallel()
 	s := identityStore(t)
 	tasks, err := task.OpenLedger(s.l)
 	if err != nil {
@@ -96,6 +97,7 @@ func TestChatOpenRechecksEndedAccountingAfterLeaseAcquisition(t *testing.T) {
 }
 
 func TestTaskBackedChatCannotBypassAdmissionFenceByOmittingExecutionToken(t *testing.T) {
+	t.Parallel()
 	for _, accounting := range []string{"open", "ended"} {
 		t.Run(accounting, func(t *testing.T) {
 			s := identityStore(t)

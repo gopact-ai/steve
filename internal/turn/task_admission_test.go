@@ -164,7 +164,6 @@ func TestWorkspacePreparationCannotBypassTaskRevocation(t *testing.T) {
 }
 
 func TestProjectSwitchSetsAsideUnfinishedTasksBeforeAdmittingNewWork(t *testing.T) {
-	t.Parallel()
 	for _, previous := range []task.State{task.StateFailed, task.StateBlocked} {
 		for _, entry := range []string{"command", "interrupted-switch"} {
 			for _, refuseWrite := range []bool{false, true} {
@@ -173,7 +172,6 @@ func TestProjectSwitchSetsAsideUnfinishedTasksBeforeAdmittingNewWork(t *testing.
 					name += "/storage-failure"
 				}
 				t.Run(name, func(t *testing.T) {
-					t.Parallel()
 					book, err := ledger.Open(t.TempDir(), ledger.Options{})
 					if err != nil {
 						t.Fatal(err)

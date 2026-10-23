@@ -18,6 +18,7 @@ import (
 )
 
 func TestNodePluginRuntimeRemovalRejectsSelectionDriftBeforeStoppingBroker(t *testing.T) {
+	t.Parallel()
 	const body = "original runtime route"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, body)

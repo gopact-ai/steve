@@ -15,6 +15,7 @@ import (
 )
 
 func TestNativeResumeFollowsLongHistoryAndRejectsCycles(t *testing.T) {
+	t.Parallel()
 	cfg, req, old := resumedFixture(t, "/must-not-start")
 	s := NewServer(cfg)
 	if err := s.startSessions(t.Context()); err != nil {
@@ -48,6 +49,7 @@ func TestNativeResumeFollowsLongHistoryAndRejectsCycles(t *testing.T) {
 }
 
 func TestNativeResumeRetriesFromOldestSourceAcrossHandoffs(t *testing.T) {
+	t.Parallel()
 	cfg, req, old := resumedFixture(t, buildMockAgent(t))
 	saveResumeFixture(t, cfg, old)
 	s := NewServer(cfg)
@@ -114,6 +116,7 @@ func advertisingRegistry(t *testing.T, advert nodewire.Advert) *Registry {
 }
 
 func TestImportedNativeSessionRetainsPostImportHistoryAcrossRestart(t *testing.T) {
+	t.Parallel()
 	s, ref, original := importedNodeFixture(t)
 	req := nodeSessionRequest(nodewire.SessionActionOpen)
 	req.Harness, req.Workdir, req.CommandID = "codex", ref.SourceWorkdir, "import-open"

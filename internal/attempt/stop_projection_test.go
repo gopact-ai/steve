@@ -108,6 +108,7 @@ func TestMarkStopProjectedRefusesRecordsThatAreNotConfirmedStops(t *testing.T) {
 // the stop is quarantined again and re-confirmed with other usage, a failed
 // accounting settle must leave it a candidate so a later pass projects it.
 func TestStopProjectionIsClearedWhenTheStopIsConfirmedAgain(t *testing.T) {
+	t.Parallel()
 	s, now, old, proof, tasks := retainedFixture(t)
 	if err := tasks.BindAttempt(*old.Execution, old.ID, old.TurnID); err != nil {
 		t.Fatal(err)

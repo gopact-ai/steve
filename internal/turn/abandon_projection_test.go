@@ -9,6 +9,7 @@ import (
 )
 
 func TestCommittedAbandonmentReplaysAfterSessionProjectionFails(t *testing.T) {
+	t.Parallel()
 	c, tasks, r := abandonFixture(t)
 	if err := c.store.SaveSession(state.Session{ConversationID: "console:original", AgentID: r.Agent, HarnessID: r.Harness, NodeID: r.Node, UpstreamID: r.Session, Workspace: r.Workspace.Path}); err != nil {
 		t.Fatal(err)

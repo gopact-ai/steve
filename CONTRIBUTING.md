@@ -29,6 +29,12 @@ npx playwright install chromium
 
 The local Raft copy has its own verification command, documented in [third_party/raft](third_party/raft/README.md). Mail and GitHub providers have local `npm test` commands and opt-in integration checks in their READMEs.
 
+### Local gates
+
+`make gate` checks what a branch changed against `origin/master`, including uncommitted and untracked files. It runs gofmt, `go vet` and `go test -race` on the changed Go packages and every package whose tests import them or build a binary from them. It also runs the console script steps whose import graph reaches the changed files, plus `make test-desktop` and provider tests when their files change. Changes to `go.mod`, `third_party/`, `internal/architecture`, the `cmd/steve` and `cmd/steve-node` composition roots, the `Makefile` or `.github/` run `make gate-full` instead, as do files the gate cannot place. `make gate ARGS=-n` prints the plan without running it. Test output is kept as `go test -json` under `$TMPDIR/steve-gate/`.
+
+`make gate-full` runs the required CI jobs (`test`, `console`, `desktop`, `macos`, `fleet`) in order. It skips jobs the host cannot run and lists them. Use it for cross-cutting changes. CI is the final authority either way.
+
 Changes to delegation, landing, timeouts, snapshots or node channels require both the disposable and live fleet checks below. Keep task, conversation and attempt IDs with the result; never include credentials or private inputs. Documentation-only changes need link, example and rendering checks rather than model executions.
 
 ## Fleet verification

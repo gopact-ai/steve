@@ -31,6 +31,7 @@ func abandonFixture(t *testing.T) (*Coordinator, *task.Store, attempt.Record) {
 }
 
 func TestAbandonRecordsNoPhysicalStopAndFreezesOnlyItsAccounting(t *testing.T) {
+	t.Parallel()
 	c, tasks, r := abandonFixture(t)
 	before, _ := tasks.Get(r.TaskID)
 	got, err := NewAbandonControl(c).AbandonAttempt(t.Context(), r.ID, "owner", 1)
@@ -82,8 +83,11 @@ func TestAbandonRecordsNoPhysicalStopAndFreezesOnlyItsAccounting(t *testing.T) {
 }
 
 func TestAbandonRejectedCommitKeepsTaskAndExecutionUnchanged(t *testing.T) {
+	t.Parallel()
 	for _, refused := range []string{"attempt", "accounting"} {
 		t.Run(refused, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, tasks, r := abandonFixture(t)
 			before, _ := tasks.Get(r.TaskID)
 			statement := `CREATE TRIGGER refuse_abandon BEFORE UPDATE ON operations WHEN NEW.id='force-original' AND json_extract(NEW.data,'$.abandoned') IS NOT NULL BEGIN SELECT RAISE(ABORT,'abandon refused'); END`
@@ -115,8 +119,11 @@ func TestAbandonRejectedCommitKeepsTaskAndExecutionUnchanged(t *testing.T) {
 }
 
 func TestAbandonRequiresTheOwnerAndCurrentExhaustedRevision(t *testing.T) {
+	t.Parallel()
 	for _, which := range []string{"owner", "revision", "active"} {
 		t.Run(which, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, tasks, r := abandonFixture(t)
 			who, revision := "owner", uint64(1)
 			if which == "owner" {
@@ -152,6 +159,7 @@ func sameAbandonJSON(a, b any) bool {
 }
 
 func TestAbandonmentDoesNotFreezeOrAbandonUnselectedDescendantExecutions(t *testing.T) {
+	t.Parallel()
 	c, tasks, r, _ := forceStopControlFixture(t)
 	if err := tasks.BindAttempt(*r.Execution, r.ID, r.TurnID); err != nil {
 		t.Fatal(err)
@@ -214,6 +222,7 @@ func TestAbandonmentDoesNotFreezeOrAbandonUnselectedDescendantExecutions(t *test
 }
 
 func TestStaleAbandonConfirmationTellsTheOwnerToRefresh(t *testing.T) {
+	t.Parallel()
 	c, _, r := abandonFixture(t)
 	_, err := NewAbandonControl(c).AbandonAttempt(t.Context(), r.ID, "owner", 0)
 	var explained UserError

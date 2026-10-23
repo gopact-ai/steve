@@ -52,6 +52,7 @@ func taskCoordinatorOn(t *testing.T, rt Runtime, opts ...testOption) (*Coordinat
 }
 
 func TestTurnOpensOneTaskAndKeepsUsingIt(t *testing.T) {
+	t.Parallel()
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
 
 	if _, err := handle(coordinator, t.Context(), "wire the node link"); err != nil {
@@ -83,6 +84,7 @@ func TestTurnOpensOneTaskAndKeepsUsingIt(t *testing.T) {
 }
 
 func TestFailedTurnStillRecordsTheAttempt(t *testing.T) {
+	t.Parallel()
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{err: errors.New("prompt failed")})
 
 	if _, err := handle(coordinator, t.Context(), "do the thing"); err == nil {
@@ -98,6 +100,7 @@ func TestFailedTurnStillRecordsTheAttempt(t *testing.T) {
 }
 
 func TestBudgetStopsTheTaskAndNamesTheLimit(t *testing.T) {
+	t.Parallel()
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
 	tasks.SetBudget(3, time.Hour) // a budget is opt-in now; this test is about the brake
 
@@ -197,6 +200,7 @@ func TestBangMessageInterruptsTheRunningTurn(t *testing.T) {
 }
 
 func TestResetClosesTheTaskSoTheNextMessageStartsAFreshOne(t *testing.T) {
+	t.Parallel()
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
 
 	if _, err := handle(coordinator, t.Context(), "first goal"); err != nil {
@@ -227,6 +231,7 @@ func TestResetClosesTheTaskSoTheNextMessageStartsAFreshOne(t *testing.T) {
 }
 
 func TestTaskTrackingIsOptional(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Default: true},
 	})
@@ -240,6 +245,7 @@ func TestTaskTrackingIsOptional(t *testing.T) {
 }
 
 func TestTasksCommandListsWhatTheConversationDid(t *testing.T) {
+	t.Parallel()
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
 	tasks.SetBudget(3, time.Hour)
 
@@ -270,6 +276,7 @@ func TestTasksCommandListsWhatTheConversationDid(t *testing.T) {
 }
 
 func TestStatusShowsTheLiveBudget(t *testing.T) {
+	t.Parallel()
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
 	tasks.SetBudget(24, time.Hour)
 	if _, err := handle(coordinator, t.Context(), "some goal"); err != nil {

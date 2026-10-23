@@ -13,6 +13,7 @@ import (
 )
 
 func TestLandOnceReturnsCommittedIdentityWithoutReapplying(t *testing.T) {
+	t.Parallel()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
 	write(t, canonical, "file", "before")
@@ -44,6 +45,7 @@ func TestLandOnceReturnsCommittedIdentityWithoutReapplying(t *testing.T) {
 }
 
 func TestLandOnceRetriesBusyAndInterruptedBeforeApply(t *testing.T) {
+	t.Parallel()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
 	write(t, canonical, "file", "before")
@@ -78,6 +80,7 @@ func TestLandOnceRetriesBusyAndInterruptedBeforeApply(t *testing.T) {
 }
 
 func TestLandOnceResumesApplying(t *testing.T) {
+	t.Parallel()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
 	land, _ := crashMidApply(t, store, p, canonical)
@@ -97,6 +100,7 @@ func TestLandOnceResumesApplying(t *testing.T) {
 }
 
 func TestLandOnceDoesNotRetryARealMergeConflict(t *testing.T) {
+	t.Parallel()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
 	write(t, canonical, "file", "base")
@@ -127,6 +131,7 @@ func TestLandOnceDoesNotRetryARealMergeConflict(t *testing.T) {
 }
 
 func TestDeclarationGuardKeepsAnAdmittedLandingTarget(t *testing.T) {
+	t.Parallel()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
 	crashMidApply(t, store, p, canonical)
@@ -141,6 +146,7 @@ func TestDeclarationGuardKeepsAnAdmittedLandingTarget(t *testing.T) {
 }
 
 func TestApplyingRecoveryUsesHistoricalTargetButNeverAMovedDirectory(t *testing.T) {
+	t.Parallel()
 	for _, move := range []bool{false, true} {
 		canonical := t.TempDir()
 		store, p := newStore(t, &localNode{}, project.Home{Path: canonical})

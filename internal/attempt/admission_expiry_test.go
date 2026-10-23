@@ -25,8 +25,11 @@ func runningForAdmission(t *testing.T, s *Service, spec Spec) Record {
 }
 
 func TestExpiredUnsweptWriterBlocksDirectAdmissionAndLanding(t *testing.T) {
+	t.Parallel()
 	for _, conflict := range []string{"workspace", "endpoint", "task"} {
 		t.Run(conflict, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			s, clock := newService(t)
 			old := runningForAdmission(t, s, Spec{ID: "old", TaskID: "task", Node: "node", Harness: "mock", Slots: 2, Project: "p", Workspace: worktree("old", "p"), Scope: ScopePathSet})
 			clock.t = clock.t.Add(2 * time.Minute)
@@ -50,6 +53,7 @@ func TestExpiredUnsweptWriterBlocksDirectAdmissionAndLanding(t *testing.T) {
 }
 
 func TestLiveParallelTasksAndSpareEndpointCapacityRemainUsable(t *testing.T) {
+	t.Parallel()
 	s, clock := newService(t)
 	old := runningForAdmission(t, s, Spec{ID: "one", TaskID: "parallel", Node: "node", Harness: "mock", Slots: 2, Project: "p", Workspace: worktree("one", "p"), Scope: ScopePathSet})
 	clock.t = clock.t.Add(40 * time.Second)
@@ -64,8 +68,11 @@ func TestLiveParallelTasksAndSpareEndpointCapacityRemainUsable(t *testing.T) {
 }
 
 func TestRunningAndArmRecheckWriterExpiryAfterOpen(t *testing.T) {
+	t.Parallel()
 	for _, arm := range []bool{false, true} {
 		t.Run(map[bool]string{false: "running", true: "arm"}[arm], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			s, clock := newService(t)
 			old := runningForAdmission(t, s, Spec{ID: "old", TaskID: "same", Node: "one", Project: "p", Workspace: worktree("old", "p"), Scope: ScopePathSet})
 			clock.t = clock.t.Add(40 * time.Second)
@@ -95,6 +102,7 @@ func TestRunningAndArmRecheckWriterExpiryAfterOpen(t *testing.T) {
 }
 
 func TestPhysicalWriterBlocksAfterItsWorkspaceLeaseExpiresBeforeOwnLease(t *testing.T) {
+	t.Parallel()
 	s, clock := newService(t)
 	old := runningForAdmission(t, s, Spec{ID: "old", Project: "p", Workspace: canonical("p"), Scope: ScopeUnrestricted})
 	clock.t = clock.t.Add(40 * time.Second)
@@ -115,6 +123,7 @@ func TestPhysicalWriterBlocksAfterItsWorkspaceLeaseExpiresBeforeOwnLease(t *test
 }
 
 func TestPotentialWriterPreventsDeclarationReuseBeforeSweep(t *testing.T) {
+	t.Parallel()
 	s, clock := newService(t)
 	projects := project.Open(s.l, CheckDeclarationsTx)
 	p := project.Project{ID: "p", Home: project.Home{Path: t.TempDir()}}
@@ -132,6 +141,7 @@ func TestPotentialWriterPreventsDeclarationReuseBeforeSweep(t *testing.T) {
 }
 
 func TestEquivalentRemotePathCannotBypassExpiredWriter(t *testing.T) {
+	t.Parallel()
 	for _, alias := range []string{"/srv/p/.", "/srv//p", "/srv/other/../p"} {
 		t.Run(alias, func(t *testing.T) {
 			s, clock := newService(t)

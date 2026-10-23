@@ -75,6 +75,7 @@ func metadataJSON(t *testing.T, value any) []byte {
 }
 
 func TestMetadataCommitCanonicalizesPromotedFieldsAndTextMapKeys(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"private-embedded", "private-embedded-pointer", "nil-embedded-pointer", "text-key"} {
 		for _, mode := range []string{"input", "poll", "mutation"} {
 			t.Run(kind+"/"+mode, func(t *testing.T) {
