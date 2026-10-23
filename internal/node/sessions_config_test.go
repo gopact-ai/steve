@@ -64,6 +64,7 @@ func TestMCPAuthorizationRefreshAfterTheMessagingPortMoved(t *testing.T) {
 // so a request naming another port describes a different configuration,
 // whether the process is still running or has stopped.
 func TestOwnedSessionKeepsItsMessagingPort(t *testing.T) {
+	t.Parallel()
 	for _, stopped := range []bool{false, true} {
 		name := "running"
 		if stopped {

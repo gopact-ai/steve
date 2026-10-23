@@ -42,6 +42,7 @@ func (s *lostDelegateOpen) OpenSession(ctx context.Context, _ harness.Placement,
 }
 
 func TestDelegateLostNodeOpenRemainsPendingAcrossCoordinatorLifetime(t *testing.T) {
+	t.Parallel()
 	w, _ := executionWorld(t)
 	lifetime, cancel := context.WithCancel(t.Context())
 	defer cancel()

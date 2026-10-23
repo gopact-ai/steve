@@ -258,6 +258,7 @@ func TestRemoteResendsOnlyInputsAboveResumeAck(t *testing.T) {
 }
 
 func TestSameHarnessConcurrentSessionsSurviveReconnectAndOneCancellation(t *testing.T) {
+	t.Parallel()
 	m := newMemoryNode(t, buildMockAgent(t))
 	r := memoryRegistry(t)
 	c := connectMemory(t, m, r)

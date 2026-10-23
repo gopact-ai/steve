@@ -65,6 +65,7 @@ func nodeRuntimeFixture(t *testing.T, s *Server, endpoint string) plugins.Select
 }
 
 func TestPluginBrokerRetainsRouteAndSecretVersionAcrossRestart(t *testing.T) {
+	t.Parallel()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer LOCAL_SECRET" {
 			t.Error("wrong node credential")
@@ -116,6 +117,7 @@ func TestPluginBrokerRetainsRouteAndSecretVersionAcrossRestart(t *testing.T) {
 }
 
 func TestNodeOwnedPluginSessionPersistsRuntimeBinding(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	bin := buildMockAgent(t)
 	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: bin}}, SessionAuthorizer: authority})
@@ -220,6 +222,7 @@ func (p nodePluginProvider) PluginRuntime(ctx context.Context, at harness.Placem
 }
 
 func TestRemotePluginProcessUsesOriginalRuntimeAndRejectsOtherRuntime(t *testing.T) {
+	t.Parallel()
 	bin := buildMockAgent(t)
 	s := startNode(t, ServerConfig{Name: "worker", Token: "plugin", StateDir: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: bin}}})
 	registry := NewRegistry("owner", map[string]Config{"worker": {Addr: s.Addr(), Token: "plugin"}})
@@ -266,6 +269,7 @@ func TestRemotePluginProcessUsesOriginalRuntimeAndRejectsOtherRuntime(t *testing
 }
 
 func TestPluginStdioLaunchUsesRequiredACPWireFields(t *testing.T) {
+	t.Parallel()
 	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir()})
 	selection := nodeRuntimeFixture(t, s, "stdio")
 	pool := s.pluginRuntimePool()

@@ -23,6 +23,7 @@ func tasksCmdText(t *testing.T, c *Coordinator, input string) string {
 // the turn that is burning time now, and let the next message start something
 // new instead of charging the task that was set aside.
 func TestPauseStopsTheRunningTurnAndFreesTheConversation(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
 	coordinator, tasks := taskCoordinator(t, runner)
 
@@ -75,6 +76,7 @@ func TestPauseStopsTheRunningTurnAndFreesTheConversation(t *testing.T) {
 // Resume hands the channel everything it needs to replay the task: without a
 // fresh anchor message the resumed turn would have nothing to render against.
 func TestResumeReplaysTheTaskThroughTheChannel(t *testing.T) {
+	t.Parallel()
 	resumed := make(chan TaskResume, 1)
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"}, withCallbacks(func(cb *Callbacks) {
 		cb.Resumer = func(r TaskResume) error { resumed <- r; return nil }
@@ -124,6 +126,7 @@ func TestResumeReplaysTheTaskThroughTheChannel(t *testing.T) {
 // A cancelled task is terminal: nothing resumes it, and a restart must not
 // revive it behind the user's back.
 func TestCancelIsTerminalAndSurvivesRestartUnrevived(t *testing.T) {
+	t.Parallel()
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
 	if _, err := handle(coordinator, t.Context(), "chase the flake"); err != nil {
 		t.Fatalf("opening turn: %v", err)
@@ -153,6 +156,7 @@ func TestCancelIsTerminalAndSurvivesRestartUnrevived(t *testing.T) {
 // The detail view exists to answer "where did it get to" — which means the
 // attempts it survived, not just the ones that worked.
 func TestTaskDetailShowsTheAttemptTrail(t *testing.T) {
+	t.Parallel()
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
 	tasks.SetBudget(24, time.Hour)
 	if _, err := handle(coordinator, t.Context(), "port the parser"); err != nil {
@@ -176,6 +180,7 @@ func TestTaskDetailShowsTheAttemptTrail(t *testing.T) {
 // Task ids are short and guessable. Reaching one from another conversation
 // would let any chat stop work it cannot even see.
 func TestTaskCommandsCannotReachAnotherConversation(t *testing.T) {
+	t.Parallel()
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
 	if _, err := handle(coordinator, t.Context(), "private work"); err != nil {
 		t.Fatalf("opening turn: %v", err)
@@ -223,6 +228,7 @@ func TestParseTaskArgs(t *testing.T) {
 }
 
 func TestResumeStopRefusalIsExplainedAndKeepsTheTaskPaused(t *testing.T) {
+	t.Parallel()
 	c, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"}, withCallbacks(func(cb *Callbacks) { cb.Resumer = func(TaskResume) error { return ErrResumeAwaitsStop } }))
 	if _, err := handle(c, t.Context(), "work"); err != nil {
 		t.Fatal(err)

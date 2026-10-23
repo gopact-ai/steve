@@ -29,6 +29,7 @@ func retirementCoordinator(t *testing.T) (*Coordinator, *nodeSessions, Request, 
 }
 
 func TestResetConversationSessionsPersistsAnUndispatchedClose(t *testing.T) {
+	t.Parallel()
 	c, sessions, req, taskID := retirementCoordinator(t)
 	before, ok := c.tasks.Get(taskID)
 	if !ok {
@@ -63,6 +64,7 @@ func TestResetConversationSessionsPersistsAnUndispatchedClose(t *testing.T) {
 }
 
 func TestDiscardConversationKeepsAuthorityForANewOwedClose(t *testing.T) {
+	t.Parallel()
 	c, sessions, req, taskID := retirementCoordinator(t)
 	if err := c.tasks.ChannelIdle(t.Context(), req.Source.ConversationID, checkConversationRetirement); err != nil {
 		t.Fatalf("invalid idle prerequisite: %v", err)
@@ -110,6 +112,7 @@ func TestDiscardConversationKeepsAuthorityForANewOwedClose(t *testing.T) {
 }
 
 func TestConversationRetirementRetainsUnresolvedClose(t *testing.T) {
+	t.Parallel()
 	for _, route := range []string{"reset", "discard"} {
 		for _, failure := range []error{errors.New("test response lost"), context.DeadlineExceeded, &node.SessionError{Code: "uncertain", Message: "test original stop unconfirmed"}} {
 			t.Run(route+"/"+failure.Error(), func(t *testing.T) {
@@ -158,6 +161,7 @@ func (r *retirementGateRuntime) CloseSession(ctx context.Context, at harness.Pla
 }
 
 func TestConversationRetirementFencesNewTurnsOnlyInItsConversation(t *testing.T) {
+	t.Parallel()
 	c, sessions, req, _ := retirementCoordinator(t)
 	gate := &retirementGateRuntime{nodeSessions: sessions, entered: make(chan struct{}), release: make(chan struct{})}
 	c.runtime = gate
@@ -205,8 +209,11 @@ func TestConversationRetirementFencesNewTurnsOnlyInItsConversation(t *testing.T)
 }
 
 func TestConversationRetirementDoesNotInventAnUnidentifiedDebt(t *testing.T) {
+	t.Parallel()
 	for _, route := range []string{"reset", "discard"} {
 		t.Run(route, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, sessions, req, taskID := retirementCoordinator(t)
 			current := c.store.Conversation(req.Source.ConversationID).Sessions["codex"]
 			current.UpstreamID = "ns_no_attempt"
@@ -237,6 +244,7 @@ func TestConversationRetirementDoesNotInventAnUnidentifiedDebt(t *testing.T) {
 }
 
 func TestConversationRetirementKeepsItsSlotAfterPersistenceRefusal(t *testing.T) {
+	t.Parallel()
 	c, sessions, req, taskID := retirementCoordinator(t)
 	before := c.store.Conversation(req.Source.ConversationID)
 	book := ledgerOf(t, c)

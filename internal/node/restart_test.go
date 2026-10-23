@@ -138,6 +138,7 @@ func serveRestartNode(t *testing.T) (*Server, *Registry, <-chan error) {
 }
 
 func TestRestartWireReturnsDurableReplyBeforeServiceExit(t *testing.T) {
+	t.Parallel()
 	s, r, exit := serveRestartNode(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

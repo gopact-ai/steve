@@ -91,6 +91,7 @@ func childWith(artifactID string) task.Task {
 // later pass produces no landing for it. Its parent must be told it is
 // stuck, not that it landed earlier or had nothing to land.
 func TestLandForSaysAResultStuckOnAConflictIsStuck(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	p, first, second := conflictingResults(t, w)
@@ -110,6 +111,7 @@ func TestLandForSaysAResultStuckOnAConflictIsStuck(t *testing.T) {
 // A conflict reached in this very pass reads as one reached earlier does:
 // by what it is, not by the landing's internal state name or cause.
 func TestLandForSaysAConflictReachedNowIsAConflict(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	_, first, second := conflictingResults(t, w)
@@ -132,6 +134,7 @@ func TestLandForSaysAConflictReachedNowIsAConflict(t *testing.T) {
 // after it in the same pass has moved the canonical on, so that the next
 // pass retries it.
 func TestLandForSaysAConflictReachedNowIsAConflictOnceTheCanonicalMoves(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	p, first, second := conflictingResults(t, w)
@@ -158,6 +161,7 @@ func TestLandForSaysAConflictReachedNowIsAConflictOnceTheCanonicalMoves(t *testi
 // result landed later in the same pass moves the canonical on so that the
 // next pass retries it: this pass did not.
 func TestLandForSaysAResultThePassSkippedAsStuckIsStuck(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	p, first, second := conflictingResults(t, w)
@@ -226,6 +230,7 @@ func publishFile(t *testing.T, w *world, owner, name, body string) artifact.Mani
 // the next pass. While another turn keeps that pass out of the main
 // directory, it is queued, not stuck: its conflict record is out of date.
 func TestLandForSaysAResultWhoseConflictClearedIsQueued(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	p, first, second := conflictingResults(t, w)
@@ -250,6 +255,7 @@ func TestLandForSaysAResultWhoseConflictClearedIsQueued(t *testing.T) {
 // A result still stuck on its conflict is stuck whether or not the main
 // directory is free; one queued behind the busy directory is queued.
 func TestLandForSaysAStuckResultIsStuckWhileTheMainDirectoryIsBusy(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	p, first, second := conflictingResults(t, w)
@@ -384,6 +390,7 @@ func unqueuedConflict(t *testing.T, w *world, state string) artifact.Landing {
 // An apply conflict says why it stopped. Reached in this pass, it reads as
 // the queue keeps it for every later pass.
 func TestLandForSaysAnApplyConflictAsLaterPassesDo(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	ctx := t.Context()
@@ -459,6 +466,7 @@ func editBy(t *testing.T, w *world, name, body string) {
 // as the landing starts writing it — reads as the queue keeps it for every
 // later pass, without recovery's own cause.
 func TestLandForSaysARecoveredApplyConflictAsLaterPassesDo(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	var once sync.Once
@@ -486,6 +494,7 @@ func TestLandForSaysARecoveredApplyConflictAsLaterPassesDo(t *testing.T) {
 // recovery's own cause, also once a result landed after it in the same
 // pass has changed its path, so that its queue record holds it no longer.
 func TestLandForSaysARecoveredApplyConflictWithoutItsCauseOnceItsPathMoves(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	var applied, editedAgain atomic.Bool
@@ -528,6 +537,7 @@ func TestLandForSaysARecoveredApplyConflictWithoutItsCauseOnceItsPathMoves(t *te
 // cannot settle a conflict, nor land a result again. It is told what the
 // user can do, and never the landing's internal state.
 func TestLandForTellsAParentWhatComesOfAResultThatDidNotLand(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		// queue queues the result the parent hears about, among what

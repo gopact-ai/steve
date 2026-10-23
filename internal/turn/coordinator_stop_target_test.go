@@ -24,6 +24,7 @@ func handleExchange(c *Coordinator, t *testing.T, input, exchange, target string
 // once that turn has ended it stops nothing, neither the turn running now
 // nor one that begins next.
 func TestStopTargetDoesNotReachAnotherTurn(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
@@ -59,6 +60,7 @@ func TestStopTargetDoesNotReachAnotherTurn(t *testing.T) {
 
 // A stop bound to the exchange that is running stops it.
 func TestStopTargetStopsItsTurn(t *testing.T) {
+	t.Parallel()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.OpenLedger(testLedger(t))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}

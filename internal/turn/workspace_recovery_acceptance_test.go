@@ -114,6 +114,7 @@ func recoveryCanonicalWriterFixture(t *testing.T, gate *recoverySnapshotGate, qu
 }
 
 func TestRecoveryCanonicalSnapshotRequiresFinalAcceptance(t *testing.T) {
+	t.Parallel()
 	gate := &recoverySnapshotGate{LocalNodes: artifact.LocalNodes{Dir: t.TempDir()}, entered: make(chan struct{}), release: make(chan struct{})}
 	c, p, source, base := recoveryCanonicalWriterFixture(t, gate, false)
 	snapshots := c.artifacts
@@ -207,6 +208,7 @@ func TestRecoveryCanonicalSnapshotRequiresFinalAcceptance(t *testing.T) {
 }
 
 func TestRecoveryExactCandidateReplayPreservesLateDiskAndContinuousHeads(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	first := runCopyAttempt(t, c, recoveryCopySpec(t, c, p, ws, "cas-first"))
 	if err := os.WriteFile(filepath.Join(ws.Path, "result"), []byte("accepted candidate\n"), 0600); err != nil {
@@ -288,6 +290,7 @@ func TestRecoveryExactCandidateReplayPreservesLateDiskAndContinuousHeads(t *test
 }
 
 func TestRecoveryTransferKeepsTheHoldAfterAllSourceRetirement(t *testing.T) {
+	t.Parallel()
 	c, p, source, _ := sharedCopy(t)
 	proof := attempt.RetainedEvidence{ObservedAt: time.Now(), Session: nodewire.SessionState{ID: source.Session, Harness: source.Harness, ProcessStopped: true, State: nodewire.SessionClosed, Binding: nodewire.SessionBinding{ProjectID: source.Project, SessionID: attempt.RetainedSessionID("console:recovery", source.TaskID, source.Agent), TaskID: source.TaskID, AttemptID: source.ID, NodeID: source.Node, TaskEpoch: source.Execution.Epoch, ExecutionEpoch: attempt.SessionExecutionEpoch(source)}}}
 	var err error
@@ -318,8 +321,11 @@ func TestRecoveryTransferKeepsTheHoldAfterAllSourceRetirement(t *testing.T) {
 }
 
 func TestRecoveryHoldAndAdmittedLandingHaveBothSafeOrders(t *testing.T) {
+	t.Parallel()
 	for _, afterApplying := range []bool{false, true} {
 		t.Run(map[bool]string{false: "hold wins before applying", true: "applying wins before hold"}[afterApplying], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			gate := &recoverySnapshotGate{LocalNodes: artifact.LocalNodes{Dir: t.TempDir()}, entered: make(chan struct{}), release: make(chan struct{})}
 			if afterApplying {
 				gate.blockOp = ops.Apply
@@ -420,6 +426,7 @@ func TestRecoveryHoldAndAdmittedLandingHaveBothSafeOrders(t *testing.T) {
 }
 
 func TestRecoveryMissingAcceptedProducerChainRefusesDeletion(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	first := runCopyAttempt(t, c, recoveryCopySpec(t, c, p, ws, "corrupt-chain-producer"))
 	if err := os.WriteFile(filepath.Join(ws.Path, "produced"), []byte("must retain authority\n"), 0600); err != nil {
@@ -463,8 +470,11 @@ func TestRecoveryMissingAcceptedProducerChainRefusesDeletion(t *testing.T) {
 }
 
 func TestRecoveryAcceptedChainRejectsEveryMissingOrChangedAuthority(t *testing.T) {
+	t.Parallel()
 	for _, which := range []string{"middle", "base", "version", "head", "repeat", "token", "attempt", "may-write", "evidence"} {
 		t.Run(which, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, source, ws := sharedCopy(t)
 			for index := range 2 {
 				r := runCopyAttempt(t, c, recoveryCopySpec(t, c, p, ws, fmt.Sprintf("chain-%d", index)))
@@ -534,6 +544,7 @@ func TestRecoveryAcceptedChainRejectsEveryMissingOrChangedAuthority(t *testing.T
 }
 
 func TestRecoveryAcceptedHistoricalEvidenceNeverRestoresARevokedToken(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	r := runCopyAttempt(t, c, recoveryCopySpec(t, c, p, ws, "accepted-revoked"))
 	if err := os.WriteFile(filepath.Join(ws.Path, "result"), []byte("accepted"), 0600); err != nil {
@@ -628,6 +639,7 @@ func TestRecoveryLateSameSHASnapshotPreservesItsEarlierAcceptedAuthority(t *test
 }
 
 func TestRecoverySameArtifactKeepsDifferentProducerAuthoritiesDistinct(t *testing.T) {
+	t.Parallel()
 	c, p, source, ws := sharedCopy(t)
 	var accepted string
 	for index := range 2 {

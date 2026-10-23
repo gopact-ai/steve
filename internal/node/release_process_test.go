@@ -198,6 +198,7 @@ func busyProcesses(s *Server) int {
 // stopped, by the release the hub sends, and until then the node counts
 // the process as running.
 func TestNodeTellsTheHubAnAgentExitedWhileItsGroupHasNotStopped(t *testing.T) {
+	t.Parallel()
 	m := newMemoryNode(t, "/bin/cat")
 	agent := newLingeringProcess()
 	t.Cleanup(agent.settle)
@@ -240,6 +241,7 @@ func TestNodeTellsTheHubAnAgentExitedWhileItsGroupHasNotStopped(t *testing.T) {
 // does not stop: it stops without an exit recorded for the agent, so its
 // stop stays unconfirmed.
 func TestNodeStopsWithoutWaitingOutAnExitedAgentsGroup(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	s := NewServer(ServerConfig{StateDir: t.TempDir()})
@@ -289,6 +291,7 @@ func (p *heldOutputAgent) Stopped() bool           { return true }
 // Output that stays open after the agent has exited does not keep the hub
 // from being told of the exit.
 func TestNodeTellsTheHubAnAgentExitedWhileItsOutputStaysOpen(t *testing.T) {
+	t.Parallel()
 	m := newMemoryNode(t, "/bin/cat")
 	output, held := io.Pipe()
 	t.Cleanup(func() { _ = held.Close() })

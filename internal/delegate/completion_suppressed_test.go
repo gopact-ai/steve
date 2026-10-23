@@ -13,6 +13,7 @@ import (
 )
 
 func TestRootCompletionAcceptsDurablySuppressedGrandchild(t *testing.T) {
+	t.Parallel()
 	for _, end := range []task.State{task.StateDone, task.StateCancelled} {
 		for _, route := range []string{"late-result", "queued-receipt"} {
 			t.Run(string(end)+"/"+route, func(t *testing.T) {

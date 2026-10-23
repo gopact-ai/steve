@@ -24,6 +24,7 @@ import (
 // once the interrupted attempt is over the conversation carries on by itself
 // instead of asking the owner to start a new session by hand.
 func TestUncertainSessionRecoversWithoutANewSessionCommand(t *testing.T) {
+	t.Parallel()
 	c, runner, _, old, req := retainedChatFixture(t)
 	req.Input, req.Source.MessageID = "继续", "web-next"
 	selected := c.catalog.Default()
@@ -104,6 +105,7 @@ func TestUncertainSessionRecoversWithoutANewSessionCommand(t *testing.T) {
 // session exactly as it found it: nothing was in flight, so the next message
 // runs instead of dead-ending on "start a new session first".
 func TestTurnThatNeverPromptedLeavesNoUncertainSession(t *testing.T) {
+	t.Parallel()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)

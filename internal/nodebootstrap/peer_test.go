@@ -73,6 +73,7 @@ func TestPeerScriptRefusesExistingLegacyNodeBeforeChangingFiles(t *testing.T) {
 }
 
 func TestPeerScriptImportsPrivatePackageAndStartsOnlyInstalledProgram(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("peer script requires Unix")
 	}

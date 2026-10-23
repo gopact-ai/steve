@@ -11,6 +11,7 @@ import (
 )
 
 func TestStandaloneTerminalAdmissionConsumesOnlyAfterBothFreshChallenges(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"allow", "second-denied", "unadvertised"} {
 		t.Run(mode, func(t *testing.T) {
 			one, req, count := readyTerminalAdmission(t)

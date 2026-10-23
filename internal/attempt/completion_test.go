@@ -78,6 +78,7 @@ func TestCompletionCASFailureLeavesAttemptAndLeasesUntouched(t *testing.T) {
 }
 
 func TestCompletionCannotBindAfterLeaseLossOrTakeover(t *testing.T) {
+	t.Parallel()
 	for _, lost := range []string{"expired", "superseded"} {
 		t.Run(lost, func(t *testing.T) {
 			s, clock := newService(t)
@@ -127,6 +128,7 @@ func TestSupersedeKeepsForeignResourcesNewHolder(t *testing.T) {
 }
 
 func TestRejectedCompletionClosesWithCandidateAndReleasesLeases(t *testing.T) {
+	t.Parallel()
 	for _, conflict := range []bool{false, true} {
 		s, _ := newService(t)
 		r := readyAttempt(t, s, "rejected")
@@ -157,6 +159,7 @@ func TestRejectedCompletionClosesWithCandidateAndReleasesLeases(t *testing.T) {
 }
 
 func TestRejectedCompletionKeepsBothErrorsWhenCleanupCannotCommit(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	r := readyAttempt(t, s, "rejected")
 	if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error {

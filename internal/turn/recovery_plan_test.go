@@ -183,6 +183,7 @@ func TestRetainedPlanRejectsDifferentExchangeBeforeExecution(t *testing.T) {
 }
 
 func TestRulePlanStoreFailureRecoversFrozenPlanInOriginalTask(t *testing.T) {
+	t.Parallel()
 	for _, resumed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "recover", true: "revoked"}[resumed], func(t *testing.T) {
 			rule := planner.Rule{Workflows: map[string][]plan.Step{"release": {{ID: "original-rule-step", Goal: "original declared workflow", Agent: "worker", Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "no side effects"}}}}}

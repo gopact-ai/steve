@@ -77,6 +77,7 @@ func TestForceStopCancellationAndIntentCommitTogether(t *testing.T) {
 }
 
 func TestForceStopRejectedWriteRollsBackTaskAndIntent(t *testing.T) {
+	t.Parallel()
 	for _, denied := range []string{"intent", "task"} {
 		t.Run(denied, func(t *testing.T) {
 			c, tasks, r, _ := forceStopControlFixture(t)
@@ -108,6 +109,7 @@ func TestForceStopRejectedWriteRollsBackTaskAndIntent(t *testing.T) {
 }
 
 func TestForceStopDistinguishesEarlierCommandAndProcessReceipts(t *testing.T) {
+	t.Parallel()
 	for _, exited := range []bool{false, true} {
 		t.Run(map[bool]string{false: "command", true: "process"}[exited], func(t *testing.T) {
 			c, tasks, r, proof := forceStopControlFixture(t)
@@ -138,6 +140,7 @@ func TestForceStopDistinguishesEarlierCommandAndProcessReceipts(t *testing.T) {
 }
 
 func TestOldForceTargetDoesNotCancelANewSessionBinding(t *testing.T) {
+	t.Parallel()
 	for _, exited := range []bool{false, true} {
 		t.Run(map[bool]string{false: "command", true: "process"}[exited], func(t *testing.T) {
 			c, tasks, old, proof := forceStopControlFixture(t)
@@ -198,6 +201,7 @@ func TestOldForceTargetDoesNotCancelANewSessionBinding(t *testing.T) {
 }
 
 func TestForceStopTreeWriteFailureIsAtomic(t *testing.T) {
+	t.Parallel()
 	for _, reject := range []bool{false, true} {
 		t.Run(map[bool]string{false: "committed", true: "refused-child"}[reject], func(t *testing.T) {
 			c, tasks, root, _ := forceStopControlFixture(t)

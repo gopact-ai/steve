@@ -154,6 +154,7 @@ func detachedDelegateFixture(t *testing.T) (*world, *retainedDelegateSessions, t
 	return w, sessions, parent, child
 }
 func TestManagedDelegateDetachKeepsOriginalTaskBudgetAndAttemptOpen(t *testing.T) {
+	t.Parallel()
 	w, sessions, _, child := detachedDelegateFixture(t)
 	stored, _ := w.tasks.Get(child.TaskID)
 	if stored.State != task.StateRunning || stored.Result != nil || len(stored.Attempts) != 1 || !stored.Attempts[0].Open() || stored.Budget.Tokens.Total != 0 {
@@ -208,6 +209,7 @@ func awaitDelegateResult(t *testing.T, tasks *task.Store, id string) task.Task {
 	return task.Task{}
 }
 func TestRetainedDelegateResumesOriginalAttemptAndDeliversFullResultOnce(t *testing.T) {
+	t.Parallel()
 	w, sessions, parent, child := detachedDelegateFixture(t)
 	service := recoveredDelegateService(t, w, sessions)
 	var mu sync.Mutex
@@ -260,6 +262,7 @@ func TestRetainedDelegateResumesOriginalAttemptAndDeliversFullResultOnce(t *test
 	}
 }
 func TestRetainedDelegateUncertainNodeAsksOnceAndNeverSettlesOrReplays(t *testing.T) {
+	t.Parallel()
 	w, sessions, _, child := detachedDelegateFixture(t)
 	sessions.inspectErr = errors.New("node unreachable")
 	service := recoveredDelegateService(t, w, sessions)
@@ -309,6 +312,7 @@ func TestRetainedDelegateUncertainNodeAsksOnceAndNeverSettlesOrReplays(t *testin
 }
 
 func TestRetainedDelegateRestoresBoundResultBeforeTaskPersistenceWithoutChargingTwice(t *testing.T) {
+	t.Parallel()
 	w, _ := executionWorld(t)
 	parent := w.running(t, "codex")
 	tracked, err := w.tasks.Spawn(parent.ID, task.Task{Goal: "already completed", Member: "builder", Node: "node-a", Origin: "delegate:" + parent.ID, ProjectID: "p", Workspace: t.TempDir()})
@@ -446,6 +450,7 @@ func TestRetainedDelegatePublicationFailureKeepsOriginalResultAndBudgetUnresolve
 }
 
 func TestRetainedDelegateRetriesFailedQuestionDeliveryAndKeepsVisibleDiagnosis(t *testing.T) {
+	t.Parallel()
 	w, sessions, _, child := detachedDelegateFixture(t)
 	sessions.inspectErr = errors.New("node unavailable")
 	service := recoveredDelegateService(t, w, sessions)
@@ -496,6 +501,7 @@ func TestRetainedDelegateRetriesFailedQuestionDeliveryAndKeepsVisibleDiagnosis(t
 }
 
 func TestRetainedDelegateExplicitStopDoesNotRestartOrAskForRecovery(t *testing.T) {
+	t.Parallel()
 	w, sessions, _, child := detachedDelegateFixture(t)
 	if _, err := w.tasks.SetAside(child.TaskID, task.StateCancelled); err != nil {
 		t.Fatal(err)
@@ -524,6 +530,7 @@ type settledDelegateError struct{}
 func (settledDelegateError) Error() string       { return "native command failed after producing output" }
 func (settledDelegateError) PromptSettled() bool { return true }
 func TestRetainedDelegateFailedNativeCommandPreservesCompleteOutput(t *testing.T) {
+	t.Parallel()
 	w, sessions, _, child := detachedDelegateFixture(t)
 	sessions.resumeError = settledDelegateError{}
 	service := recoveredDelegateService(t, w, sessions)
@@ -545,8 +552,11 @@ func TestRetainedDelegateFailedNativeCommandPreservesCompleteOutput(t *testing.T
 }
 
 func TestManagedDelegateExplicitStopReceiptSettlesCancelledExecution(t *testing.T) {
+	t.Parallel()
 	for _, state := range []task.State{task.StatePaused, task.StateCancelled} {
 		t.Run(string(state), func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			w, registry := executionWorld(t)
 			sessions := &retainedDelegateSessions{attempts: w.attempts, tasks: w.tasks, entered: make(chan struct{}), answer: "partial before explicit stop", stopSettled: true}
 			w.service.sessions = sessions
@@ -582,6 +592,7 @@ func TestManagedDelegateExplicitStopReceiptSettlesCancelledExecution(t *testing.
 	}
 }
 func TestRecoveredDelegateExplicitStopReceiptUsesIndependentSettlementContext(t *testing.T) {
+	t.Parallel()
 	w, sessions, _, child := detachedDelegateFixture(t)
 	sessions.stopSettled = true
 	sessions.resumeEntered = make(chan struct{})
@@ -613,6 +624,7 @@ func TestRecoveredDelegateExplicitStopReceiptUsesIndependentSettlementContext(t 
 // when the attempt is settled from the record: the operator confirming the
 // stop makes the failure a fact, and the next pass delivers it.
 func TestRetainedDelegateSettledFailureClearsStaleRecoveryQuestion(t *testing.T) {
+	t.Parallel()
 	w, sessions, _, child := detachedDelegateFixture(t)
 	sessions.inspectErr = errors.New("node unreachable")
 	service := recoveredDelegateService(t, w, sessions)
@@ -665,6 +677,7 @@ func TestRetainedDelegateSettledFailureClearsStaleRecoveryQuestion(t *testing.T)
 // nothing left on the node to wait for, and the parent needs to know so the
 // work can be run again.
 func TestRetainedDelegateStoppedNodeProcessEndsTheChildInsteadOfRetryingForever(t *testing.T) {
+	t.Parallel()
 	w, sessions, parent, child := detachedDelegateFixture(t)
 	sessions.mu.Lock()
 	sessions.processStopped = true
@@ -727,6 +740,7 @@ func TestRetainedDelegateStoppedNodeProcessEndsTheChildInsteadOfRetryingForever(
 }
 
 func TestRetainedDelegateRejoinsShortOutageWithoutAskingTheParent(t *testing.T) {
+	t.Parallel()
 	w, sessions, _, child := detachedDelegateFixture(t)
 	sessions.inspectErr = errors.New("node unreachable")
 	service := recoveredDelegateService(t, w, sessions)

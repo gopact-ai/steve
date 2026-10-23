@@ -13,8 +13,11 @@ import (
 )
 
 func TestSettledAgentExitUsesColdContextWithoutNodeRestart(t *testing.T) {
+	t.Parallel()
 	for _, interrupted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "idle", true: "interrupted-settings"}[interrupted], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			testSettledAgentExit(t, interrupted)
 		})
 	}
@@ -79,6 +82,7 @@ func testSettledAgentExit(t *testing.T, interrupted bool) {
 }
 
 func TestConcurrentLiveOpenAndPromptDoNotBlockNode(t *testing.T) {
+	t.Parallel()
 	cfg, req, old := resumedFixture(t, buildMockAgent(t))
 	saveResumeFixture(t, cfg, old)
 	s := NewServer(cfg)
@@ -136,6 +140,7 @@ func TestConcurrentLiveOpenAndPromptDoNotBlockNode(t *testing.T) {
 }
 
 func TestPromptAfterShutdownAdmissionDoesNotRecordAnAcceptedInput(t *testing.T) {
+	t.Parallel()
 	cfg, req, old := resumedFixture(t, buildMockAgent(t))
 	saveResumeFixture(t, cfg, old)
 	s := NewServer(cfg)
@@ -195,8 +200,11 @@ func TestFailedLiveHandoffCannotForkFromAnOlderSource(t *testing.T) {
 }
 
 func TestProvenProcessExitReleasesPluginUseDespiteReceiptFailure(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"archive", "failed-open", "prepared-cancel"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			cfg, req, old := resumedFixture(t, buildMockAgent(t))
 			s := NewServer(cfg)
 			selection := nodeRuntimeFixture(t, s, "")
@@ -256,8 +264,11 @@ func TestProvenProcessExitReleasesPluginUseDespiteReceiptFailure(t *testing.T) {
 }
 
 func TestRestartReconcilesOnlyProvenStoppedPluginUses(t *testing.T) {
+	t.Parallel()
 	for _, stopped := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unknown", true: "stopped"}[stopped], func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			cfg, req, old := resumedFixture(t, buildMockAgent(t))
 			s := NewServer(cfg)
 			selection := nodeRuntimeFixture(t, s, "")
@@ -302,6 +313,7 @@ func TestRestartReconcilesOnlyProvenStoppedPluginUses(t *testing.T) {
 }
 
 func TestLostResumeOpenAfterRestartUsesOriginalReconciliationReceipt(t *testing.T) {
+	t.Parallel()
 	cfg, req, old := resumedFixture(t, buildMockAgent(t))
 	saveResumeFixture(t, cfg, old)
 	s := NewServer(cfg)
@@ -330,8 +342,11 @@ func TestLostResumeOpenAfterRestartUsesOriginalReconciliationReceipt(t *testing.
 }
 
 func TestRejectedResumeCannotArchiveAnotherSession(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"project", "conversation", "config", "authority"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			cfg, req, old := resumedFixture(t, buildMockAgent(t))
 			saveResumeFixture(t, cfg, old)
 			s := NewServer(cfg)

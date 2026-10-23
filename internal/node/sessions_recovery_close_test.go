@@ -10,6 +10,7 @@ import (
 )
 
 func TestRecoveryIdleCloseReplaysItsPersistedWholeProcessProofAfterRestart(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority}
 	server := NewServer(cfg)
@@ -73,6 +74,7 @@ func (a *recoveryCloseAuthority) AuthorizeNodeReceipt(_ context.Context, princip
 }
 
 func TestRecoveryCloseKeepsPrunedCommandIdentityWithoutRestoringItsBody(t *testing.T) {
+	t.Parallel()
 	authority := &recoveryCloseAuthority{sessionAuthorityTest: sessionAuthorityTest{epoch: 1, writer: 1}}
 	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority}
 	server := NewServer(cfg)

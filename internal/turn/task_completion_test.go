@@ -50,6 +50,7 @@ func completionCoordinator(t *testing.T, runner *fakeRunner, opts ...testOption)
 }
 
 func TestCompleteTaskThenChatKeepsNativeContextAndNeverResumesClosedRoot(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{id: "native-context", reply: "accepted"}
 	resumes := 0
 	coordinator, book := completionCoordinator(t, runner, withCallbacks(func(cb *Callbacks) {
@@ -108,6 +109,7 @@ func TestCompleteTaskThenChatKeepsNativeContextAndNeverResumesClosedRoot(t *test
 }
 
 func TestCompleteTaskChecksConversationEvenOnRetry(t *testing.T) {
+	t.Parallel()
 	coordinator, _ := completionCoordinator(t, &fakeRunner{reply: "ok"})
 	if _, err := handle(coordinator, t.Context(), "work"); err != nil {
 		t.Fatal(err)
@@ -158,6 +160,7 @@ func TestBareCompletionSkipsNewerTerminalRoots(t *testing.T) {
 }
 
 func TestDisclosurePersistenceErrorDoesNotRewriteSuccessfulAgentOutcome(t *testing.T) {
+	t.Parallel()
 	c, book := completionCoordinator(t, &fakeRunner{reply: "sealed answer"})
 	p, _, err := c.projects.Get(t.Context(), "p")
 	if err != nil {
@@ -188,6 +191,7 @@ func TestDisclosurePersistenceErrorDoesNotRewriteSuccessfulAgentOutcome(t *testi
 }
 
 func TestCompleteTaskRejectsActiveTurnAndRegistryReservation(t *testing.T) {
+	t.Parallel()
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
 	coordinator, _ := completionCoordinator(t, runner)
 	finished := make(chan error, 1)
@@ -214,6 +218,7 @@ func TestCompleteTaskRejectsActiveTurnAndRegistryReservation(t *testing.T) {
 }
 
 func TestCancelledChildWithoutResultSettlesOnlyAfterItsExecutionStops(t *testing.T) {
+	t.Parallel()
 	c, _ := completionCoordinator(t, &fakeRunner{reply: "accepted"})
 	if _, err := handle(c, t.Context(), "work"); err != nil {
 		t.Fatal(err)

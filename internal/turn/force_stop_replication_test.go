@@ -38,6 +38,7 @@ func (r *forceControlReplication) Propose(ctx context.Context, w ledger.Replicat
 }
 
 func TestForceStopRevocationCannotOutrunItsReplicatedIntent(t *testing.T) {
+	t.Parallel()
 	for _, rejected := range []bool{false, true} {
 		t.Run(map[bool]string{false: "committed", true: "rejected"}[rejected], func(t *testing.T) {
 			c, tasks, r, proof := forceStopControlFixture(t)

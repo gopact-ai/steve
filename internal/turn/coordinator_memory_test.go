@@ -66,6 +66,7 @@ func factsIn(t *testing.T, c *Coordinator, scope memory.Scope) []string {
 }
 
 func TestMemoryToolsRefuseConversationsNotLastReachedByTheOwnerInPrivate(t *testing.T) {
+	t.Parallel()
 	type arrival struct {
 		sender string
 		chat   protocol.ChatType
@@ -164,6 +165,7 @@ func TestMemoryProjectScopeIsTheBoundProjectElseTheDefault(t *testing.T) {
 }
 
 func TestMemoryProjectScopeIsRefusedForSteveHome(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(*Coordinator){
 		"bound to home": func(c *Coordinator) { bind(t, c, "chat", "home") },
 		// With a home project and an owner, an unbound conversation

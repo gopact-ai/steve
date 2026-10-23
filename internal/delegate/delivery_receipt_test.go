@@ -12,8 +12,11 @@ import (
 )
 
 func TestReceiptSettlesUncertainOrDelayedDeliveryWithoutDispatch(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []string{task.DeliveryUncertain, task.DeliveryPending} {
 		t.Run(outcome, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			w := newWorld(t)
 			parent := w.running(t, "codex")
 			child := completedChild(t, w, parent, "retained answer")
@@ -42,6 +45,7 @@ func TestReceiptSettlesUncertainOrDelayedDeliveryWithoutDispatch(t *testing.T) {
 }
 
 func TestReceiptSaveFailureRetainsBatchAcrossRestartWithoutDispatch(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	book := testLedger(t)
 	var err error

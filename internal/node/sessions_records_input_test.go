@@ -30,6 +30,7 @@ func waitRecordedInput(t *testing.T, s *SessionService, req nodewire.SessionRequ
 }
 
 func TestNodeInputHintsAreSingleUsePerOriginalBinding(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	authorize := sessionAuthorizerFunc(func(ctx context.Context, principal string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action nodewire.SessionAction) error {
 		switch b.AttemptID {
@@ -155,6 +156,7 @@ func TestNodeInputHintsAreSingleUsePerOriginalBinding(t *testing.T) {
 }
 
 func TestNodeInputHintRacesRebindWithoutGrantingBoth(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(),
 		Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}},
@@ -200,6 +202,7 @@ func TestNodeInputHintRacesRebindWithoutGrantingBoth(t *testing.T) {
 }
 
 func TestNodeConsumedBindingMissingReceiptRemainsExpiredAfterRestart(t *testing.T) {
+	t.Parallel()
 	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(),
 		Harnesses:         map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}},
 		SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}}

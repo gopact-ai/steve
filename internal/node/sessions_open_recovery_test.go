@@ -10,6 +10,7 @@ import (
 )
 
 func TestOpenCancellationStopsReservedSessionWhileNativeInitializeIsPending(t *testing.T) {
+	t.Parallel()
 	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), Harnesses: map[string]HarnessSpec{"slow": {Command: "/bin/sh", Args: []string{"-c", "exec sleep 30"}}}, SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}})
 	if err := s.startSessions(t.Context()); err != nil {
 		t.Fatal(err)
@@ -50,6 +51,7 @@ func TestOpenCancellationStopsReservedSessionWhileNativeInitializeIsPending(t *t
 }
 
 func TestOpenCancellationFencesLateNativeCreationAcrossNodeRestart(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	cfg := ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority}
 	s := NewServer(cfg)
@@ -131,6 +133,7 @@ func TestOpenCancellationWinsAgainstAlreadyAuthorizedDelayedOpen(t *testing.T) {
 }
 
 func TestOpenRecoveryFindsAndStopsOriginalNativeSession(t *testing.T) {
+	t.Parallel()
 	server := startNode(t, ServerConfig{Name: "worker", Token: "open-recovery", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: CoordinatorSessionAuthorizer{}})
 	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "open-recovery"}})
 	defer registry.Close()

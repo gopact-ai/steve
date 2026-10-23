@@ -61,6 +61,7 @@ func TestNodeProgressBurstCoalescesDurableWrites(t *testing.T) {
 	}
 }
 func TestNodeTerminalCommitIncludesPendingProgress(t *testing.T) {
+	t.Parallel()
 	one := progressSession(t)
 	for _, text := range []string{"first", "full final output"} {
 		if err := one.updateProgress("input", view.Progress{Answer: text}); err != nil {
@@ -139,6 +140,7 @@ func TestNodeProgressPersistenceFailureQuarantinesSession(t *testing.T) {
 // The real ACP subprocess and native session owner must preserve every chunk
 // while checkpoint traffic stays independent of the model's chunk count.
 func TestNodeACPStreamCoalescesWithoutLosingFinalOutput(t *testing.T) {
+	t.Parallel()
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t), Env: []string{"MOCKAGENT_STREAM_CHUNKS=500"}}}, SessionAuthorizer: authority})
 	if err := s.startSessions(t.Context()); err != nil {

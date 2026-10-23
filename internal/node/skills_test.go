@@ -16,6 +16,7 @@ import (
 // the harness homes, while the manifest the node reports names only the
 // bundle's own skills.
 func TestSkillsApplyRefusesStagingItCannotClear(t *testing.T) {
+	t.Parallel()
 	bin := buildMockAgent(t)
 	state := t.TempDir()
 	server := startNode(t, ServerConfig{

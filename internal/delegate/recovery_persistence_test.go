@@ -166,6 +166,7 @@ func TestRetainedDelegateWaitsForBudgetStateAndResultDurabilityBeforeReportingDo
 }
 
 func TestManagedDelegateSettlementMarkerFailureDoesNotDiscardNativeAnswer(t *testing.T) {
+	t.Parallel()
 	w, db, _, _ := boundDelegatePersistenceFixture(t)
 	lifetime, stop := context.WithCancel(t.Context())
 	registry := execution.New(lifetime, w.tasks)

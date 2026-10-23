@@ -29,6 +29,7 @@ func countedCommand(t *testing.T, bin string) (string, func() int) {
 }
 
 func TestNodeCapabilitiesAreProbedOncePerHarness(t *testing.T) {
+	t.Parallel()
 	counted, started := countedCommand(t, buildMockAgent(t))
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
 	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: counted}}, SessionAuthorizer: authority})

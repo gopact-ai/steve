@@ -17,8 +17,11 @@ import (
 )
 
 func TestReverseHTTPBodyCloseReleasesItsUploadAndStream(t *testing.T) {
+	t.Parallel()
 	for _, cancelRequest := range []bool{false, true} {
 		t.Run(fmt.Sprint("cancel-", cancelRequest), func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			checkReverseHTTPBodyClose(t, cancelRequest)
 		})
 	}

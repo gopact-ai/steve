@@ -15,6 +15,7 @@ import (
 )
 
 func TestAfterSnapshotFailureKeepsReplyAndCaptureError(t *testing.T) {
+	t.Parallel()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	if err != nil {
 		t.Fatal(err)

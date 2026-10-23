@@ -13,6 +13,7 @@ import (
 // The native transport is the existing retained-session fixture; admission,
 // process-stop proof, accounting and registry reconciliation use real owners.
 func TestStoppedChildResolvesJoinedObserverAfterAccounting(t *testing.T) {
+	t.Parallel()
 	for _, rejectAccounting := range []bool{false, true} {
 		name := "successful-accounting"
 		if rejectAccounting {
@@ -127,6 +128,7 @@ func waitDelegateRecoveryOwner(t *testing.T, service *Service, taskID string) {
 }
 
 func TestRecoveredChildResolutionRequiresOriginalSettledAccounting(t *testing.T) {
+	t.Parallel()
 	w, _, _, child := boundDelegatePersistenceFixture(t)
 	service := recoveredDelegateService(t, w, w.sessions)
 	records, err := w.attempts.ForTask(t.Context(), child.ID)
@@ -184,6 +186,7 @@ func TestRecoveredChildResolutionRequiresOriginalSettledAccounting(t *testing.T)
 }
 
 func TestRetainedSweepRetriesResolutionAfterOriginalNativeHandlerJoins(t *testing.T) {
+	t.Parallel()
 	w, _, _, child := boundDelegatePersistenceFixture(t)
 	service := recoveredDelegateService(t, w, w.sessions)
 	records, err := w.attempts.ForTask(t.Context(), child.ID)

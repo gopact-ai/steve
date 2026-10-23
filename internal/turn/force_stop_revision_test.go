@@ -8,6 +8,7 @@ import (
 )
 
 func TestForceStopConfirmationRejectsAChangedOrActiveRevision(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"changed", "active"} {
 		t.Run(mode, func(t *testing.T) {
 			c, tasks, r, _ := forceStopControlFixture(t)
@@ -105,6 +106,7 @@ func TestRetainedChatCarriesTheForceStopRevision(t *testing.T) {
 }
 
 func TestRetainedPlanCarriesTheForceStopRevision(t *testing.T) {
+	t.Parallel()
 	c, _, identity, _ := retainedPlanFixture(t)
 	if _, err := c.tasks.SetAside(identity.TaskID, task.StateCancelled); err != nil {
 		t.Fatal(err)

@@ -34,6 +34,7 @@ func completedReceiptOfDeletedTask(t *testing.T) (*Service, Completion) {
 // terminal receipt of a task that is gone is acknowledged, not retried on
 // every pass forever.
 func TestNodeReceiptOfADeletedTaskIsAcknowledged(t *testing.T) {
+	t.Parallel()
 	service, completion := completedReceiptOfDeletedTask(t)
 	if err := service.AcknowledgeNodeReceipt(t.Context(), *completion.NodeReceipt); err != nil {
 		t.Fatalf("receipt of a deleted task stays pending: %v", err)
@@ -48,8 +49,11 @@ func TestNodeReceiptOfADeletedTaskIsAcknowledged(t *testing.T) {
 // exists is checked against its conversation as before, and one whose
 // header is missing while its accounting remains is not a deletion.
 func TestNodeReceiptOfAnExistingTaskIsStillCheckedAgainstItsConversation(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"moved-conversation", "accounting-left"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			service, record, completion := nodeReceiptCompletion(t)
 			if _, err := service.Complete(t.Context(), record.ID, "test", completion); err != nil {
 				t.Fatal(err)

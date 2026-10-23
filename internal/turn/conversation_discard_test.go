@@ -44,6 +44,7 @@ func discardFixture(t *testing.T) (*Coordinator, *closeRecorder, *task.Store, *s
 }
 
 func TestDiscardConversationClosesSessionsAndDropsItsWork(t *testing.T) {
+	t.Parallel()
 	c, manager, tasks, schedules := discardFixture(t)
 	if err := c.store.SaveSession(state.Session{ConversationID: "console:one", AgentID: "worker", HarnessID: "mock", UpstreamID: "ns_1", Workspace: t.TempDir()}); err != nil {
 		t.Fatal(err)
@@ -102,6 +103,7 @@ func TestDiscardConversationRefusesWhileATurnRuns(t *testing.T) {
 // A failed close without a durable obligation must preserve the original
 // records; a later retry can close the session and delete the conversation.
 func TestDiscardConversationKeepsAnUnreachableSession(t *testing.T) {
+	t.Parallel()
 	c, manager, tasks, _ := discardFixture(t)
 	manager.refuse = errors.New("node is offline")
 	if err := c.store.SaveSession(state.Session{ConversationID: "console:one", AgentID: "worker", HarnessID: "mock", UpstreamID: "ns_1", Workspace: t.TempDir()}); err != nil {

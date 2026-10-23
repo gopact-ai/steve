@@ -79,8 +79,11 @@ func TestTaskPersistenceFailureRefusesExecutionAndCanRetry(t *testing.T) {
 }
 
 func TestWorkspacePreparationCannotBypassTaskRevocation(t *testing.T) {
+	t.Parallel()
 	for _, action := range []string{"pause", "cancel", "pause-resume"} {
 		t.Run(action, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			runner := &fakeRunner{reply: "done"}
 			c, _ := completionCoordinator(t, runner)
 			if _, err := handle(c, t.Context(), "first"); err != nil {

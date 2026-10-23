@@ -70,6 +70,7 @@ func (r *copyWritingRunner) Prompt(ctx context.Context, _ string, _ func(view.Pr
 }
 
 func TestTwoConversationsContinueTheSharedRecoveryThroughRealTurnLifecycle(t *testing.T) {
+	t.Parallel()
 	c, p, source, workspace := sharedCopy(t)
 	catalog, err := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Node: "node", Default: true}})
 	if err != nil {
@@ -128,6 +129,7 @@ func TestTwoConversationsContinueTheSharedRecoveryThroughRealTurnLifecycle(t *te
 }
 
 func TestConcurrentConversationsWaitForTheSharedRecoveryWriter(t *testing.T) {
+	t.Parallel()
 	c, p, source, workspace := sharedCopy(t)
 	catalog, err := agent.NewCatalog(map[string]agent.Config{"worker": {Harness: "mock", Node: "node", Default: true}})
 	if err != nil {

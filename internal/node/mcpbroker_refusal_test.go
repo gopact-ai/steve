@@ -39,6 +39,7 @@ func brokerOnSocket(t *testing.T) (*Broker, string, context.CancelFunc) {
 // first bytes right behind the binding id, and a broker that closes
 // with those bytes unread resets the connection instead of ending it.
 func TestARefusedLaunchEndsTheConnectionInsteadOfResettingIt(t *testing.T) {
+	t.Parallel()
 	broker, socket, _ := brokerOnSocket(t)
 	binding, err := broker.Bind("echo", "a-gone", "codex")
 	if err != nil {

@@ -16,6 +16,7 @@ import (
 // held is not delivered — delivery would start the task's next turn on
 // its own — and waits for the user's next turn instead.
 func TestFlushDeliversNothingWhileTheParentIsHeld(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}
@@ -52,6 +53,7 @@ func TestFlushDeliversNothingWhileTheParentIsHeld(t *testing.T) {
 // it was held; and the ones a pause left paused, which are closed for
 // good here — nothing resumes a delegation. Each is told once.
 func TestPrefaceReportsStoppedChildrenOnceAndClosesPausedOnes(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}
@@ -148,6 +150,7 @@ func TestPrefaceReportsStoppedChildrenOnceAndClosesPausedOnes(t *testing.T) {
 // The next turn lands them under its own lease — the parent works with
 // them in this turn — and the preface says so.
 func TestPrefaceLandsQueuedFilesUnderTheTurnsLease(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}
@@ -190,6 +193,7 @@ func TestPrefaceLandsQueuedFilesUnderTheTurnsLease(t *testing.T) {
 // neither closed nor marked delivered — the result it ends with is still
 // to reach the parent.
 func TestPrefaceToldLeavesAChildResumedMeanwhileAlone(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	child, err := w.tasks.Spawn(parent.ID, task.Task{Goal: "review the API", Member: "builder", Node: "node-a", Origin: "delegate:" + parent.ID})

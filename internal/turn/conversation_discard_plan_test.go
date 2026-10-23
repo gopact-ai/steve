@@ -76,6 +76,7 @@ func readDiscardRun(t *testing.T, book *ledger.Ledger, id string) (ledger.Operat
 }
 
 func TestDiscardConversationRetiresOnlyItsPlanRunsAndBinding(t *testing.T) {
+	t.Parallel()
 	c := discardPlanCoordinator(t)
 	root := discardPlanTask(t, c, "console:discard", "")
 	child := discardPlanTask(t, c, "delegate:discard", root.ID)
@@ -179,6 +180,7 @@ func TestDiscardConversationDropsBindingWithoutTasks(t *testing.T) {
 }
 
 func TestDiscardConversationRollsBackPlanRetirementWithTaskDeletion(t *testing.T) {
+	t.Parallel()
 	for _, point := range []string{"run", "task", "binding"} {
 		t.Run(point, func(t *testing.T) {
 			c := discardPlanCoordinator(t)
@@ -249,6 +251,7 @@ func TestDiscardConversationRefusesAPlanDriverBeforeDeletingTasks(t *testing.T) 
 }
 
 func TestDiscardConversationKeepsPlanRunWhileNativeRetirementPending(t *testing.T) {
+	t.Parallel()
 	c, r := abandonWithSession(t)
 	rec := discardPlanRun(t, c, r.TaskID, exec.RunExecuting)
 	if err := c.DiscardConversation(t.Context(), "console:original"); !errors.Is(err, task.ErrRetirementPending) {
@@ -342,6 +345,7 @@ func TestDiscardConversationRefusesUnreadablePlanRunOwnership(t *testing.T) {
 }
 
 func TestDiscardConversationRefusesRunOwnedElsewhereButUsingItsToken(t *testing.T) {
+	t.Parallel()
 	for _, route := range []string{"public-discard", "deletion-transaction"} {
 		t.Run(route, func(t *testing.T) {
 			c := discardPlanCoordinator(t)
@@ -407,8 +411,11 @@ func TestDiscardConversationRefusesRunOwnedElsewhereButUsingItsToken(t *testing.
 }
 
 func TestDiscardConversationSelectsEveryPossibleRunOwnershipAnchor(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"selected-owner", "selected-token", "empty-owner", "selected-plan", "selected-operation-id", "foreign-plan", "sink-token", "unknown-token", "unrelated-valid"} {
 		t.Run(scenario, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c := discardPlanCoordinator(t)
 			doomed := discardPlanTask(t, c, "console:ownership-anchors", "")
 			other := discardPlanTask(t, c, "console:unrelated", "")

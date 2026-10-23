@@ -10,6 +10,7 @@ import (
 )
 
 func TestNoAgentRequestExplainsRegistrationWithoutCreatingSession(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		locale, want string
 	}{

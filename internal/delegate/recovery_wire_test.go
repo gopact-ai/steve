@@ -87,6 +87,7 @@ func bindRetainedTestManager(t *testing.T, manager *harness.Manager, w *world, a
 }
 
 func TestRetainedDelegateAcrossRealNodeTransportKeepsNativeQuestionAndInput(t *testing.T) {
+	t.Parallel()
 	w, _ := executionWorld(t)
 	executable := filepath.Join(t.TempDir(), "mockagent")
 	build := exec.CommandContext(t.Context(), "go", "build", "-o", executable, "../../cmd/mockagent")

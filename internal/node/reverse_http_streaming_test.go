@@ -55,6 +55,7 @@ func unfinishedReverseUpload(t *testing.T, endpoint string, chunked bool) net.Co
 }
 
 func TestReverseMCPEarlyFinalStreamsItsWholeResponse(t *testing.T) {
+	t.Parallel()
 	for _, chunkedUpload := range []bool{false, true} {
 		for _, chunkedResponse := range []bool{false, true} {
 			t.Run(fmt.Sprintf("chunked-upload-%v-response-%v", chunkedUpload, chunkedResponse), func(t *testing.T) {
@@ -87,6 +88,7 @@ func TestReverseMCPEarlyFinalStreamsItsWholeResponse(t *testing.T) {
 }
 
 func TestReverseMCPEarlyStreamingResponseLivesUntilClientCloses(t *testing.T) {
+	t.Parallel()
 	continueResponse := make(chan struct{})
 	finished := make(chan struct{})
 	stop := make(chan struct{})

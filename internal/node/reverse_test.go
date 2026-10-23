@@ -18,6 +18,7 @@ import (
 )
 
 func TestReverseMCPWaitsForToolResponseAndPropagatesCancellation(t *testing.T) {
+	t.Parallel()
 	started := make(chan struct{}, 1)
 	canceled := make(chan struct{}, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

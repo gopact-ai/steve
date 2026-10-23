@@ -10,6 +10,7 @@ import (
 )
 
 func TestContinuationCannotCreateAnotherTaskOrResumeAPausedOne(t *testing.T) {
+	t.Parallel()
 	for _, state := range []task.State{task.StatePaused, task.StateCancelled, task.StateDone, task.StateFailed} {
 		t.Run(string(state), func(t *testing.T) {
 			store, err := task.OpenLedger(testLedger(t))

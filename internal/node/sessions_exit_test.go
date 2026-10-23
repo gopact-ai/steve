@@ -47,6 +47,7 @@ func (p *lateStopProcess) Stopped() bool { return p.stopped.Load() }
 // group has emptied the node records the process stopped: the session is
 // not left interrupted, as one whose agent may still be writing.
 func TestNodeSessionPromptOfAnAgentThatExitsRecordsItsStop(t *testing.T) {
+	t.Parallel()
 	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}})
 	if err := s.startSessions(t.Context()); err != nil {
 		t.Fatal(err)

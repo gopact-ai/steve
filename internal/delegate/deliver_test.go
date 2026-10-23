@@ -85,6 +85,7 @@ func startBlocked(t *testing.T, w *world, member string) (agentmcp.DelegateResul
 }
 
 func TestAChildsResultReachesAnIdleParentOnce(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}
@@ -123,6 +124,7 @@ func TestAChildsResultReachesAnIdleParentOnce(t *testing.T) {
 }
 
 func TestAChildEndingMidTurnWaitsForTheTurnToEnd(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}
@@ -161,6 +163,7 @@ func TestAChildEndingMidTurnWaitsForTheTurnToEnd(t *testing.T) {
 }
 
 func TestAResultCollectedByAwaitIsNotDeliveredAgain(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}
@@ -181,6 +184,7 @@ func TestAResultCollectedByAwaitIsNotDeliveredAgain(t *testing.T) {
 }
 
 func TestAClosedParentGetsNoContinuation(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}
@@ -211,6 +215,7 @@ func TestAClosedParentGetsNoContinuation(t *testing.T) {
 // A result its parent never received before ending is suppressed with a
 // reason in the Hub's language: the parent ended, or its record is gone.
 func TestASuppressedResultSaysWhyItsParentNeverReceivedIt(t *testing.T) {
+	t.Parallel()
 	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
 		for _, end := range []task.State{task.StateDone, task.StateCancelled} {
 			t.Run(string(locale)+"/"+string(end), func(t *testing.T) {
@@ -248,6 +253,7 @@ func TestASuppressedResultSaysWhyItsParentNeverReceivedIt(t *testing.T) {
 }
 
 func TestAFailedDeliveryIsRetriedFromTheRecord(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{fail: errors.New("channel down")}
@@ -281,6 +287,7 @@ func TestAFailedDeliveryIsRetriedFromTheRecord(t *testing.T) {
 }
 
 func TestDeliverySaysWhereTheChildsFilesAre(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}
@@ -313,6 +320,7 @@ func TestDeliverySaysWhereTheChildsFilesAre(t *testing.T) {
 // finished child can be handed over. A running parent turn delivers that
 // result itself, so the departing awaiter must not freeze a delivery batch.
 func TestAnAwaiterThatWentAwayLeavesResultsToTheRunningTurn(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	parent := w.running(t, "codex")
 	box := &mailbox{}

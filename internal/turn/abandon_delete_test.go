@@ -32,8 +32,11 @@ func proveAbandonedExit(t *testing.T, c *Coordinator, r attempt.Record) {
 	}
 }
 func TestAbandonedConversationWaitsForExitProjectionAndOwedCloseBeforeDeletion(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"unconfirmed", "unprojected", "close owed"} {
 		t.Run(phase, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, r := abandonWithSession(t)
 			control := NewAbandonControl(c)
 			if phase != "unprojected" {
@@ -110,6 +113,7 @@ func TestConversationDeletionRechecksNewCloseAfterIdlePreflight(t *testing.T) {
 	}
 }
 func TestConversationDeletionFailsClosedOnUnreadableCleanupState(t *testing.T) {
+	t.Parallel()
 	c, tasks := taskCoordinator(t, &fakeRunner{reply: "unused"}, withOwner("owner"))
 	tracked, err := tasks.Create(task.Task{Channel: "console:invalid", Member: "worker"})
 	if err != nil {
@@ -129,6 +133,7 @@ func TestConversationDeletionFailsClosedOnUnreadableCleanupState(t *testing.T) {
 }
 
 func TestTaskDeletionRechecksAnExecutionQuarantinedAfterIdlePreflight(t *testing.T) {
+	t.Parallel()
 	c, r := abandonWithSession(t)
 	control := NewAbandonControl(c)
 	if err := control.ProjectAbandoned(t.Context(), r.ID); err != nil {

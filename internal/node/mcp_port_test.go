@@ -127,6 +127,7 @@ func TestBrokerServeFailureReleasesTheProxyPort(t *testing.T) {
 // has not run yet when the check does, where with several it often has and
 // the check would pass by luck.
 func TestPluginRuntimeLoadRetriesOnItsPortAfterAFailedStart(t *testing.T) {
+	t.Parallel()
 	procs := runtime.GOMAXPROCS(1)
 	t.Cleanup(func() { runtime.GOMAXPROCS(procs) })
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

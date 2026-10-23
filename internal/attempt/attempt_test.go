@@ -114,6 +114,7 @@ func TestScopeIsBoundToWorkspaceKind(t *testing.T) {
 }
 
 func TestEndpointSlotsAreLeased(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	ctx := context.Background()
 	open := func(id string) (Record, error) {
@@ -140,6 +141,7 @@ func TestEndpointSlotsAreLeased(t *testing.T) {
 }
 
 func TestLostLeaseStopsEveryTransition(t *testing.T) {
+	t.Parallel()
 	s, c := newService(t)
 	ctx := context.Background()
 	r, _ := s.Open(ctx, Spec{Kind: KindStep, Project: "p", Workspace: worktree("wt1", "p"), Scope: ScopePathSet})
@@ -176,6 +178,7 @@ func TestLostLeaseStopsEveryTransition(t *testing.T) {
 }
 
 func TestSupersedeCutsOnlyTheOldAttemptsLeases(t *testing.T) {
+	t.Parallel()
 	s, c := newService(t)
 	ctx := context.Background()
 	old, _ := s.Open(ctx, Spec{ID: "old", Kind: KindStep, Project: "p", Node: "node-a", Harness: "codex", Slots: 1,
@@ -222,6 +225,7 @@ func TestSupersedeCutsOnlyTheOldAttemptsLeases(t *testing.T) {
 }
 
 func TestHeartbeatReportsLoss(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	s.TTL = 90 * time.Millisecond
 	s.now = time.Now
@@ -291,6 +295,7 @@ func TestAReservedSlotWaitsForItsAttempt(t *testing.T) {
 }
 
 func TestAttemptLeasesAreIssuedByTheMachinesRegion(t *testing.T) {
+	t.Parallel()
 	s, c := newService(t)
 	west, err := ledger.Open(t.TempDir(), ledger.Options{Now: c.now})
 	if err != nil {
@@ -375,6 +380,7 @@ func (i *fakeIssuer) Check(context.Context, ledger.Lease) error { return nil }
 func (i *fakeIssuer) Invalidate(context.Context, string) error  { return nil }
 
 func TestACancelledOpenFreesTheLeasesItAlreadyTook(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	s.l.SetRegion("east")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -405,6 +411,7 @@ func TestACancelledOpenFreesTheLeasesItAlreadyTook(t *testing.T) {
 }
 
 func TestATerminalTransitionFreesLeasesUnderACancelledCaller(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	s.l.SetRegion("east")
 	bg := context.Background()
@@ -441,6 +448,7 @@ func TestATerminalTransitionFreesLeasesUnderACancelledCaller(t *testing.T) {
 }
 
 func TestExpireAllFreesWhatTheDeadProcessHeld(t *testing.T) {
+	t.Parallel()
 	s, _ := newService(t)
 	ctx := context.Background()
 	held, err := s.Open(ctx, Spec{TaskID: "1", Kind: KindChat, Project: "p", Agent: "claude", Harness: "claude", Workspace: canonical("p"), Scope: ScopeUnrestricted})

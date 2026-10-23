@@ -10,6 +10,7 @@ import (
 )
 
 func TestWorkerPluginCloseUsesPluginAuthorityAndConfirmsNativeExit(t *testing.T) {
+	t.Parallel()
 	bin := buildMockAgent(t)
 	s := startNode(t, ServerConfig{Name: "worker", Token: "plugin", StateDir: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: bin}}, SessionAuthorizer: CoordinatorSessionAuthorizer{}, PluginAuthorizer: CoordinatorPluginAuthorizer{}})
 	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: s.Addr(), Token: "plugin"}})

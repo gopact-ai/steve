@@ -99,8 +99,11 @@ func (t *actualMachineTransport) NodeSession(ctx context.Context, _ string, req 
 }
 
 func TestRecoveryMachineProofAcrossHubRefusalAndNodeRestart(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"hub-refused-close-proof", "node-restart-before-close"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, p, original, ws := sharedCopy(t)
 			spec := recoveryCopySpec(t, c, p, ws, "actual-native-copy")
 			writer, err := c.attempts.Open(t.Context(), spec)
@@ -275,8 +278,11 @@ func TestRecoveryMachineProofAcrossHubRefusalAndNodeRestart(t *testing.T) {
 }
 
 func TestRecoveryProvenLostOpenConvergesItsExactNativeRetirement(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"lost-reply", "retirement-before-proof", "refused-proof", "cancelled-open"} {
 		t.Run(mode, func(t *testing.T) {
+			// Each case builds its own fixture.
+			t.Parallel()
 			c, tasks := taskCoordinator(t, &fakeRunner{reply: "unused"}, withOwner("owner"))
 			p := project.Project{ID: "lost-open", Home: project.Home{Node: "node", Path: t.TempDir()}}
 			if err := c.projects.Declare(t.Context(), []project.Project{p}); err != nil {

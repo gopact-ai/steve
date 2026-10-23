@@ -10,6 +10,7 @@ import (
 )
 
 func TestTaskExecutionNodeSurvivesCoordinatorChangeAndReload(t *testing.T) {
+	t.Parallel()
 	for _, selectedNode := range []string{"worker", ""} {
 		t.Run("execution="+selectedNode, func(t *testing.T) {
 			book, err := ledger.Open(t.TempDir(), ledger.Options{})

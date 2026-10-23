@@ -42,7 +42,8 @@ func (m memberRestarts) discover(ctx context.Context, node, by string, state coo
 	sort.Strings(ids)
 	// Leave time for the caller to retain an explicit incomplete outcome. The
 	// persisted phase clock, not this per-pass deadline, bounds repeated probes.
-	deadline := time.Now().Add(19 * time.Second)
+	passBudget, probeTimeout := m.discovery.budgets()
+	deadline := time.Now().Add(passBudget)
 	if caller, ok := ctx.Deadline(); ok && caller.Before(deadline.Add(time.Second)) {
 		deadline = caller.Add(-time.Second)
 	}
@@ -58,7 +59,7 @@ func (m memberRestarts) discover(ctx context.Context, node, by string, state coo
 		id := m.discovery.next(ids, tried)
 		query := restartQuery(node, "", "", "", by, authority)
 		var response memberRestartResponse
-		probe, cancel := context.WithTimeout(probeBudget, 3*time.Second)
+		probe, cancel := context.WithTimeout(probeBudget, probeTimeout)
 		err := m.peer.peerJSON(probe, state.Members[id], http.MethodGet, clusterMemberRestartPath+"?"+query.Encode(), nil, &response)
 		cancel()
 		if err != nil {
