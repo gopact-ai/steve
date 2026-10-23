@@ -21,6 +21,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: false
       - name: Plan shard
         run: |
           scripts/ci/shard.py go-plan "$SHARDS" "${{ matrix.shard }}" > "$RUNNER_TEMP/packages.txt"
@@ -40,6 +41,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: false
       - name: gofmt
         run: test -z "$(git ls-files -z '*.go' | xargs -0 gofmt -l)"
       - run: go vet ./cmd/... ./internal/... ./e2e/...
