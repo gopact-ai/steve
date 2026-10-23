@@ -15,7 +15,6 @@ import (
 )
 
 func TestPeerPluginAuthorizationRequiresCurrentWriterAndExactDeclaration(t *testing.T) {
-	t.Parallel()
 	options, installed := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	options.Activate = testPeerApplication(t, new(atomic.Int32))
 	peer := StartTestPeer(t, options)

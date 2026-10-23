@@ -187,7 +187,6 @@ func TestAbandonmentDeliveryIsRetriedAfterSessionProjectionCommitted(t *testing.
 
 // A refusal of the final reply must not leave a terminal input in memory.
 func TestAbandonmentFinalReplyFailureRollsBackBeforePublishing(t *testing.T) {
-	t.Parallel()
 	s, book, d, r := durableAbandonFixture(t)
 	life, cancel := context.WithCancel(t.Context())
 	defer cancel()

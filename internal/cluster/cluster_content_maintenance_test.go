@@ -93,7 +93,6 @@ func contentMaintenanceHTTP(t *testing.T, peer, target *Peer, active Activation,
 }
 
 func TestContentMaintenanceRejectsCallerDeleteListsAndStaleWriter(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	if status := contentMaintenanceHTTP(t, peers[0], peers[1], active, `{"delete":["caller-selected-object"]}`, active.WriterGeneration); status != http.StatusBadRequest {
 		t.Fatalf("caller-supplied deletion list accepted: HTTP %d", status)
@@ -107,7 +106,6 @@ func TestContentMaintenanceRejectsCallerDeleteListsAndStaleWriter(t *testing.T) 
 }
 
 func TestContentMaintenanceAppliesOwnerAbortWithoutCollectingUnknownReceipts(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	state, err := peers[0].contentState(t.Context(), "workspace")
 	if err != nil {
@@ -200,7 +198,6 @@ func TestContentMaintenanceAppliesOwnerAbortWithoutCollectingUnknownReceipts(t *
 }
 
 func TestContentMaintenanceCompactsSuccessfulOwnerReplacementCycles(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	replication, err := peers[0].ContentReplicator(active)
 	if err != nil {
@@ -301,7 +298,6 @@ func TestContentMaintenanceRefusalReachesTheCoordinatorInTime(t *testing.T) {
 // once this replica holds everything committed when it looks, and the
 // ledger write that releases superseded receipts is fenced by its own read.
 func TestContentMaintenanceRoundReadsTheCommittedStateOnceForItsChecks(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	worker, err := peers[0].newContentRepair(active, nil)
 	if err != nil {
@@ -321,7 +317,6 @@ func TestContentMaintenanceRoundReadsTheCommittedStateOnceForItsChecks(t *testin
 // has its generation writing. Once the generation has ended, it collects
 // nothing here, though the round's first read still had it writing.
 func TestContentMaintenanceCollectsHereOnlyWhileItsOwnReadHasTheGenerationWriting(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	owner, err := material.Open(t.TempDir(), active.Ledger)
 	if err != nil {

@@ -65,7 +65,6 @@ func awaitPeerExchangeQuestion(t *testing.T, peer *cluster.Peer, conversation, a
 }
 
 func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *testing.T) {
-	t.Parallel()
 	dir := ClusterPeerTestDir(t)
 	bin := filepath.Join(dir, "mockagent")
 	build := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
@@ -302,7 +301,6 @@ func shortenRecoveryQuiet(t *testing.T, path string) {
 }
 
 func TestSourceNodeLossUsesPlanScopedApprovalAndContinuesInIsolatedWorkspace(t *testing.T) {
-	t.Parallel()
 	dir := ClusterPeerTestDir(t)
 	bin := filepath.Join(dir, "mockagent")
 	if out, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {

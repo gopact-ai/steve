@@ -233,7 +233,6 @@ func (f *stopRegistryFixture) requireResolved(t *testing.T) {
 }
 
 func TestApplicationStopRegistryConvergesOnlyAfterDurableSettlement(t *testing.T) {
-	t.Parallel()
 	bin := filepath.Join(t.TempDir(), "mockagent")
 	if output, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
 		t.Fatalf("build isolated ACP peer: %v %s", err, output)

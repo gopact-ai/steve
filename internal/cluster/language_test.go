@@ -213,7 +213,6 @@ func TestContentRepairSpeaksTheHubsLanguageOnce(t *testing.T) {
 // language, so a check it fails reads as one sentence in the language of
 // whoever is enrolling the machine.
 func TestANodeAnswersAnotherInTheLanguageOfWhoeverAsked(t *testing.T) {
-	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var starts atomic.Int32
 	options.Activate = testPeerApplication(t, &starts)

@@ -27,7 +27,6 @@ func (d *abandonmentLookupGate) RetainedChatsFor(ctx context.Context, conversati
 }
 
 func TestLateRecoveryCannotReopenADeliveredAbandonment(t *testing.T) {
-	t.Parallel()
 	for _, duringLookup := range []bool{false, true} {
 		t.Run(map[bool]string{false: "after delivery", true: "lookup in flight"}[duringLookup], func(t *testing.T) {
 			s, _, _, r := durableAbandonFixture(t)

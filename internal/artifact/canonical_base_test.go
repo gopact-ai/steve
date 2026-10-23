@@ -225,7 +225,6 @@ func TestIsolatedBaseLeavesTheLandingDriversLockAlone(t *testing.T) {
 // it writes the canonical workspace path by path, what is on disk is half
 // of it, and the name is the landing's to move.
 func TestBaseUnderALentLockWaitsForTheLandingOnIt(t *testing.T) {
-	t.Parallel()
 	store, p, node, _, result := commitFixture(t)
 	lender, err := store.acquireCanonical(t.Context(), p, "att-parent")
 	if err != nil {

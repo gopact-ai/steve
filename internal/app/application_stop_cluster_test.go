@@ -35,7 +35,6 @@ func (c interruptedStopConnection) NodeSession(ctx context.Context, node string,
 }
 
 func TestClusterCoordinatorCompletesStopPersistedByPreviousGeneration(t *testing.T) {
-	t.Parallel()
 	dir := ClusterPeerTestDir(t)
 	bin := filepath.Join(dir, "mockagent")
 	if out, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {

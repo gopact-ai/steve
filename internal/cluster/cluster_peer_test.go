@@ -212,7 +212,6 @@ func PeerRequest(t *testing.T, peer *Peer, method, path string, body any) (int, 
 // committed state through the leader once: the read that finds this node
 // coordinating is the one that confirms its business generation.
 func TestClusterPeerAnswersFromItsOwnApplicationOnOneRead(t *testing.T) {
-	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var activations atomic.Int32
 	options.Activate = testPeerApplication(t, &activations)
@@ -236,7 +235,6 @@ func TestClusterPeerAnswersFromItsOwnApplicationOnOneRead(t *testing.T) {
 // once: the member's read, which finds the coordinator, travels with the
 // request and confirms the coordinator's business generation.
 func TestClusterPeerForwardsAConsoleRequestWithItsRead(t *testing.T) {
-	t.Parallel()
 	hub := startTestHub(t)
 	member := joinNonvoter(t, hub, nil)
 	WaitPeerReady(t, hub)
@@ -265,7 +263,6 @@ func TestClusterPeerForwardsAConsoleRequestWithItsRead(t *testing.T) {
 // the coordinator answering its own console reads for itself, and neither
 // hands the header on to the application.
 func TestClusterPeerTakesNoCoordinatorReadFromTheConsole(t *testing.T) {
-	t.Parallel()
 	hub := startTestHub(t)
 	member := joinNonvoter(t, hub, nil)
 	active := WaitPeerReady(t, hub)
@@ -303,7 +300,6 @@ func TestClusterPeerTakesNoCoordinatorReadFromTheConsole(t *testing.T) {
 // aside for a read of its own, and one this replica does not reach in time
 // is not answered.
 func TestClusterPeerJudgesTheReadAForwardedRequestCarries(t *testing.T) {
-	t.Parallel()
 	hub := startTestHub(t)
 	member := joinNonvoter(t, hub, nil)
 	active := WaitPeerReady(t, hub)
@@ -358,7 +354,6 @@ func TestClusterPeerJudgesTheReadAForwardedRequestCarries(t *testing.T) {
 // its own, and a read the generation has no part in replaces nothing. Either
 // way this replica applies what the read saw before the request is served.
 func TestRuntimeReadyAtConfirmsOnlyTheGenerationItsReadNames(t *testing.T) {
-	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var activations atomic.Int32
 	options.Activate = testPeerApplication(t, &activations)
@@ -395,7 +390,6 @@ func TestRuntimeReadyAtConfirmsOnlyTheGenerationItsReadNames(t *testing.T) {
 }
 
 func TestClusterPeerDesktopStartsWithStableOriginAndPersistentWorker(t *testing.T) {
-	t.Parallel()
 	options, installed := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var activations atomic.Int32
 	options.Activate = testPeerApplication(t, &activations)
@@ -434,7 +428,6 @@ func TestClusterPeerDesktopStartsWithStableOriginAndPersistentWorker(t *testing.
 }
 
 func TestClusterPeerThreeMembersTransferAndProxyThroughOriginalGateway(t *testing.T) {
-	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var firstActivations, secondActivations, thirdActivations atomic.Int32
 	options.Activate = testPeerApplication(t, &firstActivations)
@@ -521,7 +514,6 @@ func TestClusterPeerThreeMembersTransferAndProxyThroughOriginalGateway(t *testin
 }
 
 func TestClusterPeerRestartCanVoteWithMemberAddedAfterItsSnapshot(t *testing.T) {
-	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var starts atomic.Int32
 	options.Activate = testPeerApplication(t, &starts)

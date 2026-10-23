@@ -190,7 +190,6 @@ func TestAbandonmentDeliveryKeepsTheOriginalInputAndDoesNotReappearAfterDeletion
 }
 
 func TestRestoredAbandonmentIntentDoesNotUseUncommittedTerminalMemory(t *testing.T) {
-	t.Parallel()
 	s, book, _, r := durableAbandonFixture(t)
 	life, stop := context.WithTimeout(t.Context(), 3*time.Second)
 	defer stop()

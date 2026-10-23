@@ -71,7 +71,6 @@ func contentPeers(t *testing.T) ([]*Peer, Activation) {
 }
 
 func TestContentPeerCopiesSurviveOriginalCoordinatorLoss(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
@@ -140,7 +139,6 @@ func TestContentPeerRejectsUnclassifiedAndForgedScope(t *testing.T) {
 }
 
 func TestContentReceiverDoesNotTreatCoordinatorRoleAsDataPermission(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
@@ -192,7 +190,6 @@ func TestContentReceiverDoesNotTreatCoordinatorRoleAsDataPermission(t *testing.T
 }
 
 func TestContentClientCannotBorrowAuthorityFromReplacementGeneration(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	client, err := peers[0].ContentReplicator(active)
 	if err != nil {

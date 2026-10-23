@@ -57,7 +57,6 @@ func (c *applicationStopConnection) AttachRetainedSession(ctx context.Context, p
 }
 
 func TestApplicationStopsRecoverDurableRevocationWithoutReplayingNativeInput(t *testing.T) {
-	t.Parallel()
 	bin := filepath.Join(t.TempDir(), "mockagent")
 	if output, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
 		t.Fatalf("build isolated test agent: %v %s", err, output)

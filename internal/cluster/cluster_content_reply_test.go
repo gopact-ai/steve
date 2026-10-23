@@ -125,7 +125,6 @@ func TestContentPeerAnswersWithinABoundWhenItsReplicaLags(t *testing.T) {
 // whether asking again can help: 403 for a caller or a placement the
 // committed state does not admit, 503 for a check that could not be made.
 func TestContentPeerRefusesInJSONWithACodeAndAStatusThatSaysWhetherToRetry(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	receiver := peers[1]
 	object := workspaceObject(peers, []byte("content a peer refuses"))
@@ -272,7 +271,6 @@ func TestContentPeersThatCouldNotCheckAreAllNamed(t *testing.T) {
 // temporary unavailability back, not a placement refusal: the copy it did
 // not get does not say the peer may not hold it.
 func TestContentHubTakesALaggingReceiverAsUnavailable(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	behind(peers[1])
 	data := []byte("content for a lagging receiver")
@@ -327,7 +325,6 @@ func TestContentPeerLogsWhyItRefusedOncePerCallerAndCode(t *testing.T) {
 // round: it neither declares the placement blocked nor counts the copies it
 // could not check as lost, and it copies nothing.
 func TestContentRepairWaitsOutAPlacementItCouldNotCheck(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
@@ -421,7 +418,6 @@ func removeLocalCopy(t *testing.T, peer *Peer, manifest contentreplica.Manifest)
 // the content unavailable or short of copies nor asks the next peer, which
 // would answer the same.
 func TestContentRepairStopsWhenAPeerSaysItsGenerationHasEnded(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
@@ -481,7 +477,6 @@ func TestContentRepairStopsWhenAPeerSaysItsGenerationHasEnded(t *testing.T) {
 // project declaration catching up with it, a peer cannot check a placement
 // yet: it says so with a 503, not a 403 that refuses the placement.
 func TestContentPeerDoesNotRefuseAPlacementWhileTheProjectDeclarationCatchesUp(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	settings := platformconfig.New(active.Ledger)
 	declaration, ok, err := settings.Load()
@@ -532,7 +527,6 @@ func TestContentCatchUpTellsALaggingReplicaFromOneThatCannotWait(t *testing.T) {
 // the committed state says so: the notice names that peer, not this node,
 // whose own replica is current.
 func TestContentRepairPointsAtThePeerWhoseReplicaLags(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
@@ -634,7 +628,6 @@ func TestContentRefusalPutsAnUncheckedPlacementBeforeARefusedOne(t *testing.T) {
 // are behind the committed state says so: the notice names those peers,
 // not this node, whose own replica is current.
 func TestContentRepairPointsAtThePeersWhoseReplicasLagWhenItStoresACopy(t *testing.T) {
-	t.Parallel()
 	peers, active := contentPeers(t)
 	client, err := peers[0].ContentReplicator(active)
 	if err != nil {

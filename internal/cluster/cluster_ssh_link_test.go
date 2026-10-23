@@ -87,7 +87,6 @@ func TestVerifyRegistrationNamesTheRealErrorAndStopsOnlyOnStall(t *testing.T) {
 }
 
 func TestVerifyRegistrationKeepsWaitingWhilePhasesAdvance(t *testing.T) {
-	t.Parallel()
 	b, fixture, _, _ := peerSSHFixture(t)
 	b.stallLimit = 1200 * time.Millisecond
 	phases := []string{"awaiting_peer", "synchronizing", "joined", "ready"}

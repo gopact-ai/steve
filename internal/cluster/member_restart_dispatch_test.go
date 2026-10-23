@@ -62,7 +62,6 @@ func (c restartWireConnection) Upload(ctx context.Context, _ string, input io.Re
 func (c restartWireConnection) Close() error { return nil }
 
 func TestMemberRestartDispatchUsesHolderAndNeverReplaysAfterLostMemory(t *testing.T) {
-	t.Parallel()
 	hub := startTestHub(t)
 	holder := joinNonvoter(t, hub, nil)
 	target := joinNonvoter(t, hub, nil)

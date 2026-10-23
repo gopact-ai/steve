@@ -292,7 +292,6 @@ func consoleReceipt(t *testing.T, book *ledger.Ledger, node, missing string, fai
 }
 
 func TestPeerNodeReceiptAuthorityRequiresExactActivationAndOriginalProof(t *testing.T) {
-	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	options.Activate = testPeerApplication(t, new(atomic.Int32))
 	peer := StartTestPeer(t, options)

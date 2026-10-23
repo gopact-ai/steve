@@ -17,7 +17,6 @@ import (
 // view and every /state node row show the new display name against the
 // unchanged node ID, and a follower sees the same name.
 func TestClusterPeerRenameChangesDisplayNameNotIdentity(t *testing.T) {
-	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	first := StartTestPeer(t, options)
 	WaitPeerReady(t, first)

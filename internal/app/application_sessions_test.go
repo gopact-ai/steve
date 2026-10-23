@@ -40,7 +40,6 @@ func TestCommittedSessionCleanupUsesNativeIdentityWithoutWorkdir(t *testing.T) {
 }
 
 func TestExecutorSessionAuthorityUsesCommittedExecutionAndActiveCoordinator(t *testing.T) {
-	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	activated := make(chan cluster.Activation, 1)
 	var count atomic.Int32

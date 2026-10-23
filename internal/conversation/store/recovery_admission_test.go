@@ -118,7 +118,6 @@ func TestRecoveryNeverAdmittedFinishesWithoutReplayAndSurvivesRestart(t *testing
 }
 
 func TestRecoveryNeverAdmittedCanCancelThroughControlOrQuestion(t *testing.T) {
-	t.Parallel()
 	for _, question := range []bool{false, true} {
 		t.Run(map[bool]string{false: "control", true: "question"}[question], func(t *testing.T) {
 			s, book, h := admissionRecoveryFixture(t)

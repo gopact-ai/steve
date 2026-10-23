@@ -11,7 +11,6 @@ import (
 )
 
 func TestReplicaReceiptCheckpointSurvivesRaftRestartAndFurtherWrites(t *testing.T) {
-	t.Parallel()
 	config := raft.DefaultConfig()
 	config.HeartbeatTimeout = 150 * time.Millisecond
 	config.ElectionTimeout = 150 * time.Millisecond

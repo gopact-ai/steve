@@ -256,7 +256,6 @@ func TestTaskResumeStableControlIsIdempotentBeforeAndAfterConsumption(t *testing
 }
 
 func TestTaskResumeDormantGrantSurvivesActualSQLiteReopen(t *testing.T) {
-	t.Parallel()
 	for _, authorize := range []bool{false, true} {
 		t.Run(map[bool]string{false: "CAS-refused", true: "granted-before-wake"}[authorize], func(t *testing.T) {
 			dir, bin := t.TempDir(), resumeAgent(t)

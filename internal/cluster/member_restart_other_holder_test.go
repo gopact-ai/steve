@@ -154,7 +154,6 @@ func TestForceRestartJoinsWorkOnAnotherLinkHolder(t *testing.T) {
 }
 
 func TestMemberRestartRechecksUniqueOwnershipAfterPreflight(t *testing.T) {
-	t.Parallel()
 	control, target, holders := discoveryHolders(t)
 	hub := control.(memberRestarts).peer
 	active := WaitPeerReady(t, hub)

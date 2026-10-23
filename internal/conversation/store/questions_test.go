@@ -29,7 +29,6 @@ func pendingForTest(t *testing.T, s *Service) consoleapi.PendingQuestion {
 }
 
 func TestQuestionTextAnswerResumesOriginalRequestAndSurvivesRestart(t *testing.T) {
-	t.Parallel()
 	for _, withOptions := range []bool{false, true} {
 		t.Run(map[bool]string{false: "text", true: "text-or-choice"}[withOptions], func(t *testing.T) {
 			dir := t.TempDir()

@@ -19,7 +19,6 @@ import (
 // never happened, so the peer has to stop and let the process continue as the
 // named program.
 func TestUpgradeRestartStopsThePeerToRunTheInstalledProgram(t *testing.T) {
-	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	peer := StartTestPeer(t, options)
 	WaitPeerReady(t, peer)
@@ -55,7 +54,6 @@ func TestUpgradeRestartStopsThePeerToRunTheInstalledProgram(t *testing.T) {
 // A program the service could not become is refused while the launcher is
 // still listening, rather than after the service has already stopped.
 func TestUpgradeRestartRefusesAProgramItCannotRun(t *testing.T) {
-	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	peer := StartTestPeer(t, options)
 	WaitPeerReady(t, peer)
