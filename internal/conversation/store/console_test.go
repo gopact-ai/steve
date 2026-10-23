@@ -273,6 +273,7 @@ func TestConsoleTurnOutlivesTheRequest(t *testing.T) {
 }
 
 func TestConsoleResumesATaskAheadOfWhatWaits(t *testing.T) {
+	t.Parallel()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)

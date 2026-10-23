@@ -21,6 +21,7 @@ import (
 // it dials, and the hub's own checks of the node's independent connection
 // pass the same way.
 func TestANodeJoinsThroughItsRouteWhenTheHubAdvertisesAnAddressItCannotReach(t *testing.T) {
+	t.Parallel()
 	hubOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	hubConfig, err := LoadClusterPeerConfig(hubOptions.ClusterPath)
 	if err != nil {
@@ -86,6 +87,7 @@ func TestANodeJoinsThroughItsRouteWhenTheHubAdvertisesAnAddressItCannotReach(t *
 // own. Everything the hub does to that node, from status checks to the
 // worker tunnel it opens to run tasks there, has to follow the route.
 func TestTheHubReachesANodeThroughItsRouteWhenTheNodeAdvertisesAnAddressItCannotReach(t *testing.T) {
+	t.Parallel()
 	var activations atomic.Int32
 	hubOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	hubOptions.Activate = testPeerApplication(t, &activations)

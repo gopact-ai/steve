@@ -11,7 +11,21 @@ import (
 )
 
 func TestConsoleUnchangedRepresentationsDoNotRewriteRetainedReceipts(t *testing.T) {
-	s, book := consoleRecordFixture(t, 10000)
+	var costs [2]consoleWriteCost
+	for i, history := range consoleBoundHistories {
+		costs[i] = consoleTitleWriteOverRetainedReceipts(t, history)
+	}
+	if !costs[1].sameAs(costs[0]) {
+		t.Fatalf("title-only write grew with retained receipts: history=%d %+v, history=%d %+v", consoleBoundHistories[0], costs[0], consoleBoundHistories[1], costs[1])
+	}
+}
+
+// consoleTitleWriteOverRetainedReceipts retains history receipts whose
+// injected options are an explicitly empty map, changes only the title and
+// returns what that write updated.
+func consoleTitleWriteOverRetainedReceipts(t *testing.T, history int) consoleWriteCost {
+	t.Helper()
+	s, book := consoleRecordFixture(t, history)
 	// This is a real producer path: a harness with no selectors can provide
 	// an explicitly empty options map. Its JSON omits the field.
 	sample := s.resultReply(t.Context(), Exchange{Conversation: "console:records"}, newProcess(), turn.Result{
@@ -41,10 +55,11 @@ func TestConsoleUnchangedRepresentationsDoNotRewriteRetainedReceipts(t *testing.
 	if err := book.DB().QueryRow(`SELECT count(*),coalesce(sum(bytes),0) FROM copy_write_audit`).Scan(&rows, &payload); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("10k receipts with empty options; title-only: rows=%d payload=%d", rows, payload)
+	t.Logf("%d receipts with empty options; title-only: rows=%d payload=%d", history, rows, payload)
 	if rows != 2 || payload > 4096 {
-		t.Fatalf("unchanged receipts serialized again: rows=%d payload=%d", rows, payload)
+		t.Fatalf("unchanged receipts serialized again: history=%d rows=%d payload=%d", history, rows, payload)
 	}
+	return consoleWriteCost{rows, payload}
 }
 
 func TestConsoleComparisonImagePreservesTypedValuesWithoutAliases(t *testing.T) {

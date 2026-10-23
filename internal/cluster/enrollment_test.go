@@ -132,6 +132,7 @@ func TestPeerEnrollmentTakesADisplayNameAndAWorkspaceForTheMachine(t *testing.T)
 // owner who reads the refusal, on that machine. It is still the owner's
 // input that is refused, not the machine failing.
 func TestPeerImportRefusesAWorkspaceInTheLanguageOfTheNodeItSetsUp(t *testing.T) {
+	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var starts atomic.Int32
 	options.Activate = testPeerApplication(t, &starts)
@@ -170,6 +171,7 @@ func TestPeerImportRefusesAWorkspaceInTheLanguageOfTheNodeItSetsUp(t *testing.T)
 }
 
 func TestAbandonPeerEnrollmentArchivesTheRecordAndRefusesAJoinedNode(t *testing.T) {
+	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var starts atomic.Int32
 	options.Activate = testPeerApplication(t, &starts)
@@ -211,6 +213,7 @@ func TestAbandonPeerEnrollmentArchivesTheRecordAndRefusesAJoinedNode(t *testing.
 }
 
 func TestAbandonPeerEnrollmentRemovesTheMemberAFailedJoinLeftBehind(t *testing.T) {
+	t.Parallel()
 	root := ClusterPeerTestDir(t)
 	options, _ := testPeerOptions(t, filepath.Join(root, "source"), nil)
 	var starts atomic.Int32

@@ -18,6 +18,7 @@ import (
 )
 
 func TestClusterApplicationRestartKeepsGatewayWorkerAndDurableReceipt(t *testing.T) {
+	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	peer := StartTestPeer(t, options)
 	first := WaitPeerReady(t, peer)

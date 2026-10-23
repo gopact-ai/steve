@@ -12,6 +12,7 @@ import (
 )
 
 func TestAbandonmentAckFailureDoesNotAppendTheReplyAgain(t *testing.T) {
+	t.Parallel()
 	for _, restart := range []bool{false, true} {
 		t.Run(map[bool]string{false: "same process", true: "reopen"}[restart], func(t *testing.T) {
 			s, book, d, r := durableAbandonFixture(t)
@@ -51,6 +52,7 @@ func TestAbandonmentAckFailureDoesNotAppendTheReplyAgain(t *testing.T) {
 }
 
 func TestAbandonmentRecordsWhyNoNewReplyIsRequired(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"child", "other channel", "gone", "already terminal"} {
 		t.Run(mode, func(t *testing.T) {
 			kind, conversation := attempt.KindChat, "console:delivery"
@@ -105,6 +107,7 @@ func (r abandonEvidenceReadFailure) QueryRow(query string, args ...any) *ledger.
 	return r.Reader.QueryRow(query, args...)
 }
 func TestAbandonmentAckRequiresCommittedReceiverFacts(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"not committed", "read failure", "missing receiver control", "wrong receipt", "wrong reply", "wrong terminal state", "paired foreign receipt", "stale decision"} {
 		t.Run(mode, func(t *testing.T) {
 			s, book, d, r := durableAbandonFixture(t)
@@ -154,6 +157,7 @@ func TestAbandonmentAckRequiresCommittedReceiverFacts(t *testing.T) {
 }
 
 func TestAbandonmentDeliveryKeepsTheOriginalInputAndDoesNotReappearAfterDeletion(t *testing.T) {
+	t.Parallel()
 	s, _, d, r := durableAbandonFixture(t)
 	s.mu.Lock()
 	later := &queuedExchange{Exchange: Exchange{ID: "later", Conversation: "console:delivery", State: consoleapi.ExchangeAwaitingUser, Input: "later task"}, done: make(chan struct{})}
@@ -186,6 +190,7 @@ func TestAbandonmentDeliveryKeepsTheOriginalInputAndDoesNotReappearAfterDeletion
 }
 
 func TestRestoredAbandonmentIntentDoesNotUseUncommittedTerminalMemory(t *testing.T) {
+	t.Parallel()
 	s, book, _, r := durableAbandonFixture(t)
 	life, stop := context.WithTimeout(t.Context(), 3*time.Second)
 	defer stop()
@@ -234,6 +239,7 @@ func TestAbandonmentReceiverErrorIsNotGone(t *testing.T) {
 // Terminal keyed receipts survive the bounded transcript's normal pruning.
 // Replaying only the acknowledgement must not put pruned history back.
 func TestAbandonmentAcknowledgesItsReceiptAfterTranscriptPruning(t *testing.T) {
+	t.Parallel()
 	s, book, d, r := durableAbandonFixture(t)
 	abandonDeliverySQL(t, book, `CREATE TRIGGER refuse_pruned_abandon_ack BEFORE UPDATE ON operations WHEN NEW.id='abandon-delivery' AND json_extract(NEW.data,'$.abandoned.delivery_done_at') IS NOT NULL BEGIN SELECT RAISE(ABORT,'ack refused'); END`)
 	out, err := s.Abandon(t.Context(), r.ID, 1)

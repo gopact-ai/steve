@@ -12,6 +12,7 @@ import (
 )
 
 func TestFailedAbandonmentReplyDoesNotReleaseTheQueuedInput(t *testing.T) {
+	t.Parallel()
 	s, book, _, r := durableAbandonFixture(t)
 	h := &queueHandler{started: make(chan *queueCall, 2)}
 	s.coordinator = h
@@ -84,6 +85,7 @@ func TestFailedAbandonmentReplyDoesNotReleaseTheQueuedInput(t *testing.T) {
 }
 
 func TestAbandonmentDeliveryAcknowledgementOutlivesTaskAndConversationDeletion(t *testing.T) {
+	t.Parallel()
 	s, _, d, r := durableAbandonFixture(t)
 	out, err := s.Abandon(t.Context(), r.ID, 1)
 	if err != nil || out.Pending {

@@ -17,6 +17,7 @@ import (
 )
 
 func TestSharedSettingsAndChannelConfigSurviveRealCoordinatorTransfer(t *testing.T) {
+	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	first := StartTestPeer(t, options)
 	WaitPeerReady(t, first)

@@ -16,6 +16,7 @@ import (
 )
 
 func TestMemberRestartDiscoveryPrefersTheCoordinatorLink(t *testing.T) {
+	t.Parallel()
 	hub := startTestHub(t)
 	member := joinNonvoter(t, hub, nil)
 	active := WaitPeerReady(t, hub)
@@ -47,6 +48,7 @@ func TestMemberRestartDiscoveryPrefersTheCoordinatorLink(t *testing.T) {
 }
 
 func TestMemberRestartRouteRefusesARegularMember(t *testing.T) {
+	t.Parallel()
 	hub := startTestHub(t)
 	member := joinNonvoter(t, hub, nil)
 	active := WaitPeerReady(t, hub)
@@ -70,6 +72,7 @@ func TestMemberRestartWithoutPeerIdentityIsForbidden(t *testing.T) {
 }
 
 func TestMemberRestartDiscoveryUsesAnotherLinkHolder(t *testing.T) {
+	t.Parallel()
 	hub := startTestHub(t)
 	holder := joinNonvoter(t, hub, nil)
 	target := joinNonvoter(t, hub, nil)
@@ -98,6 +101,7 @@ func TestMemberRestartDiscoveryUsesAnotherLinkHolder(t *testing.T) {
 }
 
 func TestMemberRestartClaimsFenceAuthorityAndOwnerChanges(t *testing.T) {
+	t.Parallel()
 	hub := startTestHub(t)
 	holder := joinNonvoter(t, hub, nil)
 	target := joinNonvoter(t, hub, nil)

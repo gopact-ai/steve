@@ -89,6 +89,7 @@ func rewindRetirementService(t *testing.T) (*Service, *rewindRetirementRuntime, 
 }
 
 func TestRewindThroughRealCoordinatorPreservesTranscriptAfterCloseFailure(t *testing.T) {
+	t.Parallel()
 	s, runtime, store := rewindRetirementService(t)
 	for _, line := range []string{"first user line", "second user line"} {
 		if _, err := s.Send(t.Context(), "main", line); err != nil {
@@ -123,6 +124,7 @@ func TestRewindThroughRealCoordinatorPreservesTranscriptAfterCloseFailure(t *tes
 }
 
 func TestRewindThroughRealCoordinatorKeepsUndispatchedCloseAuthority(t *testing.T) {
+	t.Parallel()
 	s, runtime, store := rewindRetirementService(t)
 	if _, err := s.Send(t.Context(), "main", "first user line"); err != nil {
 		t.Fatal(err)

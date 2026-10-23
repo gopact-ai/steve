@@ -54,6 +54,7 @@ func assertPeerUsage(t *testing.T, peer *cluster.Peer) {
 }
 
 func TestClusterPeerActualApplicationActivates(t *testing.T) {
+	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	peer := StartTestPeer(t, options)
 	WaitPeerReady(t, peer)
@@ -68,6 +69,7 @@ func TestClusterPeerActualApplicationActivates(t *testing.T) {
 }
 
 func TestClusterPeerActualApplicationsRebuildAcrossThreePeerTransfer(t *testing.T) {
+	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var firstStarts, secondStarts atomic.Int32
 	options.ApplicationReady = func(*adminsvc.Service, cluster.ApplicationServer, cluster.Activation) error {
@@ -220,6 +222,7 @@ func TestClusterPeerDesktopEnrollmentKeepsTheNameTheOwnerChose(t *testing.T) {
 // with the reason readable, and it starts once the cause is gone, without
 // the peer stopping.
 func TestClusterPeerKeepsItsReplicaWhileItsApplicationCannotBeBuilt(t *testing.T) {
+	t.Parallel()
 	taken, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

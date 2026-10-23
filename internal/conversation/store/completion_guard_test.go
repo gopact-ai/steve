@@ -75,6 +75,7 @@ var completionGuardCases = []completionGuardCase{
 }
 
 func TestCompletionGuardReadsTranscriptInCallerTransaction(t *testing.T) {
+	t.Parallel()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -114,6 +115,8 @@ func TestCompletionGuardReadsTranscriptInCallerTransaction(t *testing.T) {
 func TestCompletionReadChecksWhatTheTransactionSees(t *testing.T) {
 	for _, tc := range completionGuardCases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Each case opens its own ledgers; the case table is read-only.
+			t.Parallel()
 			for _, readFirst := range []bool{false, true} {
 				book, err := ledger.Open(t.TempDir(), ledger.Options{})
 				if err != nil {
@@ -170,6 +173,8 @@ func TestCompletionReadRejectsUnreadableRecords(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Each case opens its own ledgers.
+			t.Parallel()
 			for _, readFirst := range []bool{false, true} {
 				book, err := ledger.Open(t.TempDir(), ledger.Options{})
 				if err != nil {
@@ -261,6 +266,7 @@ func TestCompletionGuardFindsWhatTheTaskHoldsFirst(t *testing.T) {
 }
 
 func TestCompletionGuardRejectsUnreadableRecords(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{`{`, `[]`, `null`, `{"revision":0}`} {
 		t.Run(raw, func(t *testing.T) {
 			book, err := ledger.Open(t.TempDir(), ledger.Options{})
@@ -308,6 +314,7 @@ func TestCompletionGuardAllowsMissingOrEmptyRecords(t *testing.T) {
 // not set aside, and any question someone still has to answer, hold the
 // end as before.
 func TestCompletionGuardIgnoresStopWaitExchange(t *testing.T) {
+	t.Parallel()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)

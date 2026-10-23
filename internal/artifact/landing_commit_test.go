@@ -114,6 +114,7 @@ func unreadableCanonical(t *testing.T, store *Store) (breakIt, repair func()) {
 // name is not moved back over whatever it points at, and recovery commits
 // it against a fresh snapshot.
 func TestLandingWhoseCanonicalNameMovedIsLeftForRecovery(t *testing.T) {
+	t.Parallel()
 	store, p, node, canonical, result := commitFixture(t)
 	node.before = onFirst(ops.Apply, displaceCanonical(t, store, result))
 
@@ -143,6 +144,7 @@ func TestLandingWhoseCanonicalNameMovedIsLeftForRecovery(t *testing.T) {
 // commit has not conflicted with anyone. It waits for recovery, saying
 // why, which commits it once the name reads again.
 func TestLandingThatCannotReadTheCanonicalNameIsLeftForRecovery(t *testing.T) {
+	t.Parallel()
 	store, p, node, canonical, result := commitFixture(t)
 	breakIt, repair := unreadableCanonical(t, store)
 	node.before = onFirst(ops.Apply, breakIt)
@@ -171,6 +173,7 @@ func TestLandingThatCannotReadTheCanonicalNameIsLeftForRecovery(t *testing.T) {
 // own lock. A canonical name moved away from that snapshot before its
 // commit leaves it recovery-pending, and the next retry commits it.
 func TestRecoveryWhoseCanonicalNameMovedStaysPending(t *testing.T) {
+	t.Parallel()
 	store, p, node, canonical, result := commitFixture(t)
 	node.fail = ops.Apply
 	node.before = onFirst(ops.WritePath, displaceCanonical(t, store, result))
@@ -196,6 +199,7 @@ func TestRecoveryWhoseCanonicalNameMovedStaysPending(t *testing.T) {
 // A recovery that wrote every path but could not read the canonical name
 // at commit stays recovery-pending; the next retry commits it.
 func TestRecoveryThatCannotReadTheCanonicalNameStaysPending(t *testing.T) {
+	t.Parallel()
 	store, p, node, canonical, result := commitFixture(t)
 	node.fail = ops.Apply
 	breakIt, repair := unreadableCanonical(t, store)
@@ -223,6 +227,7 @@ func TestRecoveryThatCannotReadTheCanonicalNameStaysPending(t *testing.T) {
 // A canonical name gone at commit is reported as absent, not as an empty
 // snapshot id.
 func TestLandingCommitSaysACanonicalNameIsAbsent(t *testing.T) {
+	t.Parallel()
 	store, p, node, _, result := commitFixture(t)
 	node.before = onFirst(ops.Apply, func() {
 		if _, err := store.ledger.DB().Exec(`DELETE FROM names WHERE name = ?`, CanonicalRef("p")); err != nil {

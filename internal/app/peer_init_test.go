@@ -80,6 +80,7 @@ func TestPeerInitCommandPreservesExistingServiceConfiguration(t *testing.T) {
 }
 
 func TestServicePeerInitializationDeploysPluginThroughCoordinator(t *testing.T) {
+	t.Parallel()
 	root := ClusterPeerTestDir(t)
 	var out, diagnostic bytes.Buffer
 	if err := runInitClusterCommand([]string{"--state-dir", root}, &out, &diagnostic); err != nil {

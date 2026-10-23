@@ -56,6 +56,7 @@ func TestMemberRestartDiscoveryRefreshesLinkOwnershipAcrossCalls(t *testing.T) {
 }
 
 func TestConcurrentMemberRestartDiscoverySharesProbeReservations(t *testing.T) {
+	t.Parallel()
 	control, _, _ := discoveryHolders(t)
 	one := control.(memberRestarts)
 	two := one

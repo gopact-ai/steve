@@ -20,6 +20,7 @@ func (h *materialQueueHandler) Context(context.Context, string) (turn.Context, e
 }
 
 func TestQueuedMaterialsFreezeSelectionAndSurviveRestart(t *testing.T) {
+	t.Parallel()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)

@@ -18,6 +18,7 @@ import (
 )
 
 func TestServiceBootstrapActivatesWithExistingTaskLedger(t *testing.T) {
+	t.Parallel()
 	root := ClusterPeerTestDir(t)
 	bin := filepath.Join(root, "mockagent")
 	if output, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {

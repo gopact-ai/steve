@@ -39,6 +39,7 @@ func TestUpgradeTargetNamesTheLinkAliasAndRefusesSelf(t *testing.T) {
 // so the next one reaches the restarted process, and running out of time names
 // what the machine last reported.
 func TestAwaitBuildAsksTheMachineUntilItReportsTheBuild(t *testing.T) {
+	t.Parallel()
 	asks := 0
 	ask := func(ctx context.Context) (string, error) {
 		asks++

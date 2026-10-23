@@ -120,6 +120,7 @@ func (f *foreignLock) keepsNextsWork(t *testing.T, land Landing) {
 // holder that has named its snapshot and written since, does not move the
 // name over that holder's writes: it waits for recovery, which keeps both.
 func TestStaleForeignCommitLeavesTheNextHoldersWork(t *testing.T) {
+	t.Parallel()
 	f := newForeignLock(t)
 	p, _, _ := f.store.projects.Get(t.Context(), "p")
 	// Once the landing has written, its next check is its commit's.
@@ -138,6 +139,7 @@ func TestStaleForeignCommitLeavesTheNextHoldersWork(t *testing.T) {
 // and the node goes away half way through settling it, leaving b for the
 // recovery to write.
 func TestStaleForeignRecoveryCommitLeavesTheNextHoldersWork(t *testing.T) {
+	t.Parallel()
 	f := newForeignLock(t)
 	p, _, _ := f.store.projects.Get(t.Context(), "p")
 	f.node.fail = ops.Apply
@@ -161,6 +163,7 @@ func TestStaleForeignRecoveryCommitLeavesTheNextHoldersWork(t *testing.T) {
 // A snapshot under a lock west already took away and gave to the next
 // holder cuts nothing, as under a lock of the hub's own.
 func TestSnapshotUnderAStaleForeignLockCutsNothing(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	f := newForeignLock(t)
 	p, _, _ := f.store.projects.Get(ctx, "p")

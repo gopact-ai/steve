@@ -19,10 +19,12 @@ import (
 )
 
 func TestPlanStepHandoverUsesOriginalQuestionAndExchange(t *testing.T) {
+	t.Parallel()
 	testPlanHandover(t, false)
 }
 
 func TestPlanningCallHandoverPreservesOriginalRequestAndExecutesItsPlan(t *testing.T) {
+	t.Parallel()
 	testPlanHandover(t, true)
 }
 

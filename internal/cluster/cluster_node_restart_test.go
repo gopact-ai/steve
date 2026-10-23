@@ -47,6 +47,7 @@ func TestRestartTargetNamesTheLinkAliasAndRefusesSelf(t *testing.T) {
 // reports is accepted, an ask that hangs is given up on so the next one
 // reaches the new process, and running out of time says it never answered.
 func TestAwaitAnswerAcceptsWhicheverBuildTheMachineRuns(t *testing.T) {
+	t.Parallel()
 	asks := 0
 	ask := func(ctx context.Context) (string, error) {
 		asks++

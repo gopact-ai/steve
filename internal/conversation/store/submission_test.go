@@ -151,6 +151,7 @@ func TestFailedSubmissionDoesNotReserveCommandKey(t *testing.T) {
 }
 
 func TestKeyedReceiptsOutliveTranscriptProjection(t *testing.T) {
+	t.Parallel()
 	h := &echo{}
 	s := New(h, "owner", nil)
 	doc := &memDoc{}

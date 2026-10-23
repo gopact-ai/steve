@@ -45,6 +45,7 @@ func recordRepairManifest(t *testing.T, book *ledger.Ledger, m contentreplica.Ma
 }
 
 func TestContentRepairDoesNotReadOrRetransmitHealthyCopies(t *testing.T) {
+	t.Parallel()
 	peers, active := contentPeers(t)
 	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
@@ -77,6 +78,7 @@ func TestContentRepairDoesNotReadOrRetransmitHealthyCopies(t *testing.T) {
 // A repair round reads the committed state through the leader once, however
 // many objects it looks at.
 func TestContentRepairRoundReadsTheCommittedStateOnce(t *testing.T) {
+	t.Parallel()
 	peers, active := contentPeers(t)
 	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
@@ -108,6 +110,7 @@ func TestContentRepairRoundReadsTheCommittedStateOnce(t *testing.T) {
 }
 
 func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
+	t.Parallel()
 	peers, active := contentPeers(t)
 	source := peers[0]
 	client, err := source.ContentReplicator(active)
@@ -237,6 +240,7 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 }
 
 func TestContentRepairReportsUnavailableAndContinuesIndependentObjects(t *testing.T) {
+	t.Parallel()
 	peers, active := contentPeers(t)
 	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
@@ -314,6 +318,7 @@ func TestContentRepairReportsUnavailableAndContinuesIndependentObjects(t *testin
 }
 
 func TestContentRepairRejectsUnclassifiedScopeWithoutCopying(t *testing.T) {
+	t.Parallel()
 	peers, active := contentPeers(t)
 	data := []byte("unknown scope")
 	ref := checkpoint.Reference(data)
@@ -347,6 +352,7 @@ func TestContentRepairRejectsUnclassifiedScopeWithoutCopying(t *testing.T) {
 }
 
 func TestContentRepairUpgradesSingleMachineManifestAfterJoiningPeers(t *testing.T) {
+	t.Parallel()
 	root := ClusterPeerTestDir(t)
 	options, _ := testPeerOptions(t, filepath.Join(root, "source"), nil)
 	options.Activate = func(context.Context, Activation, func(PeerApplicationEndpoint) error) (Deactivate, error) {
@@ -421,6 +427,7 @@ func (c quotaOnContentRead) Read(context.Context, contentreplica.Manifest, io.Wr
 }
 
 func TestContentRepairLocalFailuresAreVisibleWithoutClaimingRemoteDataLost(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"quota", "staging"} {
 		t.Run(failure, func(t *testing.T) {
 			peers, active := contentPeers(t)

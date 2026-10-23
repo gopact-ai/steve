@@ -24,6 +24,7 @@ func (b *countedDiscoveryBackend) RestartTarget(ctx context.Context, node string
 }
 
 func TestRestartDiscoveryDoesNotStarveALaterHealthyHolder(t *testing.T) {
+	t.Parallel()
 	hub := startTestHub(t)
 	var candidates []*Peer
 	for i := 0; i < 8; i++ {

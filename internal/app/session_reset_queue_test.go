@@ -271,6 +271,7 @@ func (f typedAhead) send(t *testing.T, line string, ahead bool) consoleapi.Excha
 // as it does when the line is sent after it, and the line runs in a new
 // session under a new task, not in the ones the reset ended.
 func TestSessionResetGoesAheadOfALineTypedBehindIt(t *testing.T) {
+	t.Parallel()
 	for name, ahead := range map[string]bool{"sent_after": false, "typed_ahead": true} {
 		t.Run(name, func(t *testing.T) {
 			f := openTypedAhead(t, "/new")

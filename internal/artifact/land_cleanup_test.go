@@ -13,6 +13,7 @@ import (
 )
 
 func TestParentLeaseReleaseBeforeApplyClosesLandingAndAllowsExactResultRetry(t *testing.T) {
+	t.Parallel()
 	for _, cancelled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "lease-released", true: "caller-cancelled"}[cancelled], func(t *testing.T) {
 			canonical := t.TempDir()
@@ -88,6 +89,7 @@ func TestParentLeaseReleaseBeforeApplyClosesLandingAndAllowsExactResultRetry(t *
 }
 
 func TestPreapplyCleanupLeavesApplyingWALForRecovery(t *testing.T) {
+	t.Parallel()
 	canonical := t.TempDir()
 	s, p := newStore(t, &localNode{}, project.Home{Path: canonical})
 	land, _ := crashMidApply(t, s, p, canonical)
@@ -105,6 +107,7 @@ func TestPreapplyCleanupLeavesApplyingWALForRecovery(t *testing.T) {
 }
 
 func TestMergedPreapplyFailureKeepsEvidenceAndAcceptsOnlyDeliveredResult(t *testing.T) {
+	t.Parallel()
 	for _, recovery := range []bool{false, true} {
 		t.Run(map[bool]string{false: "live-cleanup", true: "startup-recovery"}[recovery], func(t *testing.T) {
 			canonical := t.TempDir()

@@ -17,6 +17,7 @@ import (
 // onto: it neither cuts its base from the half-written workspace nor moves
 // the canonical name under the landing, which commits.
 func TestIsolatedBaseWhileALandingAppliesIsWhatItMergedOnto(t *testing.T) {
+	t.Parallel()
 	store, p, node, canonical, result := commitFixture(t)
 	var ws project.Workspace
 	node.before = onFirst(ops.Apply, func() {
@@ -45,6 +46,7 @@ func TestIsolatedBaseWhileALandingAppliesIsWhatItMergedOnto(t *testing.T) {
 // The same holds while a recovery writes the canonical workspace path by
 // path under the lock.
 func TestIsolatedBaseWhileARecoveryWritesIsWhatItWritesOnto(t *testing.T) {
+	t.Parallel()
 	store, p, node, _, result := commitFixture(t)
 	node.fail = ops.Apply
 	var ws project.Workspace
@@ -72,6 +74,7 @@ func TestIsolatedBaseWhileARecoveryWritesIsWhatItWritesOnto(t *testing.T) {
 // and is no base for new work, even with the canonical lock free: the
 // step starts from the canonical name, which the snapshot is not moved to.
 func TestIsolatedBaseIsNotTakenFromAWorkspaceAwaitingRecovery(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
@@ -93,6 +96,7 @@ func TestIsolatedBaseIsNotTakenFromAWorkspaceAwaitingRecovery(t *testing.T) {
 // A canonical name that cannot be read is an error, not an empty parent:
 // an isolated base is never cut as a new root, off the canonical lineage.
 func TestIsolatedBaseFailsWhenTheCanonicalNameCannotBeRead(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "a0")
@@ -125,6 +129,7 @@ func manifestCount(t *testing.T, store *Store) int {
 // A headless writer has not supplied an accepted base. Another caller cannot
 // cut the directory merely because it knows the holder's lease key.
 func TestHeadlessIsolatedBaseWaitsForItsOwnSnapshotLease(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "a0")
@@ -150,6 +155,7 @@ func TestHeadlessIsolatedBaseWaitsForItsOwnSnapshotLease(t *testing.T) {
 }
 
 func TestHeadlessIsolatedBaseRetriesAfterTheHolderNamesItsSnapshot(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	local := &localNode{root: t.TempDir(), state: t.TempDir()}
 	canonical := filepath.Join(local.root, "proj")
@@ -189,6 +195,7 @@ func TestHeadlessIsolatedBaseRetriesAfterTheHolderNamesItsSnapshot(t *testing.T)
 // the cut itself: the driver keeps renewing the canonical lock its landing
 // holds, before, during and after.
 func TestIsolatedBaseLeavesTheLandingDriversLockAlone(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	canonical := t.TempDir()
 	write(t, canonical, "a", "a0")
@@ -218,6 +225,7 @@ func TestIsolatedBaseLeavesTheLandingDriversLockAlone(t *testing.T) {
 // it writes the canonical workspace path by path, what is on disk is half
 // of it, and the name is the landing's to move.
 func TestBaseUnderALentLockWaitsForTheLandingOnIt(t *testing.T) {
+	t.Parallel()
 	store, p, node, _, result := commitFixture(t)
 	lender, err := store.acquireCanonical(t.Context(), p, "att-parent")
 	if err != nil {
@@ -259,6 +267,7 @@ func TestBaseUnderALentLockWaitsForTheLandingOnIt(t *testing.T) {
 // canonical name is at, not the half-written workspace, and the name
 // stays for the recovery to move.
 func TestBaseUnderALentLockIsNotCutFromAWorkspaceAwaitingRecovery(t *testing.T) {
+	t.Parallel()
 	store, p, node, _, result := commitFixture(t)
 	lender, err := store.acquireCanonical(t.Context(), p, "att-parent")
 	if err != nil {
@@ -348,6 +357,7 @@ func TestStuckSnapshotStopsRenewingTheCanonicalLock(t *testing.T) {
 // holder cuts nothing: the workspace is that holder's now, and may be half
 // written, so no snapshot of it is taken or recorded, and the name stays.
 func TestSnapshotUnderAStaleLockCutsNothing(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, node, canonical, _ := commitFixture(t)
 	held, err := store.acquireCanonical(ctx, p, "att-parent")
@@ -383,6 +393,7 @@ func TestSnapshotUnderAStaleLockCutsNothing(t *testing.T) {
 // cuts a snapshot of it, and under a canonical lock that ran out and went
 // to another holder it cuts nothing, as any snapshot under such a lock.
 func TestRecoverySnapshotUnderAStaleLockCutsNothing(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, node, canonical, _ := commitFixture(t)
 	held, err := store.acquireCanonical(ctx, p, "att-parent")

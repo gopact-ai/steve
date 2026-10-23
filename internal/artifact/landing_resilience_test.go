@@ -65,6 +65,7 @@ func landPathEffects(t *testing.T, s *Store, id string) int {
 // a reason to refuse to start: it is left recovery-pending, untouched, and
 // the periodic retry finishes it once the lock is free.
 func TestStartupRecoveryThatCannotLockIsLeftForTheRetry(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
@@ -112,6 +113,7 @@ func TestStartupRecoveryThatCannotLockIsLeftForTheRetry(t *testing.T) {
 // While a landing waits for recovery the canonical workspace is half
 // written; a new landing must not snapshot and merge onto that.
 func TestNewLandingWaitsForAnUnrecoveredLanding(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
@@ -134,6 +136,7 @@ func TestNewLandingWaitsForAnUnrecoveredLanding(t *testing.T) {
 // landing cut off before its merged snapshot reached the home node must
 // still be recoverable: the snapshot is on the hub, where it was merged.
 func TestRecoveryBringsTheMergedSnapshotToTheHomeNode(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	node := &localNode{root: t.TempDir(), state: t.TempDir()}
 	canonical := filepath.Join(node.root, "proj")
@@ -185,6 +188,7 @@ func TestRecoveryBringsTheMergedSnapshotToTheHomeNode(t *testing.T) {
 // where it will read it: a merged snapshot that cannot reach the home
 // node stops the landing before applying, with nothing journaled.
 func TestLandingStagesTheMergedSnapshotAtHomeBeforeTheWAL(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	local := &localNode{root: t.TempDir(), state: t.TempDir()}
 	canonical := filepath.Join(local.root, "proj")
@@ -223,6 +227,7 @@ func TestLandingStagesTheMergedSnapshotAtHomeBeforeTheWAL(t *testing.T) {
 // Recovery that ends in a conflict writes nothing: the paths still at the
 // old content stay there rather than being half brought forward.
 func TestRecoveryEndingInAConflictWritesNothing(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
@@ -311,6 +316,7 @@ func applyConflicted(t *testing.T) (*Store, project.Project, *failingNode, strin
 // retry it against the same canonical, nor once the canonical moves for
 // reasons that do not touch its paths. An explicit unblock retries it.
 func TestApplyConflictIsBlockedUntilItsPathsChange(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, _, canonical, artifact := applyConflicted(t)
 	stuck, _ := store.Stuck(ctx, "p")
@@ -343,6 +349,7 @@ func TestApplyConflictIsBlockedUntilItsPathsChange(t *testing.T) {
 // Once one of the conflicted paths changes in the canonical, the conflict
 // may be different, so the queue tries again.
 func TestApplyConflictIsRetriedWhenOneOfItsPathsChanges(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, _, canonical, _ := applyConflicted(t)
 	write(t, canonical, "a", "a-by-hand-again")
@@ -358,6 +365,7 @@ func TestApplyConflictIsRetriedWhenOneOfItsPathsChanges(t *testing.T) {
 // the interrupted round. Snapshotting that — the canonical moving because
 // of the landing's own writes — must not start the result landing again.
 func TestRecoveredConflictIsNotRetriedForItsOwnWrites(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	canonical := t.TempDir()
 	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
@@ -386,6 +394,7 @@ func TestRecoveredConflictIsNotRetriedForItsOwnWrites(t *testing.T) {
 // with what is really on disk. The landing refuses up front, says why,
 // writes and journals nothing, and is not retried in a loop.
 func TestLandingRefusesPathsInsideANestedRepositoryUpFront(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
@@ -455,6 +464,7 @@ func TestLandingRefusesPathsInsideANestedRepositoryUpFront(t *testing.T) {
 // saw reads as "old" and would otherwise be written into the user's own
 // repository.
 func TestRecoveryRefusesPathsInsideANestedRepository(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}

@@ -273,6 +273,7 @@ func TestOwedCloseStaysOwedWhenHistoryCannotBeRead(t *testing.T) {
 }
 
 func TestOwedCloseKeepsOnlyRefusalsThatCanChange(t *testing.T) {
+	t.Parallel()
 	for _, code := range []string{"conflict", "absent", "forbidden", "unavailable", "busy", "uncertain"} {
 		t.Run(code, func(t *testing.T) {
 			f := newOwedCloseFixture(t)

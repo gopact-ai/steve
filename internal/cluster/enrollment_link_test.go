@@ -198,6 +198,7 @@ func TestAbandoningAnEnrollmentDropsItsLink(t *testing.T) {
 // and routes to it at the new session's ports; when it stops, the session
 // is ended only after the runtime has said its goodbyes through it.
 func TestARestartedHubReopensItsLinksAndClosesThemAfterTheRuntime(t *testing.T) {
+	t.Parallel()
 	tunnels := &linktest.Launcher{}
 	hubOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var activations atomic.Int32

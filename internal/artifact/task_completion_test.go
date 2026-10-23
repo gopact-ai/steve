@@ -68,6 +68,7 @@ func TestPendingLandingDrainersDoNotCreateCompetingRecords(t *testing.T) {
 }
 
 func TestCompletionKeepsRealLandingConflictsAndAcceptsSupersededLockRefusal(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"same-result", "no-commit", "different-artifact", "different-target", "different-attempt", "different-epoch", "write-lease", "snapshot-taken", "paths", "wal", "unfinished", "apply-conflict"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, _ := newStore(t, &localNode{}, project.Home{Path: t.TempDir()})

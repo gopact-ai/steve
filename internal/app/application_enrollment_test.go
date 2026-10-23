@@ -240,6 +240,7 @@ func waitEnrollmentStatus(t *testing.T, sourceConfig string, targetConfig string
 }
 
 func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
+	t.Parallel()
 	root := ClusterPeerTestDir(t)
 	options, _ := testPeerOptions(t, filepath.Join(root, "source"), nil)
 	settings, err := cluster.LoadClusterPeerConfig(options.ClusterPath)

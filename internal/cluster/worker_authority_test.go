@@ -342,6 +342,7 @@ func countRequests(t *testing.T, from, to *Peer) func(path string) int64 {
 // to its own machine's worker, and those to other machines, whose replicas
 // would only notice once a later generation is named.
 func TestRevokedGenerationClosesItsWorkerTunnelsWhileItStops(t *testing.T) {
+	t.Parallel()
 	t.Run("own worker", func(t *testing.T) { testRevokedGenerationClosesItsWorkerTunnel(t, false) })
 	t.Run("another machine's worker", func(t *testing.T) { testRevokedGenerationClosesItsWorkerTunnel(t, true) })
 }
@@ -420,6 +421,7 @@ func TestWorkerTunnelClosesWhenItsReplicaStopsHearingTheLeader(t *testing.T) {
 // Removing a machine from the cluster drops the coordinator's tunnel to
 // its worker.
 func TestRemovingAMachineClosesTheTunnelToItsWorker(t *testing.T) {
+	t.Parallel()
 	hub := startTestHub(t)
 	member := joinNonvoter(t, hub, nil)
 	WaitPeerReady(t, hub)
@@ -693,6 +695,7 @@ func (g *acceptGate) Accept() (net.Conn, error) {
 // the tunnel belongs to it, so the dial fails rather than hand the ended
 // generation a connection that is closed only afterwards.
 func TestWorkerDialOfAGenerationThatEndsMeanwhileOpensNoTunnel(t *testing.T) {
+	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var activations atomic.Int32
 	start := testPeerApplication(t, &activations)
@@ -806,6 +809,7 @@ func TestWorkerDialerDialsForItsOwnGenerationOnly(t *testing.T) {
 // belong to the ended generation and dial nothing, not for the generation
 // that follows it.
 func TestNodesConfiguredForAGenerationThatEndedWhileItStartedDialNothing(t *testing.T) {
+	t.Parallel()
 	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var activations atomic.Int32
 	start := testPeerApplication(t, &activations)

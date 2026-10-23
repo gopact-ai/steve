@@ -357,6 +357,7 @@ func openStopWaitConsole(t *testing.T, state task.State, stopping bool) (*Servic
 // such as starting over with /new, while the exchange keeps waiting on the
 // stop on its card.
 func TestStopWaitExchangeDoesNotHoldQueue(t *testing.T) {
+	t.Parallel()
 	for _, state := range []task.State{task.StateCancelled, task.StatePaused} {
 		t.Run(string(state), func(t *testing.T) {
 			s, h, driver := openStopWaitConsole(t, state, true)
@@ -423,6 +424,7 @@ func TestLineMovesWhileTheStopIsTried(t *testing.T) {
 // question they have to answer, and a stop still to be confirmed for a task
 // nobody set aside. Nothing queued behind either runs, /new included.
 func TestAwaitingQuestionStillHoldsQueue(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		stopping bool

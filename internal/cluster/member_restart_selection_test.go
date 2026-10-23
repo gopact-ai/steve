@@ -50,6 +50,7 @@ func TestRestartSelectionRefusesAmbiguousLinksAndPlans(t *testing.T) {
 }
 
 func TestRestartIncompleteCandidateViewDoesNotProveUniqueOwnership(t *testing.T) {
+	t.Parallel()
 	control, target, holders := discoveryHolders(t)
 	holders[1].Mu.Lock()
 	holders[1].Config.Links = nil
@@ -71,6 +72,7 @@ func TestRestartIncompleteCandidateViewDoesNotProveUniqueOwnership(t *testing.T)
 }
 
 func TestRestartMembershipChangeInvalidatesTheSelection(t *testing.T) {
+	t.Parallel()
 	control, target, holders := discoveryHolders(t)
 	holders[1].Mu.Lock()
 	holders[1].Config.Links = nil
@@ -96,6 +98,7 @@ func TestRestartMembershipChangeInvalidatesTheSelection(t *testing.T) {
 }
 
 func TestRestartDiscoveryDoesNotQueryItsUnresponsiveTarget(t *testing.T) {
+	t.Parallel()
 	hub := startTestHub(t)
 	target := joinNonvoter(t, hub, nil)
 	active := WaitPeerReady(t, hub)

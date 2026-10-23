@@ -48,6 +48,7 @@ func TestASweepWithNothingQueuedTakesNoLease(t *testing.T) {
 // whose only queued result is stuck costs the ledger nothing per pass,
 // whether the canonical stayed or moved on paths the conflict does not touch.
 func TestAStuckResultTakesNoLeaseEachSweep(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	store, p, _, canonical, _ := applyConflicted(t)
 	writes := attachCounting(t, store.ledger)

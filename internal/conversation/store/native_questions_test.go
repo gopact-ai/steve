@@ -81,6 +81,7 @@ func (tr *nativeQuestionTransport) NodeSession(ctx context.Context, _ string, re
 }
 
 func TestNativeDelegateQuestionsKeepOriginalChildBindingAndParentConversation(t *testing.T) {
+	t.Parallel()
 	for _, isPermission := range []bool{false, true} {
 		t.Run(map[bool]string{false: "question", true: "permission"}[isPermission], func(t *testing.T) {
 			book, err := ledger.Open(t.TempDir(), ledger.Options{})

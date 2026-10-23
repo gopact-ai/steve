@@ -23,6 +23,11 @@ import (
 	"github.com/hashicorp/raft"
 )
 
+// ClusterPeerTestDir is the root of one test's peers. Every peer built from
+// these fixtures owns its directory, its :0 listeners, certificates and
+// built agent, so a test that changes no process environment, default
+// logger or package variable and asserts no wall-clock or allocation bound
+// runs with t.Parallel.
 func ClusterPeerTestDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "steve-peer-")

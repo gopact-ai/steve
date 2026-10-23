@@ -21,6 +21,7 @@ import (
 )
 
 func TestAutomaticCoordinatorLossPreservesHealthyTaskAndReturningDesktop(t *testing.T) {
+	t.Parallel()
 	dir := ClusterPeerTestDir(t)
 	bin := filepath.Join(dir, "mockagent")
 	if output, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {

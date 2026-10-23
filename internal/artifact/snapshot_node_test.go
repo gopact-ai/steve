@@ -22,6 +22,7 @@ func (n *countingNode) Artifact(ctx context.Context, node string, req ops.Reques
 }
 
 func TestRemoteSnapshotAsksOnceAboutWhatItAlreadyKnows(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	inner := &localNode{root: t.TempDir(), state: t.TempDir()}
 	node := &countingNode{localNode: inner, ops: map[ops.Kind]int{}}
