@@ -34,7 +34,11 @@ description: Make a change to the Steve repository (gopact-ai/steve) and open a 
 4. Pull request description: summary, what was tested with the commands run,
    and anything not verified. Public text (README, docs, PR titles) describes
    behavior, not internal plans or review notes.
-5. Steve uses merge commits. Merging requires the owner's approval.
+5. Steve uses merge commits. Merging requires the owner's approval: merge
+   only the owner-approved list, with `go run ./scripts/merge-train <PR...>`
+   to check the plan and then `-apply` to merge. Do not merge by hand. Fix
+   whatever the train stops on (red check, open thread, conflict) on that
+   branch, then rerun the same command; it resumes.
 
 ## Before changing an area
 
