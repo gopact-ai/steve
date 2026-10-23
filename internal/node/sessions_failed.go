@@ -89,52 +89,118 @@ func (s *SessionService) durableState(req nodewire.SessionRequest) (nodewire.Ses
 // since the journal may refuse it the way it refused the write that failed.
 func (s *SessionService) retireFailed(ctx context.Context, one *ownedSession, failure error, closed bool) error {
 	one.mu.Lock()
+	id := one.record.State.ID
+	one.mu.Unlock()
+	hostStopped, err := endFailedHost(ctx, one)
+	if err != nil {
+		return errors.Join(failure, err)
+	}
+	s.settleMu.Lock()
+	defer s.settleMu.Unlock()
+	fresh, err := s.recordFailedStop(id, hostStopped)
+	if err != nil {
+		return errors.Join(failure, err)
+	}
+	fresh = s.settleRetired(fresh, closed)
+	if err := s.endStoppedRuntime(fresh.record); err != nil {
+		slog.Error("steve-node: plugin shutdown receipt failed", "session", id, "error", err)
+	}
+	if plugin := fresh.record.State.Plugin; plugin != nil {
+		if err := s.server.pluginRuntimePool().Drop(plugin.ID); err != nil {
+			slog.Error("steve-node: plugin runtime release failed", "session", id, "error", err)
+		}
+	}
+	s.mu.Lock()
+	if s.sessions[id] == one {
+		delete(s.sessions, id)
+	}
+	delete(s.unverifiedProcesses, id)
+	if s.retiredFailed == nil {
+		s.retiredFailed = map[string]bool{}
+	}
+	s.retiredFailed[id] = true
+	s.mu.Unlock()
+	one.mu.Lock()
+	close(one.changed)
+	one.changed = make(chan struct{})
+	one.mu.Unlock()
+	slog.Warn("steve-node: ended the native process of a session whose journal failed", "session", id, "cause", failure)
+	return nil
+}
+
+// endFailedHost kills a failed owner's host and reports whether the host
+// saw every process it started exit.
+func endFailedHost(ctx context.Context, one *ownedSession) (bool, error) {
+	one.mu.Lock()
 	id, host := one.record.State.ID, one.host
 	openCancel, openDone, runDone := one.openCancel, one.openDone, one.runDone
 	one.mu.Unlock()
 	if openCancel != nil {
 		openCancel()
 	}
-	hostStopped := false
-	if host != nil {
-		if err := host.Kill(ctx); err != nil {
-			slog.Warn("steve-node: failed session's agent did not confirm its kill", "session", id, "error", err)
-		}
-		for _, done := range []<-chan struct{}{openDone, runDone} {
-			if done == nil {
-				continue
-			}
-			select {
-			case <-done:
-			case <-ctx.Done():
-				return errors.Join(failure, killFailure(ctx.Err()))
-			}
-		}
-		hostStopped = host.AllProcessesStopped()
+	if host == nil {
+		return false, nil
 	}
-	s.settleMu.Lock()
-	defer s.settleMu.Unlock()
+	if err := host.Kill(ctx); err != nil {
+		slog.Warn("steve-node: failed session's agent did not confirm its kill", "session", id, "error", err)
+	}
+	for _, done := range []<-chan struct{}{openDone, runDone} {
+		if done == nil {
+			continue
+		}
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return false, killFailure(ctx.Err())
+		}
+	}
+	// The host's own record of the exit can trail the kill by the moment
+	// its watcher takes to see the group empty.
+	stopped := host.AllProcessesStopped()
+	for wait := time.Now().Add(recordedGroupWithin); !stopped && time.Now().Before(wait); {
+		select {
+		case <-time.After(10 * time.Millisecond):
+		case <-ctx.Done():
+			return false, killFailure(ctx.Err())
+		}
+		stopped = host.AllProcessesStopped()
+	}
+	return stopped, nil
+}
+
+// recordFailedStop proves and records the stop on a fresh read of the
+// session's record, under settleMu.
+func (s *SessionService) recordFailedStop(id string, hostStopped bool) (*ownedSession, error) {
 	record, exists, err := s.readRecord(id)
 	if err != nil {
-		return errors.Join(failure, err)
+		return nil, err
 	}
 	if !exists {
-		return errors.Join(failure, sessionError("stop_unproven", "original process identity is unavailable"))
+		return nil, sessionError("stop_unproven", "original process identity is unavailable")
 	}
 	fresh := &ownedSession{service: s, record: record, changed: make(chan struct{})}
-	if !record.State.ProcessStopped {
-		deadline := time.Now().Add(recordedGroupWithin)
-		if err := s.endRecordedGroup(fresh, deadline); err != nil {
-			if !hostStopped || len(record.Terminals) != 0 || fresh.failure != nil || !groupUncheckable(record.Process, err) {
-				return errors.Join(failure, killFailure(err))
-			}
-			if err := fresh.commitRecordedStop(deadline); err != nil {
-				return errors.Join(failure, err)
-			}
-		}
+	if record.State.ProcessStopped {
+		return fresh, nil
 	}
-	// The stop is durable now. Each further transition is its own commit,
-	// so one the journal refuses doesn't take the others with it.
+	deadline := time.Now().Add(recordedGroupWithin)
+	err = s.endRecordedGroup(fresh, deadline)
+	if err == nil {
+		return fresh, nil
+	}
+	if !hostStopped || len(record.Terminals) != 0 || fresh.failure != nil || !groupUncheckable(record.Process, err) {
+		return nil, killFailure(err)
+	}
+	if err := fresh.commitRecordedStop(deadline); err != nil {
+		return nil, err
+	}
+	return fresh, nil
+}
+
+// settleRetired moves a stopped record's session, commands and questions
+// out of their running states. Each is its own commit, so one the journal
+// refuses doesn't take the others with it; none is required.
+func (s *SessionService) settleRetired(fresh *ownedSession, closed bool) *ownedSession {
+	id := fresh.record.State.ID
 	settle := func(what string, change func(*sessionRecord) bool) {
 		next := fresh.copyLocked()
 		if !change(&next) {
@@ -177,30 +243,7 @@ func (s *SessionService) retireFailed(ctx context.Context, one *ownedSession, fa
 		}
 		return changed
 	})
-	if err := s.endStoppedRuntime(fresh.record); err != nil {
-		slog.Error("steve-node: plugin shutdown receipt failed", "session", id, "error", err)
-	}
-	if plugin := fresh.record.State.Plugin; plugin != nil {
-		if err := s.server.pluginRuntimePool().Drop(plugin.ID); err != nil {
-			slog.Error("steve-node: plugin runtime release failed", "session", id, "error", err)
-		}
-	}
-	s.mu.Lock()
-	if s.sessions[id] == one {
-		delete(s.sessions, id)
-	}
-	delete(s.unverifiedProcesses, id)
-	if s.retiredFailed == nil {
-		s.retiredFailed = map[string]bool{}
-	}
-	s.retiredFailed[id] = true
-	s.mu.Unlock()
-	one.mu.Lock()
-	close(one.changed)
-	one.changed = make(chan struct{})
-	one.mu.Unlock()
-	slog.Warn("steve-node: ended the native process of a session whose journal failed", "session", id, "cause", failure)
-	return nil
+	return fresh
 }
 
 // groupUncheckable reports whether ending the recorded group failed because

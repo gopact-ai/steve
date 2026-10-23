@@ -145,6 +145,34 @@ func recordGroup(t *testing.T, s *SessionService, one *ownedSession, settle func
 // the stop's own small write fits, the command's error text does not. Every
 // later stop is then answered from the durable record, never wedged.
 func TestFailedSessionStopSurvivesByteBoundAfterRecordedStop(t *testing.T) {
+	s, req := byteBoundStop(t)
+	requireAnsweredStopped(t, s, req)
+}
+
+// A node restarting with such a record loads it without the interrupted
+// state the journal still refuses, and keeps answering its stop from the
+// record; the other sessions load as usual.
+func TestFailedSessionStopSurvivesRestartAtByteBound(t *testing.T) {
+	s, req := byteBoundStop(t)
+	server := s.server
+	s.Close()
+	if err := server.startSessions(t.Context()); err != nil {
+		t.Fatalf("node session service failed to restart: %v", err)
+	}
+	restarted := server.sessions
+	t.Cleanup(restarted.Close)
+	durable, _, err := restarted.readRecord(req.ID)
+	if err != nil || !durable.State.ProcessStopped || durable.State.State != "running" {
+		t.Fatalf("fixture did not refuse the state change at restart: %+v %v", durable.State, err)
+	}
+	requireAnsweredStopped(t, restarted, req)
+}
+
+// byteBoundStop cancels a failed session whose journal has room for its
+// recorded stop and nothing more, so the stop is durable and the state
+// change after it is refused, as at the journal's byte bound.
+func byteBoundStop(t *testing.T) (*SessionService, nodewire.SessionRequest) {
+	t.Helper()
 	s, one, _ := failedSession(t)
 	recordGroup(t, s, one, func() error { return nil })
 	// Leave room for exactly the recorded stop, computed as
@@ -153,16 +181,13 @@ func TestFailedSessionStopSurvivesByteBoundAfterRecordedStop(t *testing.T) {
 	stopped := one.copyLocked()
 	stopped.State.Sequence++
 	stopped.State.ProcessStopped = true
-	growth := 0
-	for _, pair := range [][2]any{{sessionHeader(before), sessionHeader(stopped)}} {
-		a, _ := sessionRecordJSON(pair[0])
-		b, _ := sessionRecordJSON(pair[1])
-		growth += len(b) - len(a)
-	}
+	a, _ := sessionRecordJSON(sessionHeader(before))
+	b, _ := sessionRecordJSON(sessionHeader(stopped))
+	growth := len(b) - len(a)
 	command := before.Commands["input-1"]
-	a, _ := sessionRecordJSON(command)
+	a, _ = sessionRecordJSON(command)
 	command.ProcessStopped = true
-	b, _ := sessionRecordJSON(command)
+	b, _ = sessionRecordJSON(command)
 	growth += len(b) - len(a)
 	store, err := s.recordsStore()
 	if err != nil {
@@ -184,9 +209,15 @@ func TestFailedSessionStopSurvivesByteBoundAfterRecordedStop(t *testing.T) {
 	if _, live := s.sessions[req.ID]; live {
 		t.Fatal("owner with a durable stop was not released")
 	}
+	return s, req
+}
+
+func requireAnsweredStopped(t *testing.T, s *SessionService, req nodewire.SessionRequest) {
+	t.Helper()
 	for _, action := range []nodewire.SessionAction{nodewire.SessionActionKill, nodewire.SessionActionCancel, nodewire.SessionActionAttach} {
 		req.Action = action
-		if state, err := s.Do(t.Context(), "cluster-1", req); err != nil || !state.ProcessStopped {
+		state, err := s.Do(t.Context(), "cluster-1", req)
+		if err != nil || !state.ProcessStopped || state.Command == nil || state.Command.ID != "input-1" {
 			t.Fatalf("%s after a durable stop = %+v %v", action, state, err)
 		}
 	}

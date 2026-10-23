@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -325,7 +326,18 @@ func (s *SessionService) loadRecord(store *sessionRecords, id string) (*ownedSes
 			}
 		}
 		if err := one.commitLocked(next); err != nil {
-			return nil, err
+			if !record.State.ProcessStopped {
+				return nil, err
+			}
+			// The stop is recorded, so the agent needs nothing more from this
+			// node; a journal at its bound refusing the state change after it
+			// must not keep every other session from loading. The record is
+			// answered as stopped, as for an owner retired before the restart.
+			slog.Warn("steve-node: stopped session's interrupted state not recorded after restart", "session", id, "error", err)
+			one = &ownedSession{service: s, record: record, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
+			s.mu.Lock()
+			s.retiredFailed[id] = true
+			s.mu.Unlock()
 		}
 	}
 	// After node restart no old native callback is resumable. Keep its
