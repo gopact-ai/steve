@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -293,7 +294,8 @@ func Launch(env []string, policy string) ([]string, error) {
 		return nil, err
 	}
 	defer unlock()
-	if err := PrepareHome(dir, operatorDir(base), class); err != nil {
+	operator := operatorDir(base)
+	if err := PrepareHome(dir, operator, class); err != nil {
 		return nil, err
 	}
 	if Enforced(dir) != class {
@@ -308,7 +310,38 @@ func Launch(env []string, policy string) ([]string, error) {
 	}
 	env = replace(env, EnvAgentDir, dir)
 	env = replace(env, EnvReal, real)
+	env = withOperatorBin(env, operator)
 	return replace(env, EnvCommand, filepath.Join(dir, wrapper)), nil
+}
+
+// withOperatorBin puts the operator's pi bin directory (where pi keeps the
+// rg and fd its grep and find tools run) at the end of PATH. The managed
+// home's own bin/ is cleared on every start; without this pi would fetch
+// them into it again.
+func withOperatorBin(env []string, operator string) []string {
+	if operator == "" {
+		return env
+	}
+	bin := filepath.Join(operator, "bin")
+	if info, err := os.Stat(bin); err != nil || !info.IsDir() {
+		return env
+	}
+	path, set := "", false
+	for _, item := range env {
+		if v, ok := strings.CutPrefix(item, "PATH="); ok {
+			path, set = v, true
+		}
+	}
+	if !set {
+		path = os.Getenv("PATH")
+	}
+	if slices.Contains(filepath.SplitList(path), bin) {
+		return env
+	}
+	if path != "" {
+		bin = path + string(os.PathListSeparator) + bin
+	}
+	return replace(env, "PATH", bin)
 }
 
 // operatorDir is the operator's pi directory the homes under base were

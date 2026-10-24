@@ -520,3 +520,84 @@ func TestLaunchNeverLeavesTheHomeHalfWritten(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
+
+// pi's grep and find run rg and fd from <agentDir>/bin, which Steve clears;
+// the operator's own pi bin is put on PATH instead, after what is there.
+func TestLaunchPutsTheOperatorPiBinOnPath(t *testing.T) {
+	src := operatorPi(t)
+	if err := os.MkdirAll(filepath.Join(src, "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	if err := Prepare(base, src); err != nil {
+		t.Fatal(err)
+	}
+	dir := Dir(base, ReadOnly)
+	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bin", "rg"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(src, "bin")
+	env, err := Launch([]string{EnvHomes + "=" + base, "PATH=/usr/bin:/bin"}, "read")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lookup(env, "PATH"); got != "/usr/bin:/bin:"+bin {
+		t.Fatalf("PATH = %q", got)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "bin")); !os.IsNotExist(err) {
+		t.Fatalf("managed home keeps bin/: %v", err)
+	}
+	// Launching again does not add it twice; without PATH in env the
+	// process's own PATH is extended.
+	again, err := Launch(env, "read")
+	if err != nil || lookup(again, "PATH") != "/usr/bin:/bin:"+bin {
+		t.Fatalf("relaunch PATH = %q, %v", lookup(again, "PATH"), err)
+	}
+	t.Setenv("PATH", "/opt/x")
+	inherited, err := Launch([]string{EnvHomes + "=" + base}, "write")
+	if err != nil || lookup(inherited, "PATH") != "/opt/x:"+bin {
+		t.Fatalf("inherited PATH = %q, %v", lookup(inherited, "PATH"), err)
+	}
+	// No operator bin: PATH is left alone.
+	bare := t.TempDir()
+	if err := Prepare(bare, ""); err != nil {
+		t.Fatal(err)
+	}
+	if env, err := Launch([]string{EnvHomes + "=" + bare, "PATH=/usr/bin"}, "read"); err != nil || lookup(env, "PATH") != "/usr/bin" {
+		t.Fatalf("PATH without an operator pi = %q, %v", lookup(env, "PATH"), err)
+	}
+}
+
+// A refusal note is consumed only by the exact session it names.
+func TestRefusedMatchesTheExactSession(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(Dir(base, ReadOnly), refused)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"2026-10-24T01-00-00Z_s1.jsonl", "2026-10-24T01-00-00Z_s10.jsonl", "2026-10-24T01-00-00Z_xs1.jsonl"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := []string{EnvHomes + "=" + base}
+	if !Refused(env, "s1", ReadOnly) {
+		t.Fatal("note for s1 not found")
+	}
+	if Refused(env, "s1", ReadOnly) {
+		t.Fatal("note for s1 not cleared")
+	}
+	left, _ := os.ReadDir(dir)
+	if len(left) != 2 {
+		t.Fatalf("other sessions' notes consumed: %v", left)
+	}
+	if Refused(env, "s", ReadOnly) || Refused(env, "1", ReadOnly) {
+		t.Fatal("a partial session ID matched")
+	}
+	if !Refused(env, "s10", ReadOnly) || !Refused(env, "xs1", ReadOnly) {
+		t.Fatal("exact notes not matched")
+	}
+}

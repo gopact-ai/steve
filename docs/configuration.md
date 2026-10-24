@@ -97,7 +97,7 @@ Steve 在 `<state>/runtimes/pi/` 下为 pi 准备 `read-only` 与 `full` 两个�
 
 每次启动 pi 时 Steve 会：
 
-- 把所选目录恢复成 Steve 准备的内容：删除 pi 会当作配置读取、但不是 Steve 写的文件和目录（`extensions/`、`mcp.json`、`trust.json`、`tools/`、`themes/`、`prompts/`、`SYSTEM.md`、`AGENTS.md` 等），`settings.json` 与启动脚本有变化时以改名方式替换。之后检查内容（工具列表、项目信任、启动脚本、技能链接、没有多余配置），检查不通过就不启动。pi 运行时自己写的会话、模型缓存和锁文件保留。
+- 把所选目录恢复成 Steve 准备的内容：删除 pi 会当作配置读取、但不是 Steve 写的文件和目录（`extensions/`、`bin/`、`mcp.json`、`trust.json`、`tools/`、`themes/`、`prompts/`、`SYSTEM.md`、`AGENTS.md` 等），`settings.json` 与启动脚本有变化时以改名方式替换。之后检查内容（工具列表、项目信任、启动脚本、技能链接、没有多余配置），检查不通过就不启动。pi 运行时自己写的会话、模型缓存和锁文件保留。pi 的 `grep`、`find` 所用的 `rg`、`fd` 从运营方 pi 目录的 `bin/`（如 `~/.pi/agent/bin`）找：该目录加在启动进程 `PATH` 的末尾。
 - 让 `pi-acp` 通过该目录里的 `steve-pi` 启动 pi（`PI_ACP_PI_COMMAND`）。`steve-pi` 总是加 `--no-extensions`，只读目录里再加 `--tools read,grep,find,ls`；即使恢复的会话记录了别的工具，也只有这四个。`--session` 指向的文件解析符号链接和 `..` 后不在本目录 `sessions/` 下时，`steve-pi` 拒绝启动，Steve 改为开新会话。
 - 记录每个 pi 会话由哪一档的进程创建（`<state>/runtimes/pi/classes.json`，按改名方式写入，跨进程加锁；无法解析时移到 `classes.json.corrupt-*` 并记录日志）。恢复前还会核对 `pi-acp` 会话索引里该会话文件所在的目录。档位不符时不恢复原会话，本轮在新会话中开始，回复开头说明之前的上下文没有带入。
 

@@ -91,12 +91,22 @@ func Refused(env []string, session, class string) bool {
 	}
 	found := false
 	for _, entry := range entries {
-		if strings.Contains(entry.Name(), session) {
+		if noteSession(entry.Name()) == session {
 			found = true
 			_ = os.Remove(filepath.Join(dir, entry.Name()))
 		}
 	}
 	return found
+}
+
+// noteSession is the session a refusal note names. The note is the refused
+// file's base name, which pi gives as <time>_<session>.jsonl.
+func noteSession(name string) string {
+	name = strings.TrimSuffix(name, ".jsonl")
+	if i := strings.LastIndex(name, "_"); i >= 0 {
+		return name[i+1:]
+	}
+	return name
 }
 
 // readClasses is the class record, with base locked. A file that does not
