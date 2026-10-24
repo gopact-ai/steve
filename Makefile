@@ -1,21 +1,18 @@
 GO ?= go
 
-.PHONY: build console test test-console gate gate-full e2e e2e-lab e2e-fleet e2e-autonomous
+.PHONY: build console test test-console gate gate-full
 
 # The console is a React app built into internal/readmodel/web/dist and
 # embedded into the binary; rebuild it after touching web/console.
 console:
 	cd web/console && npm ci --no-audit --no-fund && npm run build
 
-build: 
-	CGO_ENABLED=0 $(GO) build -o steve ./cmd/steve
+# v1 rebuild: cmd/steve returns with the new product layer (P2).
+build:
 	CGO_ENABLED=0 $(GO) build -o steve-node ./cmd/steve-node
 
-# Under the race detector app and cluster each run close to go test's
-# default ten minutes per package; the replicated-ledger cases write
-# thousands of durable entries one at a time.
 test:
-	$(GO) test -race -timeout 30m ./cmd/... ./internal/... ./e2e/...
+	$(GO) test -race -timeout 30m ./cmd/... ./internal/... ./scripts/...
 
 # The local loop: gofmt, go vet and go test -race on the packages a change
 # reaches (changed packages and their reverse dependencies), plus the
@@ -25,7 +22,7 @@ test:
 gate:
 	$(GO) run ./scripts/gate $(ARGS)
 
-# The required CI jobs (test, console, desktop, macos, fleet), run locally;
+# The required CI jobs (test, macos), run locally;
 # jobs this host cannot run are reported and left to CI.
 gate-full:
 	bash scripts/gate/full.sh
@@ -58,33 +55,3 @@ test-console:
 	npm --prefix web/console run test:delete
 	npm --prefix web/console run test:conflicts
 	npm --prefix web/console run test:close-layers
-
-.PHONY: desktop test-desktop
-desktop:
-	./scripts/build-desktop.sh
-
-test-desktop:
-	bash scripts/test-desktop.sh
-
-# The three-host suite. Machines come from e2e/fleetlab: a container per
-# node by default, or ones you name through STEVE_LAB_<NODE>_ADDR and
-# friends when the run needs real agents and credentials.
-e2e:
-	STEVE_MESH_E2E=1 $(GO) test -count=1 -timeout 25m ./e2e/mesh/
-
-# What the suite's machines are, on their own: separate filesystems and
-# process tables, one address that both this process and the other nodes
-# reach, and a node that can be stopped and started without losing work.
-e2e-lab:
-	$(GO) test -count=1 -timeout 10m ./e2e/fleetlab/
-
-# Owns a disposable hub and Docker nodes; missing prerequisites fail the gate.
-# Linux host + local Docker with a matching Go toolchain are required.
-e2e-fleet:
-	$(GO) run ./e2e/fleetlab/cmd/gate
-
-# The coordinator is told only the goal: it must look the fleet up, split
-# the work, place it by capability and report. The lab supplies kvtool,
-# a deterministic ACP agent and a copy of the host Go toolchain on node-b.
-e2e-autonomous:
-	$(GO) run ./e2e/fleetlab/cmd/gate -scenario autonomous

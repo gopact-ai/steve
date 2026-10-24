@@ -1,7 +1,7 @@
 name: test
 on:
   push:
-    branches: [master]
+    branches: [master, v1]
   pull_request:
   merge_group:
 jobs:
@@ -43,9 +43,7 @@ jobs:
           go-version-file: go.mod
       - name: gofmt
         run: test -z "$(git ls-files -z '*.go' | xargs -0 gofmt -l)"
-      - run: go vet ./cmd/... ./internal/... ./e2e/...
-      - name: Raft local patch regressions
-        run: ./scripts/test-raft.sh -race -run '^(TestRaft_AppendEntriesSnapshotBoundary|TestCommitment_|TestNetworkTransport_AppendEntriesScaledTimeout|TestRaft_AppendEntriesScaledTimeout)' -count=1
+      - run: go vet ./cmd/... ./internal/... ./scripts/...
   test:
     needs: [go-shard, go-checks]
     if: always()
@@ -67,145 +65,8 @@ jobs:
           merge-multiple: true
       - name: Shards cover every package exactly once
         run: |
-          go list ./cmd/... ./internal/... ./e2e/... > "$RUNNER_TEMP/all.txt"
+          go list ./cmd/... ./internal/... ./scripts/... > "$RUNNER_TEMP/all.txt"
           scripts/ci/shard.py verify "$RUNNER_TEMP/all.txt" "$RUNNER_TEMP"/shards/go-shard-*.txt
-  # `make test-console` split by measured command time
-  # (scripts/ci/console-weights.txt). Each shard runs the gate's setup lines,
-  # including the console build, then its share of the test commands;
-  # `console` checks that the shards together ran every command once.
-  console-shard:
-    name: console shard ${{ matrix.shard }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2, 3, 4]
-    env:
-      SHARDS: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: web/console/package-lock.json
-      - name: Toolchain versions for the caches
-        id: versions
-        run: |
-          playwright="$(node -p "require('./web/console/package-lock.json').packages['node_modules/playwright-core']?.version ?? ''")"
-          if [[ ! "$playwright" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-            echo "::error::web/console/package-lock.json has no playwright-core version (got '$playwright'); the browser cache key needs it"
-            exit 1
-          fi
-          echo "node=$(node --version)" >> "$GITHUB_OUTPUT"
-          echo "playwright=$playwright" >> "$GITHUB_OUTPUT"
-          echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
-      # Caches are read by every run but written only by shard 0 of a push to
-      # master: pull requests and merge groups cannot evict master's entries,
-      # and the shards do not race to reserve the same key.
-      #
-      # node_modules for this manifest, lockfile and Node, saved right after
-      # `npm ci` and before the console build writes into node_modules/.tmp.
-      - name: Restore web/console/node_modules
-        id: modules
-        uses: actions/cache/restore@v4
-        with:
-          path: web/console/node_modules
-          key: console-modules-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.versions.outputs.node }}-${{ hashFiles('web/console/package.json', 'web/console/package-lock.json') }}
-      - if: steps.modules.outputs.cache-hit != 'true'
-        run: npm ci
-        working-directory: web/console
-      - name: Save web/console/node_modules
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && matrix.shard == 0 && steps.modules.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: web/console/node_modules
-          key: ${{ steps.modules.outputs.cache-primary-key }}
-      - name: Restore Playwright browsers
-        id: browsers
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-browsers-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.playwright }}
-      # A fresh runner lacks Chromium's system packages every time, so they are
-      # installed on every run; only their downloads are cached. apt fetches
-      # just what the image's package versions no longer match.
-      - name: Restore Playwright system package downloads
-        id: debs
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ runner.temp }}/playwright-debs
-          key: playwright-debs-${{ steps.versions.outputs.image }}-${{ steps.versions.outputs.playwright }}
-          restore-keys: playwright-debs-
-      - name: Install Playwright Chromium with its system packages
-        run: |
-          debs="$RUNNER_TEMP/playwright-debs"
-          mkdir -p "$debs/partial"
-          printf 'Dir::Cache::Archives "%s/";\nAPT::Keep-Downloaded-Packages "true";\n' "$debs" | sudo tee /etc/apt/apt.conf.d/90playwright-debs
-          npx playwright install --with-deps chromium
-          sudo rm -f "$debs/lock"
-          sudo chmod -R a+rX "$debs"
-          ls "$debs"/*.deb 2>/dev/null | wc -l
-        working-directory: web/console
-      - name: Save Playwright browsers
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && matrix.shard == 0 && steps.browsers.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ steps.browsers.outputs.cache-primary-key }}
-      # A restore-key match is not an exact hit: save under the current key.
-      - name: Save Playwright system package downloads
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && matrix.shard == 0 && steps.debs.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ runner.temp }}/playwright-debs
-          key: ${{ steps.debs.outputs.cache-primary-key }}
-      - name: Plan shard
-        run: |
-          node scripts/ci/console-shards.mjs plan "$SHARDS" "${{ matrix.shard }}" > "$RUNNER_TEMP/console-shard-${{ matrix.shard }}.txt"
-          cat "$RUNNER_TEMP/console-shard-${{ matrix.shard }}.txt"
-      - name: make test-console (this shard)
-        run: node scripts/ci/console-shards.mjs run "$RUNNER_TEMP/console-shard-${{ matrix.shard }}.txt"
-      - name: Verify embedded console matches source
-        run: test -z "$(git status --porcelain -- internal/readmodel/web/dist)"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: console-shard-${{ matrix.shard }}
-          path: ${{ runner.temp }}/console-shard-${{ matrix.shard }}.txt
-          retention-days: 3
-  console:
-    needs: [console-shard]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Console shards passed
-        run: test "${{ needs.console-shard.result }}" = success
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: console-shard-*
-          path: ${{ runner.temp }}/shards
-          merge-multiple: true
-      - name: Shards cover every console test exactly once
-        run: |
-          node scripts/ci/console-shards.mjs all > "$RUNNER_TEMP/all.txt"
-          node scripts/ci/console-shards.mjs verify "$RUNNER_TEMP/all.txt" "$RUNNER_TEMP"/shards/console-shard-*.txt
-  desktop:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - run: make test-desktop
-      - name: Package app icon
-        run: bash scripts/build-app-icon.sh desktop/macos/Assets/AppIcon.png "$RUNNER_TEMP/AppIcon.icns"
   macos:
     runs-on: macos-latest
     steps:
@@ -215,22 +76,11 @@ jobs:
           go-version-file: go.mod
       - name: Agent process groups
         run: go test -race -count=1 ./internal/procgroup/
-      - name: Installed peer discovery and stable stop capability
-        run: go test -race -count=1 ./internal/nodebootstrap/ ./internal/peerstop/
+      - name: Stable stop capability
+        run: go test -race -count=1 ./internal/peerstop/
       - name: MCP broker socket fixtures under default Darwin TMPDIR
         run: go test -race -count=1 -run '^(TestARefusedLaunch|TestLaunchingAReleased|TestAStoppedBroker|TestMCPBindingKeepsSecrets|TestExternalBrokerHolds|TestWorkspaceChangeApplies|TestBroker)' ./internal/node/
       - name: Agent process group stops
         run: go test -race -count=1 -run '^(TestKillProcessGroupReapsDescendants|TestHostConfirmsStopOnlyAfterTheAgentsGroupIsGone|TestHostDoesNotConfirmAStopWhileAHiddenMemberRuns|TestHostRestartsWhileAnExitedAgentsGroupCannotBeEnded|TestHostCloseKillsAnAgentWhoseExitCannotBeWatched|TestLocalTransportDoesNotPassOnAnInheritedMark|TestHostStopWaitsOnlyBrieflyForAnExitedAgentsGroup|TestHostEndsAnExitedAgentsGroupWhileAMemberHoldsItsOutput|TestHostEndsAnAgentWhoseProcessGroupCannotBeIdentified|TestLocalProcessReapsAnAgentWhoseExitCannotBeWatchedOnlyBetweenKills|TestLocalProcessTellsTheExitCodeOfAnAgentWhoseExitCannotBeWatched)$' ./internal/acphost/
       - name: Owned ACP terminals and recovery
         run: TMPDIR=/tmp go test -race -count=1 -run '^(TestTerminal|TestHostTerminal|TestStandaloneTerminal|TestWarmRuntime)' ./internal/acphost/ ./internal/node/
-  fleet:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Disposable hub gates and cleanup
-        run: STEVE_HUBLAB_E2E=1 TMPDIR=/tmp go test -race -count=1 -timeout 12m ./e2e/fleetlab/...
-      - name: Disposable fleet acceptance
-        run: make e2e-fleet

@@ -31,20 +31,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  desktop:
-    needs: binaries
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Build Steve.app
-        run: STEVE_DESKTOP_SKIP_UPX=1 STEVE_VERSION="$GITHUB_REF_NAME" ./scripts/build-desktop.sh "$RUNNER_TEMP/desktop"
-      - name: Attach to the draft release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cd "$RUNNER_TEMP/desktop"
-          ditto -c -k --keepParent Steve.app "Steve_${GITHUB_REF_NAME#v}_macos_arm64.zip"
-          gh release upload "$GITHUB_REF_NAME" "Steve_${GITHUB_REF_NAME#v}_macos_arm64.zip" --repo "$GITHUB_REPOSITORY" --clobber

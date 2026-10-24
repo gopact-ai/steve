@@ -18,7 +18,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-GO_PATTERNS = ["./cmd/...", "./internal/...", "./e2e/..."]
+GO_PATTERNS = ["./cmd/...", "./internal/...", "./scripts/..."]
 
 
 def load_weights(name):

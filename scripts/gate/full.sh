@@ -1,6 +1,6 @@
 #!/bin/bash
 # The required CI jobs of .github/workflows/test.yml, run locally in order:
-# test and console everywhere, desktop and macos on macOS, fleet on Linux
+# test everywhere, macos on macOS; the console job returns with the v1 Web (P2)
 # with Docker. Keep the steps in step with that workflow. Every job runs;
 # the exit status is non-zero if any failed. Set GATE_JOBS="test console"
 # to pick jobs.
@@ -8,7 +8,7 @@ set -uo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
-jobs="${GATE_JOBS:-test console desktop macos fleet}"
+jobs="${GATE_JOBS:-test macos}"
 failed=()
 skipped=()
 
@@ -29,8 +29,7 @@ dist_clean() { test -z "$(git status --porcelain -- internal/readmodel/web/dist)
 
 job_test() {
   step "test: gofmt" gofmt_check
-  step "test: go vet" go vet ./cmd/... ./internal/... ./e2e/...
-  step "test: raft local patch regressions" ./scripts/test-raft.sh -race -run '^(TestRaft_AppendEntriesSnapshotBoundary|TestCommitment_|TestNetworkTransport_AppendEntriesScaledTimeout|TestRaft_AppendEntriesScaledTimeout)' -count=1
+  step "test: go vet" go vet ./cmd/... ./internal/... ./scripts/...
   step "test: make test" make test
 }
 
@@ -41,30 +40,19 @@ job_console() {
   step "console: embedded console matches source" dist_clean
 }
 
-job_desktop() {
-  step "desktop: make test-desktop" make test-desktop
-  step "desktop: package app icon" bash scripts/build-app-icon.sh desktop/macos/Assets/AppIcon.png "${TMPDIR:-/tmp}/AppIcon.icns"
-}
-
 job_macos() {
   step "macos: agent process groups" go test -race -count=1 ./internal/procgroup/
-  step "macos: peer discovery and stop capability" go test -race -count=1 ./internal/nodebootstrap/ ./internal/peerstop/
+  step "macos: stop capability" go test -race -count=1 ./internal/peerstop/
   step "macos: MCP broker socket fixtures" go test -race -count=1 -run '^(TestARefusedLaunch|TestLaunchingAReleased|TestAStoppedBroker|TestMCPBindingKeepsSecrets|TestExternalBrokerHolds|TestWorkspaceChangeApplies|TestBroker)' ./internal/node/
   step "macos: agent process group stops" go test -race -count=1 -run '^(TestKillProcessGroupReapsDescendants|TestHostConfirmsStopOnlyAfterTheAgentsGroupIsGone|TestHostDoesNotConfirmAStopWhileAHiddenMemberRuns|TestHostRestartsWhileAnExitedAgentsGroupCannotBeEnded|TestHostCloseKillsAnAgentWhoseExitCannotBeWatched|TestLocalTransportDoesNotPassOnAnInheritedMark|TestHostStopWaitsOnlyBrieflyForAnExitedAgentsGroup|TestHostEndsAnExitedAgentsGroupWhileAMemberHoldsItsOutput|TestHostEndsAnAgentWhoseProcessGroupCannotBeIdentified|TestLocalProcessReapsAnAgentWhoseExitCannotBeWatchedOnlyBetweenKills|TestLocalProcessTellsTheExitCodeOfAnAgentWhoseExitCannotBeWatched)$' ./internal/acphost/
   step "macos: owned ACP terminals and recovery" env TMPDIR=/tmp go test -race -count=1 -run '^(TestTerminal|TestHostTerminal|TestStandaloneTerminal|TestWarmRuntime)' ./internal/acphost/ ./internal/node/
-}
-
-job_fleet() {
-  step "fleet: disposable hub gates" env STEVE_HUBLAB_E2E=1 TMPDIR=/tmp go test -race -count=1 -timeout 12m ./e2e/fleetlab/...
-  step "fleet: disposable fleet acceptance" make e2e-fleet
 }
 
 os="$(uname -s)"
 started=$SECONDS
 for job in $jobs; do
   case "$job" in
-    desktop|macos) [[ "$os" == Darwin ]] || { skipped+=("$job (needs macOS)"); continue; } ;;
-    fleet) { [[ "$os" == Linux ]] && docker info >/dev/null 2>&1; } || { skipped+=("$job (needs Linux and Docker)"); continue; } ;;
+    macos) [[ "$os" == Darwin ]] || { skipped+=("$job (needs macOS)"); continue; } ;;
     test|console) ;;
     *) echo "unknown job $job"; exit 2 ;;
   esac
