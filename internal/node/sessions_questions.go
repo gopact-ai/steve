@@ -29,6 +29,14 @@ func (one *ownedSession) askUser(ctx context.Context, commandID string, q view.Q
 	}
 }
 
+func (one *ownedSession) retainedQuestionsLocked() (int, error) {
+	store, err := one.service.recordsStore()
+	if err != nil {
+		return 0, err
+	}
+	return store.questions(one.record.State.ID)
+}
+
 func (one *ownedSession) askPermission(ctx context.Context, commandID string, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 	q := view.Question{Kind: "permission", Title: ask.ToolName, Message: ask.Reason, Required: true, SessionID: ask.SessionID, Generation: ask.Generation}
 	for _, option := range ask.Options {
@@ -53,8 +61,14 @@ func (one *ownedSession) waitQuestion(ctx context.Context, question nodewire.Ses
 		one.mu.Unlock()
 		return question, sessionError("conflict", "question does not belong to the live original input")
 	}
-	if len(one.record.State.Questions) >= 256 {
+	// The bound is the session's whole retained journal, not only the hot
+	// record's questions of the current input: refusing here leaves the
+	// session usable, while the journal refusing the write latches it.
+	if retained, err := one.retainedQuestionsLocked(); err != nil || retained >= sessionQuestionLimit || len(one.record.State.Questions) >= sessionQuestionLimit {
 		one.mu.Unlock()
+		if err != nil {
+			return question, err
+		}
 		return question, sessionError("unavailable", "node session question retention limit reached")
 	}
 	question.ID = "nq_" + sessionHash([]any{one.record.State.ID, question.CommandID, one.record.State.Sequence + 1})
