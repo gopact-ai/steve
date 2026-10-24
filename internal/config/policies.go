@@ -150,16 +150,10 @@ func (c *Config) EffectiveLocale() string {
 	if c.Gateway.Locale != "" {
 		return c.Gateway.Locale
 	}
-	if c.Feishu.Domain == DomainLark {
-		return "en"
-	}
 	return "zh"
 }
 func (c *Config) EffectiveOwnerID() string {
-	if c.Gateway.OwnerID != "" {
-		return c.Gateway.OwnerID
-	}
-	return c.Feishu.OwnerOpenID
+	return c.Gateway.OwnerID
 }
 
 func (v SettingsValues) Validate() error {

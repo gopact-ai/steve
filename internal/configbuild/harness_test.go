@@ -30,7 +30,7 @@ func TestRemoteAgentDoesNotRequireCoordinatorCommandOrCredentials(t *testing.T) 
 // on; config spells them as strings because it does not import harness.
 func TestStarterNamesHarnessesTheRuntimeKnows(t *testing.T) {
 	known := []string{harness.Codex, harness.ClaudeCode, harness.Pi}
-	starter := config.StarterFeishu(config.Feishu{})
+	starter := config.Starter("")
 	for id := range starter.Harnesses {
 		if !slices.Contains(known, id) {
 			t.Errorf("starter harness %q is not a harness the runtime knows", id)
@@ -66,8 +66,7 @@ func TestProjectListFollowsConfiguredProjects(t *testing.T) {
 		},
 		"agents": {"codex": {"harness": "codex", "default": true}},
 		"nodes": {"host-3": {"addr": "10.0.0.3:7701", "token": "t"}},
-		"harnesses": {"codex": {"command": "true"}},
-		"feishu": {"app_id": "cli", "app_secret": "s"}
+		"harnesses": {"codex": {"command": "true"}}
 	}`))
 	if err != nil {
 		t.Fatal(err)

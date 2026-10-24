@@ -21,13 +21,6 @@ import (
 )
 
 const (
-	DomainFeishu = "feishu"
-	DomainLark   = "lark"
-
-	GroupPolicyAllowlist = "allowlist"
-	GroupPolicyOpen      = "open"
-	GroupPolicyDisabled  = "disabled"
-
 	PermissionRead        = "read"
 	PermissionWrite       = "write"
 	PermissionDeny        = "deny"
@@ -35,80 +28,10 @@ const (
 	PermissionAlwaysAllow = "always_allow"
 )
 
-type Feishu struct {
-	// Enabled separates connection state from stored credentials. Omitted
-	// retains credential-based activation for existing configuration files.
-	Enabled          *bool    `json:"enabled,omitempty"`
-	AppID            string   `json:"app_id"`
-	AppSecret        string   `json:"app_secret"`
-	Domain           string   `json:"domain,omitempty"`
-	AllowedSenders   []string `json:"allowed_senders,omitempty"`
-	BlockedSenders   []string `json:"blocked_senders,omitempty"`
-	GroupPolicy      string   `json:"group_policy,omitempty"`
-	AllowUnmentioned bool     `json:"allow_unmentioned,omitempty"`
-	OwnerOpenID      string   `json:"owner_open_id,omitempty"`
-}
-
-func (c *Feishu) applyDefaults() {
-	if c.Domain == "" {
-		c.Domain = DomainFeishu
-	}
-	if c.GroupPolicy == "" {
-		c.GroupPolicy = GroupPolicyOpen
-	}
-}
-
-func (c Feishu) Validate() error {
-	if c.AppID == "" || c.AppSecret == "" {
-		return fmt.Errorf("feishu.app_id and feishu.app_secret are required")
-	}
-	return c.validateOptions()
-}
-
-func (c Feishu) validateOptions() error {
-	c.applyDefaults()
-	switch c.Domain {
-	case DomainFeishu, DomainLark:
-	default:
-		return fmt.Errorf("feishu.domain must be %q or %q", DomainFeishu, DomainLark)
-	}
-	switch c.GroupPolicy {
-	case GroupPolicyAllowlist, GroupPolicyOpen, GroupPolicyDisabled:
-	default:
-		return fmt.Errorf("feishu.group_policy must be %q, %q, or %q", GroupPolicyAllowlist, GroupPolicyOpen, GroupPolicyDisabled)
-	}
-	if err := validateIDs("feishu.allowed_senders", c.AllowedSenders); err != nil {
-		return err
-	}
-	return validateIDs("feishu.blocked_senders", c.BlockedSenders)
-}
-
-func validateIDs(field string, ids []string) error {
-	for _, id := range ids {
-		if strings.TrimSpace(id) == "" {
-			return fmt.Errorf("%s cannot contain an empty id", field)
-		}
-	}
-	return nil
-}
-
-// DefaultOfflineReminder is the threshold a turn has to cross before its
-// answer is also announced in plain text. Fifteen minutes is well past the
-// point where someone keeps watching a chat window.
-const DefaultOfflineReminder = 15 * time.Minute
-
 type Gateway struct {
-	HubID string             `json:"hub_id,omitempty"`
-	Peers map[string]HubPeer `json:"peers,omitempty"`
 	// Locale and OwnerID are console-level defaults, independent of an IM.
 	Locale  string `json:"locale,omitempty"`
 	OwnerID string `json:"owner_id,omitempty"`
-	// DefaultChannel fills only a missing channel on an authorized message anchor.
-	DefaultChannel string `json:"default_channel,omitempty"`
-	// NodeBinary is a steve-node executable the hub can hand to a machine
-	// being added (static build, the nodes' architecture); empty means the
-	// bootstrap script expects the binary to be there already.
-	NodeBinary string `json:"node_binary,omitempty"`
 	// PromptTimeout is how long a turn may go silent — no tool call, no
 	// text, no report — before it is cut. It is not a cap on the turn: a
 	// turn that awaits other agents runs as long as they keep answering.
@@ -137,16 +60,6 @@ type Gateway struct {
 	// running work; zero keeps the built-in defaults.
 	TaskMaxTurns   int      `json:"task_max_turns,omitempty"`
 	TaskMaxElapsed Duration `json:"task_max_elapsed,omitempty"`
-	// OfflineReminderAfter is how long a turn must run before its answer
-	// also earns a plain-text ping at the anchor: past that, the asker has
-	// probably walked away, and a card arriving quietly is a delivery that
-	// did not happen. Negative turns it off; zero takes the default.
-	OfflineReminderAfter Duration `json:"offline_reminder_after,omitempty"`
-	// DebugAddr enables a loopback-only endpoint for injecting messages and
-	// card callbacks; empty keeps it off. DebugChatID is the chat those
-	// injected messages default to.
-	DebugAddr   string `json:"debug_addr,omitempty"`
-	DebugChatID string `json:"debug_chat_id,omitempty"`
 	// Capabilities are what the hub's own machine offers. Hub-local agents
 	// are not exempt from capability matching: running work here because
 	// here is the default is how a GPU step ends up on a box without one.
@@ -160,32 +73,11 @@ type Gateway struct {
 	// because the snapshot names hosts, goals and agents.
 	ReadModelAddr  string `json:"read_model_addr,omitempty"`
 	ReadModelToken string `json:"read_model_token,omitempty"`
-	// Planner names the agent that decomposes /plan goals. Empty keeps the
-	// rule planner, which places but does not decompose: an open goal is
-	// then one step, which is honest but not automatic.
-	Planner string `json:"planner,omitempty"`
 	// Level is the hub machine's own data level. Empty is internal.
 	Level string `json:"level,omitempty"`
-	// Region names this hub's region; Regions lists the other hubs whose
-	// leases this one must honour; IssuerAddr and IssuerToken serve this
-	// hub's own leases to them.
-	Region      string            `json:"region,omitempty"`
-	Regions     map[string]Region `json:"regions,omitempty"`
-	IssuerAddr  string            `json:"issuer_addr,omitempty"`
-	IssuerToken string            `json:"issuer_token,omitempty"`
-	// DirectTransfer lets artifacts move node to node when a node already
-	// holds them, the hub granting one transfer at a time; off means every
-	// byte goes through the hub.
-	DirectTransfer bool `json:"direct_transfer,omitempty"`
 	// DefaultProject is what a conversation is bound to on its first turn
 	// when nobody has said otherwise. With one project it is implied.
 	DefaultProject string `json:"default_project,omitempty"`
-}
-
-type HubPeer struct {
-	Name  string `json:"name,omitempty"`
-	URL   string `json:"url"`
-	Token string `json:"token"`
 }
 
 // ReservedHomeProject is the project the gateway declares for its own home
@@ -240,7 +132,6 @@ type Config struct {
 	Harnesses         map[string]Harness   `json:"harnesses"`
 	Nodes             map[string]Node      `json:"nodes,omitempty"`
 	MCPServers        map[string]MCPServer `json:"mcp_servers"`
-	Feishu            Feishu               `json:"feishu"`
 	Gateway           Gateway              `json:"gateway"`
 	sourcePath        string
 	sourceFingerprint string
@@ -257,18 +148,9 @@ type Node struct {
 	// project may be for its artifacts to be held or run there. Empty is
 	// internal.
 	Level string `json:"level,omitempty"`
-	// Region is whose leases the node's resources carry. Empty is this
-	// hub's own region; another region must be listed in gateway.regions.
-	Region string `json:"region,omitempty"`
 	// PeerAddr is where other nodes reach this one for direct transfers;
 	// empty means addr.
 	PeerAddr string `json:"peer_addr,omitempty"`
-}
-
-// Region is another hub that issues leases for its own machines.
-type Region struct {
-	URL   string `json:"url"`
-	Token string `json:"token"`
 }
 
 type Agent struct {
@@ -340,16 +222,9 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 // owner remembers asking for the work.
 const DefaultRecoveryQuiet = 90 * time.Second
 
-func Starter(appID, appSecret, allowedSender string) *Config {
-	feishu := Feishu{AppID: appID, AppSecret: appSecret}
-	if allowedSender != "" {
-		feishu.AllowedSenders = []string{allowedSender}
-	}
-	return StarterFeishu(feishu)
-}
-
-func StarterFeishu(feishu Feishu) *Config {
-	feishu.applyDefaults()
+// Starter is the configuration a fresh installation begins with: the three
+// supported coding agents, one workspace project and the given owner.
+func Starter(ownerID string) *Config {
 	return &Config{
 		Agents: map[string]Agent{
 			"codex": {
@@ -379,9 +254,8 @@ func StarterFeishu(feishu Feishu) *Config {
 			},
 		},
 		MCPServers: map[string]MCPServer{},
-		Feishu:     feishu,
 		Gateway: Gateway{
-			PromptTimeout: Duration(10 * time.Minute), StatePath: DefaultStatePath,
+			OwnerID: ownerID, PromptTimeout: Duration(10 * time.Minute), StatePath: DefaultStatePath,
 		},
 	}
 }
@@ -513,22 +387,11 @@ func readConfigFile(path string) (*Config, error) {
 func (c *Config) applyDefaults() {
 	c.Policies = c.Policies.WithDefaults()
 	c.Gateway.OwnerID = strings.TrimSpace(c.Gateway.OwnerID)
-	if c.Gateway.DefaultChannel == "" {
-		c.Gateway.DefaultChannel = "console"
-		if c.FeishuEnabled() {
-			c.Gateway.DefaultChannel = "feishu"
-		}
-	}
-	c.Feishu.applyDefaults()
-	c.Feishu.OwnerOpenID = strings.TrimSpace(c.Feishu.OwnerOpenID)
 	if c.Gateway.PromptTimeout <= 0 {
 		c.Gateway.PromptTimeout = Duration(10 * time.Minute)
 	}
 	if c.Gateway.RecoveryQuiet <= 0 {
 		c.Gateway.RecoveryQuiet = Duration(DefaultRecoveryQuiet)
-	}
-	if c.Gateway.OfflineReminderAfter == 0 {
-		c.Gateway.OfflineReminderAfter = Duration(DefaultOfflineReminder)
 	}
 	if c.Gateway.StatePath == "" {
 		c.Gateway.StatePath = DefaultStatePath
@@ -556,7 +419,7 @@ func (c *Config) inferDefaultProject() {
 // application's own machine. A bootstrap configuration leaves the node
 // empty; a shared declaration names it, using the hub's node identity.
 func (c *Config) LocalHomeNode(node string) bool {
-	if node == "" || node == c.Gateway.HubID {
+	if node == "" {
 		return true
 	}
 	return c.RuntimeHome != nil && node == c.RuntimeHome.Node
@@ -620,11 +483,6 @@ func (c *Config) validateTopology() error {
 	if err := c.validateHarnessDeclarations(); err != nil {
 		return err
 	}
-	if c.Gateway.Planner != "" {
-		if _, ok := c.Agents[c.Gateway.Planner]; !ok {
-			return fmt.Errorf("gateway.planner references unknown agent %q", c.Gateway.Planner)
-		}
-	}
 	if err := c.validateNodeEndpoints(); err != nil {
 		return err
 	}
@@ -661,15 +519,10 @@ func (c *Config) validateProjects() error {
 	return nil
 }
 
-// validateNodePlacement checks each node's region and level: what the hub
-// may place there.
+// validateNodePlacement checks each node's level: what the hub may place
+// there.
 func (c *Config) validateNodePlacement() error {
 	for id, item := range c.Nodes {
-		if item.Region != "" && item.Region != c.Gateway.Region && c.Gateway.Region != "" || item.Region != "" && c.Gateway.Region == "" && item.Region != "default" {
-			if _, ok := c.Gateway.Regions[item.Region]; !ok {
-				return fmt.Errorf("node %q is in region %q, which gateway.regions does not list", id, item.Region)
-			}
-		}
 		if item.Level != "" && !datalevel.Level(item.Level).Valid() {
 			return fmt.Errorf("node %q level %q is not public, internal, restricted or sealed", id, item.Level)
 		}
@@ -895,13 +748,4 @@ func (c *Config) HubLevel() datalevel.Level {
 		}
 	}
 	return level
-}
-
-// NodeRegions is the region of each node; unset means the hub's own.
-func (c *Config) NodeRegions() map[string]string {
-	out := map[string]string{}
-	for id, n := range c.Nodes {
-		out[id] = n.Region
-	}
-	return out
 }

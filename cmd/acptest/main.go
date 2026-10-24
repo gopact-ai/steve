@@ -62,7 +62,7 @@ func main() {
 	mode := home.ModeGuest
 	if _, err := os.Stat(cfg.Gateway.HomePath); err == nil {
 		assembler.SetHome(home.Dir{Path: cfg.Gateway.HomePath})
-		if cfg.Feishu.OwnerOpenID != "" {
+		if cfg.EffectiveOwnerID() != "" {
 			mode = home.ModeOwner
 		}
 	}

@@ -23,7 +23,6 @@ func (c *Config) Clone() *Config {
 	next.Harnesses = cloneValues(c.Harnesses, Harness.clone)
 	next.Nodes = maps.Clone(c.Nodes)
 	next.MCPServers = cloneValues(c.MCPServers, MCPServer.clone)
-	next.Feishu = c.Feishu.clone()
 	next.Gateway = c.Gateway.clone()
 	return &next
 }
@@ -76,21 +75,9 @@ func (m MCPServer) clone() MCPServer {
 	return m
 }
 
-func (f Feishu) clone() Feishu {
-	if f.Enabled != nil {
-		enabled := *f.Enabled
-		f.Enabled = &enabled
-	}
-	f.AllowedSenders = slices.Clone(f.AllowedSenders)
-	f.BlockedSenders = slices.Clone(f.BlockedSenders)
-	return f
-}
-
 func (g Gateway) clone() Gateway {
-	g.Peers = maps.Clone(g.Peers)
 	g.Capabilities = slices.Clone(g.Capabilities)
 	g.Tools = slices.Clone(g.Tools)
 	g.Declares = slices.Clone(g.Declares)
-	g.Regions = maps.Clone(g.Regions)
 	return g
 }

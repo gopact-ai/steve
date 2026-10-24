@@ -62,7 +62,7 @@ func HarnessManager(c *config.Config) (*harness.Manager, error) {
 func NodeConfigs(c *config.Config) map[string]node.Config {
 	out := make(map[string]node.Config, len(c.Nodes))
 	for id, item := range c.Nodes {
-		out[id] = node.Config{Addr: item.Addr, Token: item.Token, DialTimeout: time.Duration(item.Dial), Level: item.Level, Region: item.Region, PeerAddr: item.PeerAddr}
+		out[id] = node.Config{Addr: item.Addr, Token: item.Token, DialTimeout: time.Duration(item.Dial), Level: item.Level, PeerAddr: item.PeerAddr}
 	}
 	return out
 }
