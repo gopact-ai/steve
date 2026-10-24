@@ -44,9 +44,12 @@ type Capabilities interface {
 
 type Spec struct {
 	TaskID, TurnID, Agent, Project, Base string
-	Kind                                 attempt.Kind
-	Timeout                              time.Duration
-	Source                               json.RawMessage
+	// Approval is this execution's approval stance (approval.Ask, Auto or
+	// Full); empty keeps the agent's configured one.
+	Approval string
+	Kind     attempt.Kind
+	Timeout  time.Duration
+	Source   json.RawMessage
 }
 type Result struct {
 	Answer  string
@@ -179,6 +182,13 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 	return out, runErr
 }
 
+func approvalOf(spec Spec, selected roster.Candidate) string {
+	if spec.Approval != "" {
+		return spec.Approval
+	}
+	return selected.Agent.Approval
+}
+
 // scopeOf is what an attempt may change in its worktree: a task's execution
 // edits it (and pushes what it means to keep before the worktree goes);
 // planning and verification only read.
@@ -239,7 +249,7 @@ func (a *auxiliary) options(ctx context.Context, id string, workspace project.Wo
 		Candidate: selected, Requires: selected.Agent.Requires, Uses: selected.Agent.MCPServers,
 		ArmActor: "agentexec-open",
 		At:       harness.Placement{Node: selected.Node, Harness: selected.Harness}, Workdir: workspace.Path,
-		Model: selected.Agent.Model, ModelOptions: selected.Agent.Options, Approval: selected.Agent.Approval,
+		Model: selected.Agent.Model, ModelOptions: selected.Agent.Options, Approval: approvalOf(spec, selected),
 		Prompt: a.input.Prompt, Ask: ask, AskUser: askUser,
 		Observe: func(p view.Progress) {
 			EmitProgress(ctx, p)

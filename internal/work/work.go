@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agentexec"
+	"github.com/gopact-ai/steve/internal/approval"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/execution"
@@ -247,7 +248,11 @@ func (s *Service) run(ctx context.Context, id string) {
 		return
 	}
 	s.publish(id)
-	out, err := s.runner.Prompt(ctx, agentexec.Spec{TaskID: id, TurnID: "work/" + id, Agent: t.Member, Project: t.ProjectID, Kind: attempt.KindDelegate, Timeout: s.opts.Timeout}, Instructions(t.Goal), nil)
+	stance := approval.Auto
+	if s.ModeOf(id) == ModeYolo {
+		stance = approval.Full
+	}
+	out, err := s.runner.Prompt(ctx, agentexec.Spec{TaskID: id, TurnID: "work/" + id, Agent: t.Member, Project: t.ProjectID, Kind: attempt.KindDelegate, Approval: stance, Timeout: s.opts.Timeout}, Instructions(t.Goal), nil)
 	result := task.Result{Outcome: task.OutcomeOK, Answer: strings.TrimSpace(out.Answer), Attempt: out.Attempt.ID}
 	to := task.StateDone
 	if err != nil {
