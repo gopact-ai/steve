@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
@@ -42,6 +43,10 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 	if one.record.OpenID != req.CommandID || one.record.State.Harness != req.Harness || one.record.State.Binding != req.Binding {
 		one.mu.Unlock()
 		return nodewire.SessionState{}, sessionError("forbidden", "open receipt belongs to another execution")
+	}
+	if failure := one.failure; failure != nil {
+		one.mu.Unlock()
+		return s.reconcileFailedOpen(ctx, one, failure, id, req)
 	}
 	check := req
 	check.ID, check.Action = id, nodewire.SessionActionAttach
@@ -91,9 +96,16 @@ func (s *SessionService) reconcileRecordedOpenLocked(id string, req nodewire.Ses
 		return nodewire.SessionState{}, false, sessionError("forbidden", "open receipt belongs to another execution")
 	}
 	one := &ownedSession{service: s, record: record, changed: make(chan struct{})}
+	// A session a failed owner retired has its stop recorded, but its
+	// journal may refuse any further write, a newer activation's included.
+	retired := s.retiredFailed[id] && record.State.ProcessStopped
 	check := req
 	check.ID, check.Action = id, nodewire.SessionActionAttach
-	if err := one.admitLocked(check); err != nil {
+	if retired {
+		if err := checkRecordedAuthority(record, req.Authority); err != nil {
+			return nodewire.SessionState{}, false, err
+		}
+	} else if err := one.admitLocked(check); err != nil {
 		return nodewire.SessionState{}, false, err
 	}
 	if (req.Action == nodewire.SessionActionCancelOpen || req.Action == nodewire.SessionActionKill) && !one.record.State.ProcessStopped {
@@ -105,6 +117,10 @@ func (s *SessionService) reconcileRecordedOpenLocked(id string, req nodewire.Ses
 		if next.State.State != nodewire.SessionClosed {
 			next.State.State = nodewire.SessionClosed
 			saveErr = one.commitLocked(next)
+			if saveErr != nil && retired {
+				slog.Warn("steve-node: retired session's closed state not recorded", "session", id, "error", saveErr)
+				saveErr = nil
+			}
 		}
 		if next.Format == 1 {
 			if err := errors.Join(saveErr, s.endStoppedRuntime(next)); err != nil {
@@ -119,7 +135,11 @@ func (s *SessionService) reconcileRecordedOpenLocked(id string, req nodewire.Ses
 			}
 		}
 	}
-	return openRecoveryReceipt(one.stateLocked(""), req, record.OpenCancelled), false, nil
+	state := one.stateLocked("")
+	if retired {
+		state.State = nodewire.SessionClosed
+	}
+	return openRecoveryReceipt(state, req, record.OpenCancelled), false, nil
 }
 
 func openRecoveryReceipt(state nodewire.SessionState, req nodewire.SessionRequest, cancelled bool) nodewire.SessionState {

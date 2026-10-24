@@ -120,8 +120,8 @@ func sessionRecordsSchema() []string {
 		fmt.Sprintf(`CREATE TABLE sessions (
 			id TEXT PRIMARY KEY, sequence INTEGER NOT NULL, header BLOB NOT NULL,
 			command_count INTEGER NOT NULL DEFAULT 0 CHECK(command_count BETWEEN 0 AND 512),
-			question_count INTEGER NOT NULL DEFAULT 0 CHECK(question_count BETWEEN 0 AND 256),
-			retained_bytes INTEGER NOT NULL DEFAULT 0 CHECK(retained_bytes BETWEEN 0 AND %d))`, nodewire.NodeSessionMaxBytes),
+			question_count INTEGER NOT NULL DEFAULT 0 CHECK(question_count BETWEEN 0 AND %d),
+			retained_bytes INTEGER NOT NULL DEFAULT 0 CHECK(retained_bytes BETWEEN 0 AND %d))`, sessionQuestionLimit, nodewire.NodeSessionMaxBytes),
 		`CREATE TABLE session_progress (session_id TEXT PRIMARY KEY REFERENCES sessions(id), progress BLOB NOT NULL)`,
 		`CREATE TABLE session_commands (
 			session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL,
@@ -336,6 +336,21 @@ func (s *sessionRecords) ids(after string) ([]string, error) {
 func (s *sessionRecords) pending(id string) (int, error) {
 	var count int
 	err := s.db.QueryRow(`SELECT command_count FROM sessions WHERE id=?`, id).Scan(&count)
+	return count, err
+}
+
+// sessionQuestionLimit bounds sessions.question_count. It is part of the
+// schema text existing stores are validated against.
+const sessionQuestionLimit = 256
+
+// questions counts every question the journal retains for a session, across
+// all of its commands.
+func (s *sessionRecords) questions(id string) (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT question_count FROM sessions WHERE id=?`, id).Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
 	return count, err
 }
 
