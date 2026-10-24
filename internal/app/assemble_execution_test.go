@@ -41,7 +41,7 @@ func (o *openedSessions) CloseSession(context.Context, harness.Placement, string
 func TestModelProbeUsesEachMachinesProbeDirectory(t *testing.T) {
 	opened := &openedSessions{}
 	seen := models.New()
-	seen.Observe(models.Observation{Node: "node-a", Harness: "kimi", Current: "k2"})
+	seen.Observe(models.Observation{Node: "node-a", Harness: "pi", Current: "k2"})
 	probe := modelProbe{
 		prober: models.NewProber(opened, seen, nil),
 		probeDir: func(node string) string {
@@ -51,25 +51,25 @@ func TestModelProbeUsesEachMachinesProbeDirectory(t *testing.T) {
 			return ""
 		},
 		endpoints: func(context.Context) []models.Endpoint {
-			return []models.Endpoint{{Node: "node-a", Harness: "kimi", Workdir: "/state/probe"}}
+			return []models.Endpoint{{Node: "node-a", Harness: "pi", Workdir: "/state/probe"}}
 		},
 	}
 
-	err := probe.Probe(t.Context(), "node-b", "kimi")
+	err := probe.Probe(t.Context(), "node-b", "pi")
 	if err == nil || !strings.Contains(err.Error(), "no state dir known for node-b") {
 		t.Fatalf("probe on a machine without a state dir: %v", err)
 	}
 	if len(opened.at) != 0 {
 		t.Fatalf("opened %v on a machine without a state dir", opened.at)
 	}
-	if err := probe.Probe(t.Context(), "node-a", "kimi"); err == nil {
+	if err := probe.Probe(t.Context(), "node-a", "pi"); err == nil {
 		t.Fatal("probe hid the session error")
 	}
 	results := probe.ProbeAll(t.Context())
 	if len(results) != 1 || results[0].Err == nil {
 		t.Fatalf("probe all = %+v, want the known harness probed again", results)
 	}
-	want := []string{"node-a/kimi in /state/probe", "node-a/kimi in /state/probe"}
+	want := []string{"node-a/pi in /state/probe", "node-a/pi in /state/probe"}
 	if strings.Join(opened.at, ",") != strings.Join(want, ",") {
 		t.Fatalf("opened = %v, want %v", opened.at, want)
 	}

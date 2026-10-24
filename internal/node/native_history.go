@@ -28,7 +28,7 @@ func (s *Server) nativeHistorySource(source nativehistory.Source) (nativehistory
 	if source.Home != "" {
 		return source, nil
 	}
-	dirs := map[string]string{"codex": ".codex", "claude-code": ".claude", "grok": ".grok", "dsh": ".dsh"}
+	dirs := map[string]string{"codex": ".codex", "claude-code": ".claude"}
 	dir, ok := dirs[source.Harness]
 	if !ok {
 		return source, nativehistory.ErrUnsupported
@@ -105,7 +105,11 @@ func (s *Server) checkNativeResume(ctx context.Context, harnessID string) error 
 	if err != nil {
 		return err
 	}
-	host := acphost.New(s.sessions.hostConfig(harnessID, spec, broker))
+	cfg, err := s.sessions.hostConfig(harnessID, spec, broker)
+	if err != nil {
+		return err
+	}
+	host := acphost.New(cfg)
 	defer host.Close()
 	supported, err := host.SupportsResume(ctx)
 	if err != nil {

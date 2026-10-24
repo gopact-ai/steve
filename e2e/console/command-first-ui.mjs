@@ -140,7 +140,7 @@ try {
     let dialog = await open(true);
     await dialog.getByRole("button", { name: /Harness \/ command$/ }).click();
     await page.getByRole("option", { name: "unbound-acp", exact: true }).waitFor();
-    assert.equal(await page.getByRole("option", { name: "grok", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("option", { name: "pi", exact: true }).count(), 0);
     await page.getByRole("option", { name: "unbound-acp", exact: true }).click();
     const preview = dialog.getByRole("region", { name: "Machine and final command / argv", exact: true });
     assert.deepEqual(JSON.parse(await preview.locator("pre").innerText()), ["/fixture/未知 agent", "acp", "", "含 空格"]);

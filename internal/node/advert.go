@@ -14,6 +14,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/mcpscan"
 	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -180,7 +181,9 @@ func Advertise(name string, specs map[string]HarnessSpec, caps []string) nodewir
 	for _, id := range ids {
 		spec := specs[id]
 		h := nodewire.Harness{ID: id, Command: spec.Command, Models: spec.Models, Slots: spec.Slots}
-		if _, err := exec.LookPath(spec.Command); err != nil {
+		if err := harness.RetiredError(id); err != nil {
+			h.Missing = err.Error()
+		} else if _, err := exec.LookPath(spec.Command); err != nil {
 			h.Missing = fmt.Sprintf("%q not on this node's PATH", spec.Command)
 		}
 		harnesses = append(harnesses, h)

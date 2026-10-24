@@ -8,7 +8,7 @@
 
 “You” is the person. “Me” is the agent talking with you. Steve is your companion for working together.
 
-Steve is a self-hosted workspace for AI agents. Use Codex, Claude Code, Kimi Code or Grok on your own machines, bring multiple agents into a project, and keep conversations, tasks, file changes and decisions in one place.
+Steve is a self-hosted workspace for AI agents. Use Codex, Claude Code or pi on your own machines, bring multiple agents into a project, and keep conversations, tasks, file changes and decisions in one place.
 
 It works with the agent tools and sign-ins you already have. Start on one computer, then connect other machines so agents can use the tools, compute and access available there.
 

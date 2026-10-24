@@ -17,7 +17,7 @@ interface HistoryEntry {
 
 export function NativeSessionImport({ agents, nodes, projects, onClose, onImported }: { agents: Agent[]; nodes: Node[]; projects: Project[]; onClose: () => void; onImported: (conversation: string) => void }) {
     const { t, locale } = useI18n();
-    const available = agents.filter((a) => ["codex", "claude-code", "grok", "dsh"].includes(a.harness) && nodes.some((n) => n.name === a.node && n.up && n.features?.includes("native_history.v1")));
+    const available = agents.filter((a) => ["codex", "claude-code"].includes(a.harness) && nodes.some((n) => n.name === a.node && n.up && n.features?.includes("native_history.v1")));
     const [agentID, setAgentID] = useState(available[0]?.id || "");
     const effectiveAgentID = agentID || available[0]?.id || "";
     const agent = available.find((a) => a.id === effectiveAgentID);

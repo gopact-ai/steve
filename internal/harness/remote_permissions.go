@@ -8,7 +8,8 @@ import (
 )
 
 // SetRemotePermissions installs coordinator-owned execution policy without
-// registering a local command. Existing processes retain their original policy.
+// registering a local command. Existing processes retain their original
+// policy, except a pi process started under another class, which is closed.
 func (m *Manager) SetRemotePermissions(policies map[string]string) error {
 	for id, policy := range policies {
 		if id == "" {
@@ -19,8 +20,10 @@ func (m *Manager) SetRemotePermissions(policies map[string]string) error {
 		}
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.remotePermissions = maps.Clone(policies)
+	stale := m.stalePiHostsLocked()
+	m.mu.Unlock()
+	closeHosts(stale)
 	return nil
 }
 

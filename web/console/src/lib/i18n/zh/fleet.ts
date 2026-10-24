@@ -127,6 +127,7 @@ export const fleetZh = {
     "fleet.whyDetail": "：{detail}",
     "fleet.whyUnknownNode": "它所在的机器还没登记",
     "fleet.whyHarness": "机器「{machine}」上的 {tool} 用不了：{detail}",
+    "fleet.whyRetired": "{tool} 已不再受支持，不能接新的工作。Steve 支持 Codex、Claude Code 和 pi；请删除这个 Agent。",
     "fleet.whyDisk": "机器「{machine}」磁盘快满了，只剩 {free}",
     "fleet.whyModel": "机器「{machine}」没有模型 {model}",
     "fleet.whyBadRequirement": "运行条件写得不对：{detail}",

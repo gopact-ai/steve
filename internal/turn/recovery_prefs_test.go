@@ -124,15 +124,15 @@ func TestLivePreferenceResultMeansConfirmedActualNotAcceptedRequest(t *testing.T
 	c, rt, _ := selectorCoordinator(t, true)
 	r := rt.runner.(*recoveryConfigurable)
 	r.settings.Options = []view.Option{{ID: "vendor-toggle", Type: "boolean", Current: "true"}}
-	c.beginTurn("chat", "grok", func() {})
-	defer c.clearActive("chat", "grok")
-	c.setRunner("chat", "grok", r)
+	c.beginTurn("chat", "pi", func() {})
+	defer c.clearActive("chat", "pi")
+	c.setRunner("chat", "pi", r)
 	r.ignore = true
-	if c.applyLive(t.Context(), "chat", "grok", map[string]string{"vendor-toggle": "false"}) {
+	if c.applyLive(t.Context(), "chat", "pi", map[string]string{"vendor-toggle": "false"}) {
 		t.Fatal("ignored false was reported as applied")
 	}
 	r.ignore = false
-	if !c.applyLive(t.Context(), "chat", "grok", map[string]string{"vendor-toggle": "false"}) {
+	if !c.applyLive(t.Context(), "chat", "pi", map[string]string{"vendor-toggle": "false"}) {
 		t.Fatal("confirmed false was not applied")
 	}
 	if sessionPreferences(r).Options["vendor-toggle"] != "false" {

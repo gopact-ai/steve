@@ -18,7 +18,7 @@ import (
 // localDirs are where the AI tools keep skills of their own, under the
 // user's home. Steve's isolated runtime homes are not among them: what
 // is there came from the hub.
-var localDirs = []string{".codex/skills", ".claude/skills", ".grok/skills", ".kimi/skills", ".agents/skills"}
+var localDirs = []string{".codex/skills", ".claude/skills", ".pi/agent/skills", ".agents/skills"}
 
 // ScanLocal lists the skills under home's tool directories, each once by
 // its physical path — a tool that links its directory to another's

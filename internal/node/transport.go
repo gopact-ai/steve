@@ -18,11 +18,18 @@ func (r *Registry) Transport(nodeName, harnessID string) acphost.Transport {
 	return remoteTransport{registry: r, node: nodeName, harness: harnessID}
 }
 
+// PolicyTransport is Transport for a process the hub runs under policy;
+// the node fits the harness's isolation to it (pi's tool home).
+func (r *Registry) PolicyTransport(nodeName, harnessID, policy string) acphost.Transport {
+	return remoteTransport{registry: r, node: nodeName, harness: harnessID, permission: policy}
+}
+
 type remoteTransport struct {
-	plugin   *plugins.RuntimeRef
-	registry *Registry
-	node     string
-	harness  string
+	plugin     *plugins.RuntimeRef
+	registry   *Registry
+	node       string
+	harness    string
+	permission string
 }
 
 func (t remoteTransport) Name() string { return t.node + "/" + t.harness }
@@ -38,7 +45,7 @@ func (t remoteTransport) Start(ctx context.Context) (acphost.Process, error) {
 	}
 	var nonce [16]byte
 	rand.Read(nonce[:])
-	req := nodewire.OpenRequest{Kind: nodewire.StreamACP, Harness: t.harness, Plugin: t.plugin.Clone(), Stream: hex.EncodeToString(nonce[:])}
+	req := nodewire.OpenRequest{Kind: nodewire.StreamACP, Harness: t.harness, Plugin: t.plugin.Clone(), Stream: hex.EncodeToString(nonce[:]), Permission: t.permission}
 	stream, err := c.mux.Open(req)
 	if err != nil {
 		return nil, fmt.Errorf("open session stream on %q: %w", t.node, err)

@@ -519,12 +519,13 @@ func TestHostTerminalKillAfterStoppedSlotPrunedNeverRepeatsCallback(t *testing.T
 	}
 }
 
-// Kimi Code CLI 2.1.1 asks for outputByteLimit = 4 MiB on every Bash call.
-const kimiTerminalOutputLimit = 4 << 20
+// An agent may ask for a larger outputByteLimit than the host keeps, such as
+// 4 MiB on every shell call.
+const oversizedTerminalOutputLimit = 4 << 20
 
 func TestHostTerminalOversizedLimitIsClampedNotRejected(t *testing.T) {
 	h, ch, _, _, col := terminalHostFixture(t, "auto")
-	limit := uint64(kimiTerminalOutputLimit)
+	limit := uint64(oversizedTerminalOutputLimit)
 	id := terminalCreate(t, ch, `echo hi`, &limit)
 	terminalAwait(t, ch, id)
 	result, err := ch.TerminalOutput(t.Context(), &acp.TerminalOutputRequest{SessionID: "session", TerminalID: id})
@@ -541,7 +542,7 @@ func TestHostTerminalOversizedLimitIsClampedNotRejected(t *testing.T) {
 
 func TestHostTerminalOversizedLimitTruncatesFromBeginning(t *testing.T) {
 	_, ch, _, _, _ := terminalHostFixture(t, "auto")
-	limit := uint64(kimiTerminalOutputLimit)
+	limit := uint64(oversizedTerminalOutputLimit)
 	// 1.5 MiB of filler between markers exceeds the 1 MiB host cap.
 	id := terminalCreate(t, ch, `printf head; head -c 1572864 /dev/zero | tr '\0' x; printf tail`, &limit)
 	if status := terminalAwait(t, ch, id); status.ExitCode == nil || *status.ExitCode != 0 {

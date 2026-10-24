@@ -50,10 +50,10 @@ test("a failed skill bundle says so, and keeps the reason", () => {
 test("ability changes are phrased one per fact", () => {
     const line = read({
         at: "", kind: "observe.node.manifest", subject: "node-9e10", text: "…",
-        data: { changes: "hardware:amd64\t\tavailable\nharness:codex\tavailable\tunavailable\nharness:grok\tavailable\t" },
+        data: { changes: "hardware:amd64\t\tavailable\nharness:codex\tavailable\tunavailable\nharness:pi\tavailable\t" },
     });
     assert.equal(line.title, "dev-sg 的可用能力有 3 项变化");
-    assert.deepEqual(line.facts, ["hardware:amd64 新增（available）", "harness:codex：available → unavailable", "harness:grok 不再可用"]);
+    assert.deepEqual(line.facts, ["hardware:amd64 新增（available）", "harness:codex：available → unavailable", "harness:pi 不再可用"]);
 });
 
 test("a record written before the facts were kept apart is still readable", () => {

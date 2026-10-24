@@ -47,6 +47,9 @@ type chatTurn struct {
 	credentialRefresh *nodewire.MCPAuthorizationRefresh
 	recoveryRefreshed bool
 	recoveryCandidate roster.Candidate
+	// contextReset is set when the agent started a new native session in
+	// place of the saved one; the reply says so.
+	contextReset bool
 
 	// session is the conversation's record of the open session; managed
 	// says a node owns it, or that its open may still be pending there.
@@ -210,6 +213,13 @@ func (t *chatTurn) open(ctx context.Context, e *lifecycle.Execution) (harness.Ru
 	ctx = harness.WithMCPAuthorizationRefresh(ctx, t.credentialRefresh)
 	runner, err := c.open(ctx, t.saved, selected, t.workspace.Path, e.Servers)
 	t.clock.mark("session")
+	// The only fresh start in place of a resume Steve allows: pi opened
+	// under another permission class would restore that class's tools.
+	// The new session is given its instructions and the reply says so.
+	if resetter, ok := runner.(harness.ContextResetter); err == nil && ok && resetter.ContextReset() == harness.ContextResetPolicy {
+		t.contextReset = true
+		t.saved.InstructionsApplied = false
+	}
 	return runner, err
 }
 
@@ -319,7 +329,7 @@ func (t *chatTurn) compose(e *lifecycle.Execution, preface string) error {
 	injected := &Injected{
 		Project: t.binding.ProjectID, Workspace: t.workspace.Path,
 		Agent: selected.ID, Node: selected.Node, Harness: selected.Harness, Model: model, Options: options,
-		Session: e.Session.ID(), NewSession: t.saved.UpstreamID == "", Fingerprint: capabilities.Fingerprint,
+		Session: e.Session.ID(), NewSession: t.saved.UpstreamID == "" || t.contextReset, Fingerprint: capabilities.Fingerprint,
 		InstructionsBytes: len(capabilities.Instructions), Prompt: user,
 	}
 	for _, srv := range e.Servers {
@@ -369,6 +379,9 @@ func (t *chatTurn) finish(ctx context.Context, e *lifecycle.Execution) (attempt.
 		out += "\n\n" + c.text.T(i18n.StateSaveFailed, protocol.CommandNew)
 	}
 	t.clock.mark("save")
+	if t.contextReset {
+		out = c.text.T(i18n.ContextResetPolicy) + "\n\n" + out
+	}
 	if t.building {
 		var reply string
 		var applyErr error

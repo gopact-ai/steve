@@ -30,6 +30,7 @@ type PluginRuntimeProvider interface {
 
 type PluginTransports interface {
 	PluginTransport(node, harness string, ref plugins.RuntimeRef) acphost.Transport
+	PolicyPluginTransport(node, harness string, ref plugins.RuntimeRef, policy string) acphost.Transport
 }
 
 type pluginProfileKey struct{}
@@ -142,12 +143,18 @@ func (m *Manager) pluginHost(at Placement, ref plugins.RuntimeRef, cfg Config) (
 		return nil, err
 	}
 	hostCfg := acphost.Config{WorkspaceFiles: true, Command: cfg.Command, Args: cfg.Args, Env: cfg.Env, ProcessDir: cfg.ProcessDir, Permission: broker}
-	if at.Node != "" {
+	if at.Node == "" {
+		// A remote runtime's environment is the node's; the node fits pi's
+		// home to the policy the transport carries.
+		if hostCfg.Env, err = envForPolicy(cfg.Env, at.Harness, policy); err != nil {
+			return nil, err
+		}
+	} else {
 		remote, ok := m.remote.(PluginTransports)
 		if !ok {
 			return nil, fmt.Errorf("%w: remote plugin transport unavailable", plugins.ErrIncompatible)
 		}
-		hostCfg = acphost.Config{Transport: remote.PluginTransport(at.Node, at.Harness, ref), Permission: broker}
+		hostCfg = acphost.Config{Transport: remote.PolicyPluginTransport(at.Node, at.Harness, ref, policy), Permission: broker}
 	}
 	host := acphost.New(hostCfg)
 	m.hosts[key] = host

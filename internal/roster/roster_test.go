@@ -157,17 +157,17 @@ func names(cs []Candidate) []string {
 // one best at installing things. Everything else says why not.
 func TestRepairPicksAHelperOnTheSameMachine(t *testing.T) {
 	catalog := mustCatalog(t, map[string]agent.Config{
-		"kimi":    {Harness: "kimi", Node: "node-a"},
+		"pi":      {Harness: "pi", Node: "node-a"},
 		"builder": {Harness: "codex", Node: "node-a"},
 		"fixer":   {Harness: "claude-code", Node: "node-a"},
 		"shipper": {Harness: "codex", Node: "node-b"},
 		"ghost":   {Harness: "codex", Node: "node-c"},
-		"local":   {Harness: "kimi", Default: true},
+		"local":   {Harness: "pi", Default: true},
 	})
 	r := New(catalog)
 	r.SetNodes(fakeNodes{statuses: []node.Status{
 		{Name: "node-a", Up: true, Advert: nodewire.Advert{Harnesses: []nodewire.Harness{
-			{ID: "kimi", Command: "kimi", Missing: `"kimi" not on this node's PATH`},
+			{ID: "pi", Command: "pi", Missing: `"pi" not on this node's PATH`},
 			{ID: "codex", Command: "codex"},
 			{ID: "claude-code", Command: "claude-code-acp"},
 		}}},
@@ -175,14 +175,14 @@ func TestRepairPicksAHelperOnTheSameMachine(t *testing.T) {
 		{Name: "node-c", Up: false, LastError: "connection refused"},
 	}})
 	r.SetHubAdvert(func() nodewire.Advert {
-		return nodewire.Advert{Harnesses: []nodewire.Harness{{ID: "kimi", Command: "kimi", Missing: `"kimi" not on this node's PATH`}}}
+		return nodewire.Advert{Harnesses: []nodewire.Harness{{ID: "pi", Command: "pi", Missing: `"pi" not on this node's PATH`}}}
 	})
 
-	fix, err := r.Repair(t.Context(), "kimi")
+	fix, err := r.Repair(t.Context(), "pi")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fix.Helper.Agent.ID != "fixer" || fix.Command != "kimi" || fix.Broken.Missing == "" {
+	if fix.Helper.Agent.ID != "fixer" || fix.Command != "pi" || fix.Broken.Missing == "" {
 		t.Fatalf("fix = helper %s command %q broken %+v", fix.Helper.Agent.ID, fix.Command, fix.Broken)
 	}
 	if _, err := r.Repair(t.Context(), "builder"); !errors.Is(err, ErrNotBroken) {
@@ -457,5 +457,44 @@ func TestRosterBuildLogsNothingForDisplayNameModels(t *testing.T) {
 	}
 	if logged.Len() != 0 {
 		t.Fatalf("roster build logged:\n%s", logged.String())
+	}
+}
+
+// An agent on a tool Steve no longer supports is listed, says why, and is
+// never placed — wherever it is and whatever its machine reports.
+func TestRetiredHarnessAgentsAreListedButNeverEligible(t *testing.T) {
+	catalog := mustCatalog(t, map[string]agent.Config{
+		"kimi":  {Harness: "kimi"},
+		"grok":  {Harness: "grok", Node: "node-a"},
+		"dsh":   {Harness: "dsh", Node: "node-a"},
+		"codex": {Harness: "codex", Node: "node-a", Default: true},
+	})
+	r := New(catalog)
+	r.SetNodes(fakeNodes{statuses: []node.Status{{Name: "node-a", Up: true, Advert: nodewire.Advert{Harnesses: []nodewire.Harness{
+		{ID: "grok", Command: "grok"}, {ID: "dsh", Command: "dsh"}, {ID: "codex", Command: "codex"},
+	}}}}})
+	r.SetHubAdvert(func() nodewire.Advert {
+		return nodewire.Advert{Harnesses: []nodewire.Harness{{ID: "kimi", Command: "kimi"}}}
+	})
+	seen := map[string]Candidate{}
+	for _, c := range r.All(t.Context()) {
+		seen[c.Agent.ID] = c
+	}
+	for id, name := range map[string]string{"kimi": "Kimi Code", "grok": "Grok", "dsh": "DeepSeek Harness"} {
+		c, ok := seen[id]
+		if !ok || c.Eligible || c.Reason != ReasonRetired || c.ReasonDetail != name || !strings.Contains(c.Why, "no longer supported") {
+			t.Fatalf("%s = %+v (listed %v)", id, c, ok)
+		}
+	}
+	if !seen["codex"].Eligible {
+		t.Fatalf("a supported agent was blocked: %+v", seen["codex"])
+	}
+	for _, c := range r.Candidates(t.Context(), nil, nil) {
+		if c.Agent.ID != "codex" && c.Eligible {
+			t.Fatalf("retired agent offered for placement: %+v", c)
+		}
+	}
+	if _, err := r.Repair(t.Context(), "kimi"); err == nil {
+		t.Fatal("a retired agent was offered a repair")
 	}
 }

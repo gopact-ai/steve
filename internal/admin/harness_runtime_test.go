@@ -40,8 +40,6 @@ func TestHarnessRuntimeEnvSurvivesPolicySaveAndStateMove(t *testing.T) {
 	for _, tc := range []struct{ id, key string }{
 		{harness.Codex, harness.EnvCodexHome},
 		{harness.ClaudeCode, harness.EnvClaudeConfigDir},
-		{harness.Grok, harness.EnvGrokHome},
-		{harness.Kimi, harness.EnvKimiCodeHome},
 	} {
 		for _, declaration := range []struct {
 			name string
@@ -189,5 +187,28 @@ func TestHubNodeSettingsDerivesEnvOnlyForRunningHarness(t *testing.T) {
 				t.Fatal("node settings save persisted derived runtime Env")
 			}
 		})
+	}
+}
+
+// pi's derived home is the read-only one under the installation's pi
+// runtime, and a later policy save does not persist it into the file.
+func TestPiRuntimeEnvIsDerivedNotSaved(t *testing.T) {
+	cfg, path := harnessRuntimeFixture(t, harness.Pi, []string{"PI_ACP_PI_COMMAND=/opt/pi/bin/pi"})
+	base := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "runtimes", "pi")
+	running := HarnessRuntimeConfig(cfg)
+	for _, want := range []string{"PI_ACP_PI_COMMAND=/opt/pi/bin/pi", "STEVE_PI_HOMES=" + base, harness.EnvPiAgentDir + "=" + filepath.Join(base, "read-only")} {
+		if !slices.Contains(running.Harnesses[harness.Pi].Env, want) {
+			t.Fatalf("runtime Env = %v; want %s", running.Harnesses[harness.Pi].Env, want)
+		}
+	}
+	if err := config.Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(reloaded.Harnesses[harness.Pi].Env, []string{"PI_ACP_PI_COMMAND=/opt/pi/bin/pi"}) {
+		t.Fatalf("saved Env = %v", reloaded.Harnesses[harness.Pi].Env)
 	}
 }

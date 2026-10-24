@@ -57,7 +57,7 @@ func (m *selectorRuntime) CloseSession(ctx context.Context, _ harness.Placement,
 
 func selectorCoordinator(t *testing.T, configurable bool) (*Coordinator, *selectorRuntime, *fakeRunner) {
 	t.Helper()
-	catalog, err := agent.NewCatalog(map[string]agent.Config{"grok": {Harness: "grok", Default: true}})
+	catalog, err := agent.NewCatalog(map[string]agent.Config{"pi": {Harness: "pi", Default: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,15 +66,15 @@ func selectorCoordinator(t *testing.T, configurable bool) (*Coordinator, *select
 		t.Fatal(err)
 	}
 	runner := &fakeRunner{}
-	rt := &selectorRuntime{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"grok": runner}}, runner: runner}
+	rt := &selectorRuntime{fakeManager: &fakeManager{runners: map[string]*fakeRunner{"pi": runner}}, runner: runner}
 	if configurable {
 		rt.runner = &recoveryConfigurable{fakeRunner: runner, settings: view.Settings{Model: "m1", Options: []view.Option{{ID: "reasoning", Current: "low", Choices: []view.Choice{{Value: "low"}, {Value: "high"}}}}}}
 	}
 	c := newCoordinator(t, catalog, store, capability.NewAssembler(nil), rt, time.Minute)
-	if err := store.SaveSession(state.Session{ConversationID: "chat", AgentID: "grok", HarnessID: "grok", UpstreamID: "ns_retained", Workspace: workspaceOf(t, c, "grok"), Tainted: true}); err != nil {
+	if err := store.SaveSession(state.Session{ConversationID: "chat", AgentID: "pi", HarnessID: "pi", UpstreamID: "ns_retained", Workspace: workspaceOf(t, c, "pi"), Tainted: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetPreferences("chat", "grok", map[string]string{"model": "m2", "reasoning": "high"}); err != nil {
+	if err := store.SetPreferences("chat", "pi", map[string]string{"model": "m2", "reasoning": "high"}); err != nil {
 		t.Fatal(err)
 	}
 	return c, rt, runner
@@ -86,7 +86,7 @@ func TestSelectorsDiscoverWithoutResumingConversation(t *testing.T) {
 		t.Run(fmt.Sprint(configurable), func(t *testing.T) {
 			c, rt, runner := selectorCoordinator(t, configurable)
 			before := c.store.Conversation("chat")
-			got, err := c.Selectors(t.Context(), "chat", "grok")
+			got, err := c.Selectors(t.Context(), "chat", "pi")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -96,7 +96,7 @@ func TestSelectorsDiscoverWithoutResumingConversation(t *testing.T) {
 			if !configurable && !reflect.DeepEqual(got, Selectors{}) {
 				t.Fatalf("invented selectors: %+v", got)
 			}
-			if !reflect.DeepEqual(rt.opened, []string{"grok:"}) || !reflect.DeepEqual(rt.closed, []string{runner.ID()}) {
+			if !reflect.DeepEqual(rt.opened, []string{"pi:"}) || !reflect.DeepEqual(rt.closed, []string{runner.ID()}) {
 				t.Fatalf("discovery must open and close only a fresh session: opened=%v closed=%v", rt.opened, rt.closed)
 			}
 			if len(runner.seen()) != 0 || len(rt.servers[0]) != 0 {
@@ -111,12 +111,12 @@ func TestSelectorsDiscoverWithoutResumingConversation(t *testing.T) {
 
 func TestSelectorsUnavailableTargetReportsDiscoveryFailureAndCanRetry(t *testing.T) {
 	t.Parallel()
-	for _, reason := range []string{"grok executable not found", "node disconnected"} {
+	for _, reason := range []string{"pi executable not found", "node disconnected"} {
 		t.Run(reason, func(t *testing.T) {
 			c, rt, runner := selectorCoordinator(t, true)
 			before := c.store.Conversation("chat")
 			rt.failure = errors.New(reason)
-			_, err := c.Selectors(t.Context(), "chat", "grok")
+			_, err := c.Selectors(t.Context(), "chat", "pi")
 			var userErr UserError
 			if !errors.As(err, &userErr) || !strings.Contains(err.Error(), reason) || strings.Contains(err.Error(), "committed execution") {
 				t.Fatalf("expected actionable target failure, got %v", err)
@@ -125,7 +125,7 @@ func TestSelectorsUnavailableTargetReportsDiscoveryFailureAndCanRetry(t *testing
 				t.Fatal("failed discovery changed conversation or sent work")
 			}
 			rt.failure = nil
-			if _, err := c.Selectors(t.Context(), "chat", "grok"); err != nil {
+			if _, err := c.Selectors(t.Context(), "chat", "pi"); err != nil {
 				t.Fatalf("selector retry remained blocked after target returned: %v", err)
 			}
 		})
@@ -137,7 +137,7 @@ func TestSelectorsCloseDiscoveryAfterRequestCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	rt.runner = &cancelingSelector{recoveryConfigurable: rt.runner.(*recoveryConfigurable), cancel: cancel}
-	if _, err := c.Selectors(ctx, "chat", "grok"); err != nil {
+	if _, err := c.Selectors(ctx, "chat", "pi"); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(rt.closed, []string{runner.ID()}) {
@@ -150,18 +150,18 @@ func TestSelectorsCloseDiscoveryAfterRequestCancellation(t *testing.T) {
 // models is while this one is answering, so discovery runs alongside it.
 func TestSelectorsReadableWhileTheAgentIsAnswering(t *testing.T) {
 	c, rt, runner := selectorCoordinator(t, true)
-	if !c.beginTurn("chat", "grok", func() {}) {
+	if !c.beginTurn("chat", "pi", func() {}) {
 		t.Fatal("the fixture already had a turn in flight")
 	}
-	defer c.clearActive("chat", "grok")
-	got, err := c.Selectors(t.Context(), "chat", "grok")
+	defer c.clearActive("chat", "pi")
+	got, err := c.Selectors(t.Context(), "chat", "pi")
 	if err != nil {
 		t.Fatalf("choices could not be read while a turn ran: %v", err)
 	}
 	if got.Model != "m2" || len(got.Models) != 2 {
 		t.Fatalf("discovery during a turn lost choices: %+v", got)
 	}
-	if !reflect.DeepEqual(rt.opened, []string{"grok:"}) || !reflect.DeepEqual(rt.closed, []string{runner.ID()}) {
+	if !reflect.DeepEqual(rt.opened, []string{"pi:"}) || !reflect.DeepEqual(rt.closed, []string{runner.ID()}) {
 		t.Fatalf("discovery must still open and close only a fresh session: opened=%v closed=%v", rt.opened, rt.closed)
 	}
 	if len(runner.seen()) != 0 {

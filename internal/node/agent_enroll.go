@@ -106,12 +106,10 @@ func (s *Server) enrollAgentWith(ctx context.Context, req agenttools.InstallRequ
 		return agenttools.Enrollment{}, err
 	}
 	existing, exists := before.Harnesses[canonical.Harness]
-	if exists {
-		if !matchesEnrolledTool(existing, declared) {
-			return agenttools.Enrollment{}, agenttools.ErrConfigured
-		}
+	h, moved, err := enrolledSpec(existing, exists, declared)
+	if err != nil {
+		return agenttools.Enrollment{}, err
 	}
-	h := HarnessSpec{Adapter: declared.Adapter, Command: declared.Command, Args: declared.Args}
 	if declared.Adapter != "" {
 		installed, err := deps.installer.Ensure(ctx, declared.Adapter)
 		if err != nil {
@@ -126,7 +124,7 @@ func (s *Server) enrollAgentWith(ctx context.Context, req agenttools.InstallRequ
 			return agenttools.Enrollment{}, agenttools.ErrConfigured
 		}
 	}
-	if exists {
+	if exists && !moved {
 		s.settingsMu.Lock()
 		defer s.settingsMu.Unlock()
 		if err := s.checkEnrollmentRevision(req.ExpectedRevision); err != nil {
@@ -157,7 +155,7 @@ func (s *Server) enrollAgentWith(ctx context.Context, req agenttools.InstallRequ
 	if next.Harnesses == nil {
 		next.Harnesses = map[string]HarnessSpec{}
 	}
-	if _, exists := next.Harnesses[canonical.Harness]; exists {
+	if current, found := next.Harnesses[canonical.Harness]; found != exists || found && !slices.Equal(current.Env, existing.Env) {
 		return agenttools.Enrollment{}, nodewire.ErrSettingsRevisionConflict
 	}
 	// Local runtime and skill publication share the final settings boundary.
@@ -208,13 +206,37 @@ func verifyEnrollmentCandidate(selected agenttools.Candidate, discover func() []
 }
 
 func matchesEnrolledTool(existing HarnessSpec, declared agenttools.Declaration) bool {
-	if existing.Adapter != declared.Adapter {
+	if existing.Adapter != declared.Adapter || !agenttools.ToolEnvCurrent(existing.Env, declared.Env) {
 		return false
 	}
 	if declared.Adapter != "" {
 		return len(existing.Args) == 0
 	}
 	return existing.Command == declared.Command && slices.Equal(existing.Args, declared.Args)
+}
+
+// enrolledSpec is the entry enrollment publishes. A tool enrolled before
+// and found again at another path (pi moved or reinstalled) is updated in
+// place: only its path changes, and slots, models, process directory and
+// the rest stay as the operator set them. Any other difference from an
+// existing entry is the operator's own configuration and is refused.
+func enrolledSpec(existing HarnessSpec, exists bool, declared agenttools.Declaration) (HarnessSpec, bool, error) {
+	if exists && !matchesEnrolledTool(existing, declared) {
+		if !toolMoved(existing, declared) {
+			return HarnessSpec{}, false, agenttools.ErrConfigured
+		}
+		h := existing
+		h.Models = slices.Clone(existing.Models)
+		h.Env = agenttools.WithToolEnv(existing.Env, declared.Env)
+		return h, true, nil
+	}
+	return HarnessSpec{Adapter: declared.Adapter, Command: declared.Command, Args: declared.Args, Env: declared.Env}, false, nil
+}
+
+// toolMoved is an enrolled adapter tool whose only difference from what
+// discovery declares now is where the tool it drives lives.
+func toolMoved(existing HarnessSpec, declared agenttools.Declaration) bool {
+	return declared.Adapter != "" && existing.Adapter == declared.Adapter && len(existing.Args) == 0 && agenttools.ToolEnvMoved(existing.Env, declared.Env)
 }
 
 type agentToolsReply struct {

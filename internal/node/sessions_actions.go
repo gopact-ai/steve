@@ -25,7 +25,10 @@ func (s *SessionService) probeCapabilities(ctx context.Context, req nodewire.Ses
 		return nodewire.SessionState{}, sessionError("unavailable", "harness is not registered on this node")
 	}
 	broker, _ := permission.New(permission.PolicyRead)
-	cfg := s.hostConfig(req.Harness, spec, broker)
+	cfg, err := s.hostConfig(req.Harness, spec, broker)
+	if err != nil {
+		return nodewire.SessionState{}, sessionError("unavailable", err.Error())
+	}
 	key := capabilityKey(cfg)
 	if cached, ok := s.cachedCapabilities(req.Harness, key); ok {
 		return nodewire.SessionState{Binding: req.Binding, Harness: req.Harness, SupportsHTTPMCP: cached.supportsHTTPMCP}, nil

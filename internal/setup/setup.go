@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -75,6 +77,7 @@ func Run(ctx context.Context, flags Flags, opts Options) (*config.Config, error)
 		return nil, err
 	}
 	cfg := config.StarterFeishu(feishuCfg)
+	pinPiCommand(cfg, agenttools.Discover(agenttools.Options{}))
 	if err := cfg.Feishu.Validate(); err != nil {
 		return nil, err
 	}
@@ -105,6 +108,30 @@ func loadCached(path string) (config.Feishu, bool) {
 	}
 	complete := existing.Feishu.AppID != "" && existing.Feishu.AppSecret != ""
 	return existing.Feishu, complete
+}
+
+// pinPiCommand gives the starter's pi harness the absolute pi this machine
+// has, as discovery-based registration does: pi-acp otherwise starts the pi
+// on the service's PATH, which may not hold ~/.pi/agent/bin.
+func pinPiCommand(cfg *config.Config, found []agenttools.Candidate) {
+	h, ok := cfg.Harnesses["pi"]
+	if !ok {
+		return
+	}
+	for _, candidate := range found {
+		if candidate.ID != "pi" || !candidate.Installed {
+			continue
+		}
+		decl, err := agenttools.Registration(candidate)
+		if err != nil {
+			// pi is there but node/npm are not: pin it anyway, the adapter
+			// install reports what is missing.
+			decl.Env = []string{agenttools.PiCommandEnv + "=" + candidate.Executable}
+		}
+		h.Env = append(slices.Clone(h.Env), decl.Env...)
+		cfg.Harnesses["pi"] = h
+		return
+	}
 }
 
 func mergeExisting(path string, fresh *config.Config) (*config.Config, error) {

@@ -13,9 +13,11 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/pihome"
 	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -112,6 +114,12 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		s.mu.Unlock()
 		return nodewire.SessionState{}, notStarted(sessionError("unavailable", "harness is not registered on this node"))
 	}
+	// A tool Steve no longer supports never starts, whatever this node's
+	// configuration still says.
+	if err := harness.RetiredError(req.Harness); err != nil {
+		s.mu.Unlock()
+		return nodewire.SessionState{}, notStarted(sessionError("unavailable", err.Error()))
+	}
 	// Observing a previously accepted open is permitted during reconciliation;
 	// creating a native process requires a fresh execution admission as well.
 	start := req
@@ -151,6 +159,12 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	if upstream == "" && req.NativeImport != nil {
 		upstream = req.NativeImport.NativeID
 	}
+	// pi restores the tools a session recorded when it resumes; one opened
+	// under the other permission class starts anew instead.
+	class, reset := piClass(req.Harness, hostCfg), ""
+	if class != "" && upstream != "" && !pihome.Resumable(hostCfg.Env, upstream, class) {
+		upstream, reset = "", harness.ContextResetPolicy
+	}
 	starting := one.copyLocked()
 	starting.State.ProcessStopped = false
 	err := one.commitLocked(starting)
@@ -159,6 +173,11 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 		return one.stateAfterFailedOpen(err)
 	}
 	native, generation, openErr := host.OpenSession(openCtx, acp.SessionID(upstream), acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
+	if openErr != nil && class != "" && upstream != "" && pihome.Refused(hostCfg.Env, upstream, class) {
+		// The launcher refused a session file outside this class's home.
+		reset = harness.ContextResetPolicy
+		native, generation, openErr = host.OpenSession(openCtx, "", acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
+	}
 	one.recording.Wait()
 	httpMCP := false
 	if openErr == nil {
@@ -171,10 +190,17 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	} else {
 		s.forgetCapabilities(req.Harness)
 	}
+	if openErr == nil && class != "" {
+		openErr = pihome.Remember(hostCfg.Env, string(native), class)
+	}
 	one.mu.Lock()
 	next := one.copyLocked()
 	if openErr == nil {
 		next.UpstreamID = string(native)
+		if reset != "" {
+			// The native context did not continue: this session is its own.
+			next.State.ContextReset, next.State.ContextID = reset, next.State.ID
+		}
 	}
 	next.Generation = generation
 	if openErr != nil {
@@ -621,4 +647,17 @@ func (s *SessionService) processesStopped() bool {
 		}
 	}
 	return true
+}
+
+// piClass is the pi home class a session's process starts with, or ""
+// when the harness is not pi. A node-owned session has its own process,
+// started under the policy of its open.
+func piClass(harnessID string, cfg acphost.Config) string {
+	if harnessID != harness.Pi {
+		return ""
+	}
+	if cfg.Permission == nil {
+		return pihome.Class(permission.PolicyRead)
+	}
+	return pihome.Class(cfg.Permission.Policy())
 }

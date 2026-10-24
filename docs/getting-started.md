@@ -11,7 +11,17 @@ brew install gopact-ai/tap/steve
 steve init
 ```
 
-初始化会建立私有状态目录、启动后台服务、登记检测到的 Codex / Claude Code / Kimi / Grok，并打印控制台地址。初始工具权限为只读。工具本身需要先完成登录；检测到可执行文件不代表模型认证有效。
+初始化会建立私有状态目录、启动后台服务、登记检测到的 agent 工具，并打印控制台地址。初始工具权限为只读。工具本身需要先完成登录；检测到可执行文件不代表模型认证有效。
+
+Steve 支持三种 agent 工具，都通过固定版本的 ACP 适配器运行：
+
+| 工具 | 检测的可执行文件 | 适配器 |
+|---|---|---|
+| Codex | `codex` | `codex-acp` |
+| Claude Code | `claude` | `claude-agent-acp` |
+| pi | `pi` | `pi-acp` |
+
+pi 使用自己的模型配置（`~/.pi/agent` 下的 `settings.json`、`models.json`、`auth.json`），请先在终端里让 `pi` 能正常对话。
 
 macOS 用户也可以从 [Releases](https://github.com/gopact-ai/steve/releases) 下载 `Steve_<version>_macos_arm64.zip`，解压后打开 `Steve.app`。App 与 `steve init` 使用同一份本地安装。发布的 macOS App 未经 Apple 公证。
 
@@ -57,7 +67,7 @@ chmod 600 config.json
 
 用它打印的带凭据地址打开控制台。发送 `/project use workspace`，再发送第一个请求。`dash` 显示的登录地址具有 owner 权限，请作为私有入口使用。
 
-内置的 Codex 与 Claude Code ACP 适配器按固定版本下载并校验，首次使用需要访问 npm registry。其他工具及自定义适配器见[配置参考](configuration.md)。常驻服务、远程访问和备份见[运维指南](operations.md)。
+内置的 Codex、Claude Code 与 pi ACP 适配器按固定版本下载并校验，首次使用需要访问 npm registry。自备的适配器命令见[配置参考](configuration.md)。常驻服务、远程访问和备份见[运维指南](operations.md)。
 
 ## 继续使用
 

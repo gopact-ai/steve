@@ -22,6 +22,9 @@ var (
 	// opens one of these runners and chooses between Prompt and PromptTurn.
 	_ TurnRunner = (*Session)(nil)
 	_ TurnRunner = (*managedSession)(nil)
+	// A pi resume under another permission class reports a fresh start.
+	_ ContextResetter = (*Session)(nil)
+	_ ContextResetter = (*managedSession)(nil)
 )
 
 // Manager is turn's Runtime, which turn probes for plugin relocation. It is

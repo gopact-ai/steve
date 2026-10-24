@@ -209,6 +209,9 @@ type SessionState struct {
 	ProcessStopped        bool              `json:"process_stopped"`
 	TerminalAdmission     bool              `json:"terminal_admission,omitempty"`
 	PendingTerminalStarts []TerminalStart   `json:"pending_terminal_starts,omitempty"`
+	// ContextReset is set on an open's answer when the node started a new
+	// native session instead of resuming the recorded one, and says why.
+	ContextReset string `json:"context_reset,omitempty"`
 }
 
 // TerminalStart identifies a ready original terminal payload, never its command

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/home"
@@ -222,14 +223,12 @@ func TestRunOverwritesExistingConfigAndKeepsAgents(t *testing.T) {
 	}
 }
 
-func TestRunAddsMissingGrokAndKimiAgents(t *testing.T) {
+func TestRunAddsMissingPiAgent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "config.json")
 	old := config.Starter("old-app", "old-secret", "ou_old")
-	delete(old.Agents, "grok")
-	delete(old.Agents, "kimi")
-	delete(old.Harnesses, "grok")
-	delete(old.Harnesses, "kimi")
+	delete(old.Agents, "pi")
+	delete(old.Harnesses, "pi")
 	if err := config.Save(path, old); err != nil {
 		t.Fatal(err)
 	}
@@ -256,13 +255,32 @@ func TestRunAddsMissingGrokAndKimiAgents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"grok", "kimi"} {
-		if _, ok := loaded.Agents[id]; !ok {
-			t.Fatalf("missing agent %s: %#v", id, loaded.Agents)
-		}
-		if _, ok := loaded.Harnesses[id]; !ok {
-			t.Fatalf("missing harness %s: %#v", id, loaded.Harnesses)
-		}
+	if loaded.Agents["pi"].Harness != "pi" || loaded.Harnesses["pi"].Adapter != "pi-acp" {
+		t.Fatalf("missing pi: %#v %#v", loaded.Agents, loaded.Harnesses)
+	}
+}
+
+func TestStarterPinsTheDiscoveredPi(t *testing.T) {
+	cfg := config.Starter("app", "secret", "")
+	pinPiCommand(cfg, []agenttools.Candidate{{ID: "codex", Installed: true, Executable: "/opt/codex"}})
+	if len(cfg.Harnesses["pi"].Env) != 0 {
+		t.Fatalf("pi pinned without a discovered pi: %v", cfg.Harnesses["pi"].Env)
+	}
+	dir := t.TempDir()
+	pi := filepath.Join(dir, "pi")
+	if err := os.WriteFile(pi, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	found := agenttools.FromPaths(map[string]string{"pi": pi, "node": pi, "npm": pi})
+	pinPiCommand(cfg, found)
+	if got := cfg.Harnesses["pi"].Env; len(got) != 1 || got[0] != "PI_ACP_PI_COMMAND="+pi {
+		t.Fatalf("pi env = %v", got)
+	}
+	// Without node/npm the path is still pinned.
+	bare := config.Starter("app", "secret", "")
+	pinPiCommand(bare, agenttools.FromPaths(map[string]string{"pi": pi}))
+	if got := bare.Harnesses["pi"].Env; len(got) != 1 || got[0] != "PI_ACP_PI_COMMAND="+pi {
+		t.Fatalf("pi env without node = %v", got)
 	}
 }
 

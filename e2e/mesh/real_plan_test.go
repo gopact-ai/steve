@@ -57,7 +57,7 @@ func newRealFleet(t *testing.T) *realFleet {
 	manager, err := harness.NewManager(map[string]harness.Config{
 		"claude-code": {Command: "npx", Args: []string{"-y", "@agentclientprotocol/claude-agent-acp"}, Permission: "auto"},
 		"codex":       {Command: "npx", Args: []string{"-y", "@agentclientprotocol/codex-acp"}, Permission: "auto"},
-		"kimi":        {Command: "kimi", Args: []string{"acp"}, Permission: "auto"},
+		"pi":          {Command: "npx", Args: []string{"-y", "pi-acp"}, Permission: "auto"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func newRealFleet(t *testing.T) *realFleet {
 		// Real workers on the nodes, placed by capability.
 		"coder-a": {Harness: "codex", Node: nodeA, Requires: []string{"gpu"}},
 		"coder-b": {Harness: "codex", Node: nodeB, Requires: []string{"internal-net"}},
-		"kimi-b":  {Harness: "kimi", Node: nodeB, Requires: []string{"internal-net"}},
+		"pi-b":    {Harness: "pi", Node: nodeB, Requires: []string{"internal-net"}},
 	})
 	if err != nil {
 		t.Fatal(err)

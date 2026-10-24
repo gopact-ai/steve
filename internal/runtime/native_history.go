@@ -23,7 +23,7 @@ func ResumeNativeHistory(ctx context.Context, stateDir, execution string, ref na
 		return harness.Config{}, errors.New("native history needs a managed execution identity")
 	}
 	key, _ := (PluginProfiles{StateDir: stateDir}).nativeHome(ref.Harness, cfg.Env)
-	if key == "" {
+	if key == "" || !nativehistory.Importable(ref.Harness) {
 		return harness.Config{}, nativehistory.ErrUnsupported
 	}
 	if err := ctx.Err(); err != nil {
@@ -56,7 +56,7 @@ func PrepareNativeHistory(ctx context.Context, stateDir, execution string, ref n
 	}
 	profiles := PluginProfiles{StateDir: stateDir}
 	key, source := profiles.nativeHome(ref.Harness, cfg.Env)
-	if key == "" {
+	if key == "" || !nativehistory.Importable(ref.Harness) {
 		return harness.Config{}, nativehistory.ErrUnsupported
 	}
 	parent := filepath.Join(stateDir, "native-runtimes")
@@ -88,13 +88,6 @@ func PrepareNativeHistory(ctx context.Context, stateDir, execution string, ref n
 		err = PrepareCodex(home, source)
 	case harness.ClaudeCode:
 		err = PrepareClaude(home, source)
-	case harness.Dsh:
-		err = nativehistory.PrepareDshRuntime(ctx, home)
-		if err == nil {
-			err = PrepareDsh(home, source)
-		}
-	case harness.Grok:
-		err = PrepareGrok(home, source)
 	default:
 		err = nativehistory.ErrUnsupported
 	}

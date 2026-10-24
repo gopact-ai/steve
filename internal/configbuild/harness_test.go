@@ -29,7 +29,7 @@ func TestRemoteAgentDoesNotRequireCoordinatorCommandOrCredentials(t *testing.T) 
 // The starter configuration names harnesses by the IDs the runtime switches
 // on; config spells them as strings because it does not import harness.
 func TestStarterNamesHarnessesTheRuntimeKnows(t *testing.T) {
-	known := []string{harness.Codex, harness.ClaudeCode, harness.Grok, harness.Dsh, harness.Kimi}
+	known := []string{harness.Codex, harness.ClaudeCode, harness.Pi}
 	starter := config.StarterFeishu(config.Feishu{})
 	for id := range starter.Harnesses {
 		if !slices.Contains(known, id) {

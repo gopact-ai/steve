@@ -11,4 +11,5 @@ var (
 	_ artifact.DirectNodes         = (*Registry)(nil)
 	_ harness.NodeSessionTransport = (*Registry)(nil)
 	_ harness.PluginTransports     = (*Registry)(nil)
+	_ harness.PolicyTransports     = (*Registry)(nil)
 )

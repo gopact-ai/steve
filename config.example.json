@@ -68,21 +68,11 @@
       "skills": [],
       "mcp_servers": []
     },
-    "grok": {
+    "pi": {
       "aliases": [
-        "grok",
-        "grok-build"
+        "pi"
       ],
-      "harness": "grok",
-      "skills": [],
-      "mcp_servers": []
-    },
-    "kimi": {
-      "aliases": [
-        "kimi",
-        "kimi-code"
-      ],
-      "harness": "kimi",
+      "harness": "pi",
       "skills": [],
       "mcp_servers": []
     }
@@ -102,21 +92,12 @@
       "args": [],
       "permission": "read"
     },
-    "grok": {
-      "command": "/home/me/.local/bin/grok",
-      "args": [
-        "agent",
-        "--no-leader",
-        "stdio"
-      ],
-      "permission": "read"
-    },
-    "kimi": {
-      "command": "/home/me/.local/bin/kimi",
-      "args": [
-        "acp"
-      ],
-      "permission": "read"
+    "pi": {
+      "adapter": "pi-acp",
+      "permission": "read",
+      "env": [
+        "PI_ACP_PI_COMMAND=/home/me/.local/bin/pi"
+      ]
     }
   },
   "mcp_servers": {

@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 )
 
 var ErrUnsupported = errors.New("native session history format is unsupported")
@@ -73,26 +71,21 @@ func sourceRoot(source Source) (*os.Root, error) {
 	if !filepath.IsAbs(source.Home) {
 		return nil, errors.New("native history home must be an absolute path")
 	}
-	switch source.Harness {
-	case "codex", "claude-code", "grok", "dsh":
-	default:
+	if !Importable(source.Harness) {
 		return nil, fmt.Errorf("%w: %s", ErrUnsupported, source.Harness)
 	}
 	return os.OpenRoot(source.Home)
 }
 
+// Importable reports whether Steve reads this harness's native session
+// history. pi keeps its own sessions, which Steve does not import.
+func Importable(harness string) bool { return harness == "codex" || harness == "claude-code" }
+
 func validNativeID(id string) bool {
 	return id != "" && len(id) <= 256 && !strings.HasPrefix(id, "ns_") && !strings.ContainsAny(id, "/\\\x00\r\n") && id != "." && id != ".."
 }
 
-func validSourceNativeID(harness, id string) bool {
-	if harness != "dsh" {
-		return validNativeID(id)
-	}
-	// DSH encodes opaque IDs into safe filenames itself. Chat/thread IDs
-	// can contain slashes; Steve selects them by metadata, never as paths.
-	return id != "" && id != "." && id != ".." && len(id) <= 256 && utf8.ValidString(id) && strings.IndexFunc(id, unicode.IsControl) < 0
-}
+func validSourceNativeID(_, id string) bool { return validNativeID(id) }
 
 func clipped(value string) string {
 	runes := []rune(strings.TrimSpace(value))

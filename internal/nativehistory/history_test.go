@@ -23,7 +23,6 @@ func TestNativeSnapshotsPreserveOnlySelectedHistoryAndSurviveSourceRemoval(t *te
 	for _, fixture := range []struct{ harness, path, data, id string }{
 		{"codex", "sessions/2026/09/14/rollout-original.jsonl", `{"type":"session_meta","payload":{"id":"native-codex","cwd":"/work"}}` + "\n", "native-codex"},
 		{"claude-code", "projects/-work/native-claude.jsonl", `{"type":"queue-operation"}` + "\n" + `{"type":"user","sessionId":"native-claude","cwd":"/work","message":{"content":[{"type":"text","text":"retain marker"}]}}` + "\n", "native-claude"},
-		{"grok", "sessions/%2Fwork/native-grok/summary.json", `{"info":{"session_id":"native-grok"},"generated_title":"retained Grok context"}`, "native-grok"},
 	} {
 		t.Run(fixture.harness, func(t *testing.T) {
 			home := t.TempDir()
@@ -32,9 +31,6 @@ func TestNativeSnapshotsPreserveOnlySelectedHistoryAndSurviveSourceRemoval(t *te
 			writeFixture(t, home, "auth.json", "not history")
 			if fixture.harness == "claude-code" {
 				writeFixture(t, home, "projects/-work/native-claude/subagents/agent-1.jsonl", "selected adjunct")
-			}
-			if fixture.harness == "grok" {
-				writeFixture(t, home, "sessions/%2Fwork/native-grok/updates.jsonl", "selected transcript")
 			}
 			source := Source{Harness: fixture.harness, Home: home}
 			entries, err := List(t.Context(), source)
@@ -117,6 +113,21 @@ func TestImportRefusesChangedAndLinkedHistory(t *testing.T) {
 	for _, id := range []string{"../outside", "ns_managed", strings.Repeat("x", 257)} {
 		if validNativeID(id) {
 			t.Fatalf("invalid native id accepted: %q", id)
+		}
+	}
+}
+
+// Only Codex and Claude Code histories are imported; the retired tools'
+// readers are gone and pi keeps its own sessions.
+func TestOnlySupportedHistoriesAreImportable(t *testing.T) {
+	for harness, want := range map[string]bool{"codex": true, "claude-code": true, "pi": false, "grok": false, "dsh": false, "kimi": false} {
+		if Importable(harness) != want {
+			t.Errorf("Importable(%s) = %v", harness, !want)
+		}
+		if !want {
+			if _, err := List(t.Context(), Source{Harness: harness, Home: t.TempDir()}); !errors.Is(err, ErrUnsupported) {
+				t.Errorf("%s history listed: %v", harness, err)
+			}
 		}
 	}
 }
