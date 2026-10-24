@@ -8,7 +8,6 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/memory"
 )
@@ -25,7 +24,7 @@ func startServerIn(t *testing.T, text i18n.Catalog) (*Server, *fakeSender) {
 		t.Fatal(err)
 	}
 	sender := &fakeSender{}
-	s.BindChannel("feishu", feishu.Messenger{API: sender})
+	s.BindChannel("feishu", feishuMessenger{API: sender})
 	s.SetDefaultChannel("feishu")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

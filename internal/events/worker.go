@@ -8,12 +8,39 @@ import (
 	"github.com/gopact-ai/steve/internal/durable"
 	"github.com/gopact-ai/steve/internal/identity"
 	"github.com/gopact-ai/steve/internal/ledger"
-	"github.com/gopact-ai/steve/internal/work"
 )
 
+// WorkRequest is the work a claimed delivery asks for. Key is stable per
+// delivery, so a repeated submission must resolve to the same work.
+type WorkRequest struct {
+	Key          string
+	Conversation string
+	Project      string
+	Instruction  string
+	Context      json.RawMessage
+	Causation    string
+}
+
+// WorkStatus reports submitted work. Failed means the work could not run at
+// all; otherwise State is the outcome (StateDone, StateFailed, StateCancelled)
+// or any other value while it is still running.
+type WorkStatus struct {
+	Failed bool
+	Detail string
+	State  string
+	Error  string
+}
+
+// Worker runs the work that deliveries ask for. The task service implements
+// it; events stays independent of the product layer.
+type Worker interface {
+	SubmitWork(ctx context.Context, p identity.Principal, r WorkRequest) (receipt string, err error)
+	WorkStatus(ctx context.Context, p identity.Principal, receipt string) (WorkStatus, error)
+}
+
 // Pump makes one bounded pass. More than one owner can call it: atomic fanout,
-// claim tokens and the Work service's stable IDs decide who advances a record.
-func (s *Service) Pump(ctx context.Context, intelligence *work.Service) error {
+// claim tokens and the Worker's stable keys decide who advances a record.
+func (s *Service) Pump(ctx context.Context, intelligence Worker) error {
 	var failures []error
 	ids, err := s.scan.NextStates(ctx, s.Book, DeliveryKind, []string{StatePending}, 32)
 	if err != nil {
@@ -46,7 +73,7 @@ func (s *Service) Pump(ctx context.Context, intelligence *work.Service) error {
 	return errors.Join(failures...)
 }
 
-func (s *Service) runWork(ctx context.Context, intelligence *work.Service, id string) error {
+func (s *Service) runWork(ctx context.Context, intelligence Worker, id string) error {
 	claimed, err := s.claim(ctx, identity.Principal{Owner: true}, id)
 	if err != nil {
 		return err
@@ -58,7 +85,7 @@ func (s *Service) runWork(ctx context.Context, intelligence *work.Service, id st
 	if err != nil {
 		return err
 	}
-	record, err := intelligence.Submit(ctx, identity.Principal{Owner: true}, work.Request{Key: "event:" + id, Conversation: claimed.Delivery.Rule.Conversation, Project: claimed.Delivery.Rule.Project, Instruction: claimed.Delivery.Rule.Instruction, Context: raw, Causation: id})
+	receipt, err := intelligence.SubmitWork(ctx, identity.Principal{Owner: true}, WorkRequest{Key: "event:" + id, Conversation: claimed.Delivery.Rule.Conversation, Project: claimed.Delivery.Rule.Project, Instruction: claimed.Delivery.Rule.Instruction, Context: raw, Causation: id})
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -76,10 +103,10 @@ func (s *Service) runWork(ctx context.Context, intelligence *work.Service, id st
 			return saveDelivery(tx, d)
 		})
 	}
-	return s.AcceptWork(ctx, id, claimed.Delivery.Token, record.ID)
+	return s.AcceptWork(ctx, id, claimed.Delivery.Token, receipt)
 }
 
-func (s *Service) trackWork(ctx context.Context, intelligence *work.Service, id string) error {
+func (s *Service) trackWork(ctx context.Context, intelligence Worker, id string) error {
 	d, found, err := durable.Read[Delivery](ctx, s.Book, DeliveryKind, id)
 	if err != nil || !found {
 		return err
@@ -87,18 +114,18 @@ func (s *Service) trackWork(ctx context.Context, intelligence *work.Service, id 
 	if d.State != StateAccepted {
 		return nil
 	}
-	record, result, err := intelligence.Status(ctx, identity.Principal{Owner: true}, d.Receipt)
+	status, err := intelligence.WorkStatus(ctx, identity.Principal{Owner: true}, d.Receipt)
 	if err != nil {
 		return s.FinishWork(ctx, id, StateUnknown, err.Error())
 	}
-	if record.State == work.StateFailed {
-		return s.FinishWork(ctx, id, StateFailed, record.Detail)
+	if status.Failed {
+		return s.FinishWork(ctx, id, StateFailed, status.Detail)
 	}
-	switch result.State {
+	switch status.State {
 	case StateDone:
 		return s.FinishWork(ctx, id, StateDone, "")
 	case StateFailed, StateCancelled:
-		return s.FinishWork(ctx, id, StateFailed, result.Error)
+		return s.FinishWork(ctx, id, StateFailed, status.Error)
 	}
 	return nil
 }
