@@ -7,8 +7,8 @@ GO ?= go
 console:
 	cd web/console && npm ci --no-audit --no-fund && npm run build
 
-# v1 rebuild: cmd/steve returns with the new product layer (P2).
 build:
+	CGO_ENABLED=0 $(GO) build -o steve ./cmd/steve
 	CGO_ENABLED=0 $(GO) build -o steve-node ./cmd/steve-node
 
 test:

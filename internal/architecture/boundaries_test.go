@@ -34,7 +34,7 @@ var layers = map[string][]string{
 		"task", "text", "view", "workspacepath",
 	},
 	"product": {"agentexec", "approvals", "feed", "work"},
-	"entry":   {},
+	"entry":   {"server"},
 }
 
 var rank = map[string]int{"kernel": 0, "product": 1, "entry": 2}

@@ -14,7 +14,7 @@ builds:
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags:
-      - -s -w -X github.com/gopact-ai/steve/internal/app.ReleaseVersion={{ .Version }}
+      - -s -w -X main.ReleaseVersion={{ .Version }}
   - id: steve-node
     main: ./cmd/steve-node
     binary: steve-node
