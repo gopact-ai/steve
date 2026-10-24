@@ -173,3 +173,31 @@ func TestAnEndedExecutionExpiresItsCard(t *testing.T) {
 		t.Fatalf("card = %+v", got)
 	}
 }
+
+func TestDenyRefusesAtOnceWithARecord(t *testing.T) {
+	tk := &tasks{mode: ModeDeny, waiting: map[string]int{}}
+	s := New(tk, nil, time.Minute)
+	out, err := s.Ask(taskCtx("9"), permission.Ask{ToolName: "gh pr merge 3", Options: options})
+	if err != nil || out.OptionID != "no" {
+		t.Fatalf("deny = %+v %v", out, err)
+	}
+	a, err := s.AskUser(taskCtx("9"), view.Question{Message: "merge?"})
+	if err != nil || a.Decision != "decline" || a.Chosen() {
+		t.Fatalf("question = %+v %v", a, err)
+	}
+	for _, id := range []string{"1", "2"} {
+		if card, _ := s.Get(id); card.State != StateRejected || !card.Auto {
+			t.Fatalf("record %s = %+v", id, card)
+		}
+	}
+	if len(s.Open()) != 0 || tk.count("9") != 0 {
+		t.Fatal("deny waited on the person")
+	}
+	events := feed.New("e", 0)
+	s.feed = events
+	s.Ask(taskCtx("9"), permission.Ask{ToolName: "again", Options: options})
+	all, _ := events.After(feed.Cursor{Epoch: "e"})
+	if len(all) != 1 || all[0].Type != EventResolved {
+		t.Fatalf("an automatic decision published %+v", all)
+	}
+}

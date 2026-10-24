@@ -16,12 +16,14 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/approvals"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/artifact/gitrepo"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/chief"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/configbuild"
 	"github.com/gopact-ai/steve/internal/execution"
@@ -37,6 +39,7 @@ import (
 	"github.com/gopact-ai/steve/internal/runtime"
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/thread"
 	"github.com/gopact-ai/steve/internal/work"
 )
 
@@ -46,6 +49,8 @@ type Server struct {
 	Feed      *feed.Feed
 	Work      *work.Service
 	Approvals *approvals.Service
+	Thread    *thread.Service
+	Chief     *chief.Chief
 	Token     string
 
 	book     *ledger.Ledger
@@ -73,60 +78,88 @@ func New(parent context.Context, cfg *config.Config, opts Options) (s *Server, e
 			s = nil
 		}
 	}()
-	stateDir := filepath.Dir(cfg.Gateway.StatePath)
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		return s, err
-	}
-	unlock, err := runtime.AcquireLock(stateDir)
-	if err != nil {
-		return s, err
-	}
-	s.defer_(unlock)
 	if err := cfg.ValidateChannels(); err != nil {
 		return s, err
 	}
-	hubID, err := resolveHubID(stateDir)
+	skillMap, err := s.openRuntime()
 	if err != nil {
 		return s, err
 	}
-	catalog, err := cfg.AgentCatalog()
+	k, err := s.openKernel()
 	if err != nil {
 		return s, err
 	}
+	err = s.assembleProduct(k, skillMap, opts)
+	return s, err
+}
 
-	// Runtimes: each harness gets an isolated home, and the configured
-	// skills are installed into it.
+// kernel is what the product services are built on.
+type kernel struct {
+	catalog    *agent.Catalog
+	fleet      *roster.Roster
+	attempts   *attempt.Service
+	artifacts  *artifact.Store
+	tasks      *task.Store
+	executions *execution.Registry
+}
+
+// openRuntime takes the state directory and prepares the harnesses: each
+// gets an isolated home with the configured skills installed.
+func (s *Server) openRuntime() (*skills.Map, error) {
+	cfg := s.Config
+	stateDir := filepath.Dir(cfg.Gateway.StatePath)
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return nil, err
+	}
+	unlock, err := runtime.AcquireLock(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	s.defer_(unlock)
 	harnesses := make([]string, 0, len(cfg.Harnesses))
 	for name := range cfg.Harnesses {
 		harnesses = append(harnesses, name)
 	}
 	if err := runtime.PrepareSelected(stateDir, harnesses); err != nil {
-		return s, err
+		return nil, err
 	}
 	skillMap, err := skills.Setup(stateDir)
 	if err != nil {
-		return s, err
+		return nil, err
 	}
 	live := &skills.Live{Map: skillMap, Dests: runtime.SelectedSkillDests(stateDir, harnesses)}
 	if err := live.Apply(); err != nil {
-		return s, err
+		return nil, err
 	}
 	s.manager, err = configbuild.HarnessManager(cfg)
 	if err != nil {
-		return s, err
+		return nil, err
 	}
 	s.defer_(s.manager.Stop)
+	return skillMap, nil
+}
 
+// openKernel opens the ledger and everything that keeps executions correct:
+// machines, projects, the roster, attempts (classifying what a previous
+// process left), artifacts, tasks and the execution registry.
+func (s *Server) openKernel() (k kernel, err error) {
+	cfg, ctx := s.Config, s.ctx
+	stateDir := filepath.Dir(cfg.Gateway.StatePath)
+	hubID, err := resolveHubID(stateDir)
+	if err != nil {
+		return k, err
+	}
+	if k.catalog, err = cfg.AgentCatalog(); err != nil {
+		return k, err
+	}
 	s.book, err = ledger.Open(stateDir, ledger.Options{})
 	if errors.Is(err, ledger.ErrRecoveryRequired) {
-		return s, fmt.Errorf("%w\nrun: steve ledger recover --config <config>", err)
+		return k, fmt.Errorf("%w\nrun: steve ledger recover --config <config>", err)
 	}
 	if err != nil {
-		return s, err
+		return k, err
 	}
 	s.defer_(func() { s.book.Close() })
-
-	// Machines and projects.
 	nodewire.SetSelf(s.nodeName)
 	s.nodes = node.NewRegistry(hubID, configbuild.NodeConfigs(cfg))
 	s.defer_(func() { s.nodes.Close() })
@@ -135,54 +168,60 @@ func New(parent context.Context, cfg *config.Config, opts Options) (s *Server, e
 	projects.SetHubID(hubID)
 	localized := i18n.WithLocale(ctx, i18n.FromLang(cfg.EffectiveLocale()))
 	if err := (configbuild.ProjectController{Store: projects}).Reconcile(localized, cfg); err != nil {
-		return s, fmt.Errorf("reconcile configured projects: %w", err)
+		return k, fmt.Errorf("reconcile configured projects: %w", err)
 	}
-	fleet := roster.New(catalog)
-	fleet.SetNodes(s.nodes)
-	fleet.SetHubCapabilities(cfg.Gateway.Capabilities)
-	fleet.SetHubAdvert(func() nodewire.Advert { return hubAdvert(s.nodeName, cfg) })
-	fleet.SetHubLevel(cfg.HubLevel())
-
-	// Executions: attempts left by a previous process are classified
-	// before anything new runs.
-	attempts := attempt.New(s.book)
-	recovery, err := attempts.PrepareRecovery(ctx, "startup")
+	k.fleet = roster.New(k.catalog)
+	k.fleet.SetNodes(s.nodes)
+	k.fleet.SetHubCapabilities(cfg.Gateway.Capabilities)
+	k.fleet.SetHubAdvert(func() nodewire.Advert { return hubAdvert(s.nodeName, cfg) })
+	k.fleet.SetHubLevel(cfg.HubLevel())
+	k.attempts = attempt.New(s.book)
+	recovery, err := k.attempts.PrepareRecovery(ctx, "startup")
 	if err != nil {
-		return s, fmt.Errorf("prepare previous executions for recovery: %w", err)
+		return k, fmt.Errorf("prepare previous executions for recovery: %w", err)
 	}
 	for _, r := range recovery.Quarantined {
 		slog.Warn("steve: quarantined previous writer", "attempt", r.ID, "task", r.TaskID, "node", r.Node)
 	}
-	artifacts := artifact.New(filepath.Join(stateDir, "artifacts"), s.book, projects, s.nodes)
-	p := cfg.Policies
+	k.artifacts = openArtifacts(ctx, stateDir, s.book, projects, s.nodes, cfg.Policies)
+	if k.tasks, err = task.OpenLedger(s.book); err != nil {
+		return k, fmt.Errorf("open tasks: %w", err)
+	}
+	k.tasks.SetBudget(cfg.Gateway.TaskMaxTurns, time.Duration(cfg.Gateway.TaskMaxElapsed))
+	k.executions = execution.New(ctx, k.tasks)
+	k.artifacts.SetExecution(k.executions)
+	return k, nil
+}
+
+func openArtifacts(ctx context.Context, stateDir string, book *ledger.Ledger, projects *project.Store, nodes *node.Registry, p config.Policies) *artifact.Store {
+	artifacts := artifact.New(filepath.Join(stateDir, "artifacts"), book, projects, nodes)
 	artifacts.Limits = gitrepo.Limits{MaxFiles: p.Snapshot.MaxFiles, MaxBytes: p.Snapshot.MaxBytes, MaxFileBytes: p.Snapshot.MaxFileBytes}
 	artifacts.Review = gitrepo.ReviewLimits{MaxChanges: p.Review.MaxChanges, MaxDiffBytes: p.Review.MaxDiffBytes, MaxFileBytes: p.Review.MaxFileBytes, MaxEntries: p.Review.MaxEntries, Timeout: time.Duration(p.Review.Timeout)}
 	if _, err := artifacts.RecoverLandings(ctx); err != nil {
 		slog.Error("steve: recover landings", "error", err)
 	}
-	tasks, err := task.OpenLedger(s.book)
-	if err != nil {
-		return s, fmt.Errorf("open tasks: %w", err)
-	}
-	tasks.SetBudget(cfg.Gateway.TaskMaxTurns, time.Duration(cfg.Gateway.TaskMaxElapsed))
-	executions := execution.New(ctx, tasks)
-	artifacts.SetExecution(executions)
+	return artifacts
+}
 
-	// Product.
+// assembleProduct puts the feed, the task service, approvals, the thread and
+// the chief of staff on the kernel.
+func (s *Server) assembleProduct(k kernel, skillMap *skills.Map, opts Options) error {
+	cfg, ctx := s.Config, s.ctx
 	epoch, err := randomID()
 	if err != nil {
-		return s, err
+		return err
 	}
 	s.Feed = feed.New(epoch, 4096)
-	runner := agentexec.New(s.manager, fleet, artifacts, attempts, executions, work.Budget{Tasks: tasks})
+	runner := agentexec.New(s.manager, k.fleet, k.artifacts, k.attempts, k.executions, work.Budget{Tasks: k.tasks})
 	runner.SetCapabilities(guestCapabilities{configbuild.CapabilityAssembler(cfg).SetSkills(skillMap)})
-	s.Work = work.New(ctx, s.book, tasks, runner, executions, s.Feed, work.Options{Agent: catalog.Default().ID, Project: cfg.Gateway.DefaultProject, Mode: work.ModeAuto})
-	s.Approvals = approvals.New(s.Work, s.Feed, opts.ApprovalTimeout)
+	s.Work = work.New(ctx, s.book, k.tasks, runner, k.executions, s.Feed, work.Options{Agent: k.catalog.Default().ID, Project: cfg.Gateway.DefaultProject, Mode: work.ModeAuto})
+	s.Approvals = approvals.New(approvalModes{s.Work, k.tasks}, s.Feed, opts.ApprovalTimeout)
 	runner.SetQuestionHandlers(s.Approvals.Ask, s.Approvals.AskUser)
 	runner.SetObserver(s.Work.Observe)
-
+	s.Thread = thread.New(s.book, s.Feed)
+	s.Chief = chief.New(ctx, s.Thread, s.Work, k.tasks, runner, chief.Options{Agent: chiefAgent(cfg, k.catalog.Default().ID), Project: cfg.Gateway.DefaultProject, Locale: cfg.EffectiveLocale()})
 	s.Token = config.ConsoleToken(cfg.Gateway.ReadModelToken)
-	return s, nil
+	return nil
 }
 
 // Close stops what is running and releases the stores, in reverse order.
@@ -191,6 +230,9 @@ func (s *Server) Close() {
 		return
 	}
 	s.cancel()
+	if s.Chief != nil {
+		s.Chief.Wait()
+	}
 	if s.Work != nil {
 		s.Work.Wait()
 	}
@@ -201,6 +243,31 @@ func (s *Server) Close() {
 }
 
 func (s *Server) defer_(f func()) { s.closers = append(s.closers, f) }
+
+// chiefAgent is the agent the chief of staff runs as: STEVE_CHIEF_AGENT
+// when set, otherwise the default agent.
+func chiefAgent(cfg *config.Config, fallback string) string {
+	if id := strings.TrimSpace(os.Getenv("STEVE_CHIEF_AGENT")); id != "" {
+		if _, ok := cfg.Agents[id]; ok {
+			return id
+		}
+	}
+	return fallback
+}
+
+// approvalModes answers for the task service, except that the chief's own
+// turns are refused whatever they ask.
+type approvalModes struct {
+	*work.Service
+	tasks *task.Store
+}
+
+func (m approvalModes) ModeOf(id string) string {
+	if t, ok := m.tasks.Get(id); ok && chief.IsTurn(t) {
+		return approvals.ModeDeny
+	}
+	return m.Service.ModeOf(id)
+}
 
 // guestCapabilities gives executors the shared guest identity and the MCP
 // servers their agent is configured with; the owner's private home is not

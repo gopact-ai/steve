@@ -33,7 +33,7 @@ var layers = map[string][]string{
 		"provider", "roster", "runtime", "sameorigin", "schedule", "skills", "stableport", "state",
 		"task", "text", "view", "workspacepath",
 	},
-	"product": {"agentexec", "approvals", "feed", "work"},
+	"product": {"agentexec", "approvals", "chief", "feed", "thread", "work"},
 	"entry":   {"server"},
 }
 

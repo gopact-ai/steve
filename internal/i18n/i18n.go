@@ -1478,6 +1478,18 @@ const (
 	ClusterContentRecordPending      Key = "cluster_content_record_pending"
 	ClusterMaintenanceFailed         Key = "cluster_maintenance_failed"
 	ClusterMaintenanceDone           Key = "cluster_maintenance_done"
+	ChiefTaskDone                    Key = "chief_task_done"
+	ChiefTaskStopped                 Key = "chief_task_stopped"
+	ChiefTaskFailed                  Key = "chief_task_failed"
+	ChiefTaskFailedQuota             Key = "chief_task_failed_quota"
+	ChiefTaskFailedTransport         Key = "chief_task_failed_transport"
+	ChiefUnavailable                 Key = "chief_unavailable"
+	ChiefClassQuota                  Key = "chief_class_quota"
+	ChiefClassTransport              Key = "chief_class_transport"
+	ChiefUnparsed                    Key = "chief_unparsed"
+	ChiefNotStarted                  Key = "chief_not_started"
+	ChiefNotStopped                  Key = "chief_not_stopped"
+	ChiefStarted                     Key = "chief_started"
 )
 
 type Catalog struct {

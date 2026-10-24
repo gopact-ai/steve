@@ -23,6 +23,9 @@ var transportMarks = []string{"connection refused", "connection reset", "broken 
 // classify reads an execution error into one of the failure classes. Quota
 // wins over transport: an upstream 503 arrives as a transport error with the
 // status in its text, and the useful answer is "the model is unavailable".
+// Classify is exported for callers that report failures of their own.
+func Classify(err error) string { return classify(err) }
+
 func classify(err error) string {
 	if err == nil {
 		return ""

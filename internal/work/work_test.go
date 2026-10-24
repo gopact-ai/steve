@@ -256,3 +256,22 @@ func TestSubmitRefusesIncompleteRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestFinishedListenersHearTheFinalCardOnce(t *testing.T) {
+	w := newWorld(t)
+	heard := make(chan Card, 4)
+	w.svc.OnFinished(func(c Card) { heard <- c })
+	card, _ := w.svc.Submit(t.Context(), Request{Key: "k", Goal: "g"})
+	w.svc.Wait()
+	select {
+	case c := <-heard:
+		if c.ID != card.ID || c.State != StateDone {
+			t.Fatalf("heard %+v", c)
+		}
+	default:
+		t.Fatal("not told")
+	}
+	if len(heard) != 0 {
+		t.Fatal("told twice")
+	}
+}

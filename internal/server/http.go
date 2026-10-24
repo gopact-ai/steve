@@ -13,6 +13,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/approvals"
 	"github.com/gopact-ai/steve/internal/feed"
+	"github.com/gopact-ai/steve/internal/thread"
 	"github.com/gopact-ai/steve/internal/work"
 )
 
@@ -35,6 +36,8 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"approvals": nonNil(s.Approvals.Open())})
 	})
 	mux.HandleFunc("POST /v2/approvals/{id}", s.resolveApproval)
+	mux.HandleFunc("POST /v2/messages", s.postMessage)
+	mux.HandleFunc("GET /v2/messages/status", s.messageStatus)
 	return s.authenticate(mux)
 }
 
@@ -60,6 +63,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 // Snapshot is everything a client draws, with the cursor to follow from.
 type Snapshot struct {
 	Cursor    string            `json:"cursor"`
+	Messages  []thread.Message  `json:"messages"`
 	Tasks     []work.Card       `json:"tasks"`
 	Approvals []approvals.Card  `json:"approvals"`
 	Server    map[string]string `json:"server"`
@@ -69,7 +73,12 @@ func (s *Server) snapshot(w http.ResponseWriter, r *http.Request) {
 	// The cursor is taken first: anything that changes while the state is
 	// read is replayed after it, so nothing falls between the two.
 	cursor := s.Feed.Head()
-	writeJSON(w, http.StatusOK, Snapshot{Cursor: encodeCursor(cursor), Tasks: nonNil(s.Work.List()), Approvals: nonNil(s.Approvals.Open()), Server: map[string]string{"node": s.nodeName}})
+	messages, err := s.Thread.Recent(r.Context(), thread.Main, 200)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, Snapshot{Cursor: encodeCursor(cursor), Messages: nonNil(messages), Tasks: nonNil(s.Work.List()), Approvals: nonNil(s.Approvals.Open()), Server: map[string]string{"node": s.nodeName}})
 }
 
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
@@ -212,6 +221,48 @@ func (s *Server) resolveApproval(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusOK, card)
 	}
+}
+
+type messageRequest struct {
+	ClientNonce string `json:"client_nonce"`
+	Text        string `json:"text"`
+}
+
+// postMessage accepts the owner's message. 202 promises only that it is
+// stored; Steve's answer arrives on the stream.
+func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
+	var in messageRequest
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if strings.TrimSpace(in.ClientNonce) == "" {
+		writeError(w, http.StatusBadRequest, "invalid", "client_nonce is required")
+		return
+	}
+	m, _, err := s.Thread.Post(r.Context(), thread.Message{Role: thread.RoleOwner, Text: in.Text, ClientNonce: in.ClientNonce})
+	if errors.Is(err, thread.ErrInvalid) {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "message": m})
+}
+
+// messageStatus tells a client that lost a reply whether its nonce landed.
+func (s *Server) messageStatus(w http.ResponseWriter, r *http.Request) {
+	m, found, err := s.Thread.ByNonce(r.Context(), thread.Main, r.URL.Query().Get("client_nonce"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if !found {
+		writeJSON(w, http.StatusOK, map[string]any{"accepted": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "message": m})
 }
 
 func writeWorkError(w http.ResponseWriter, err error) {

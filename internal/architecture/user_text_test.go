@@ -36,6 +36,7 @@ var userTextExempt = map[string]string{
 	"cmd/mockagent/main.go#mockPlan":      textDouble,
 	"cmd/mockagent/main.go#scriptedReply": textDouble,
 
+	"internal/chief/chief.go#Chief.prompt":            textModel,
 	"internal/agentmcp/inform.go#helpTopics":          textModel,
 	"internal/material/types.go#Frozen.PromptText":    textModel,
 	"internal/agentmcp/inform.go#Server.steveContext": textModel,

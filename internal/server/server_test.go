@@ -177,7 +177,13 @@ func (h *rig) await(what string, match func(sseEvent) bool) sseEvent {
 		case <-deadline:
 			h.mu.Lock()
 			defer h.mu.Unlock()
-			h.t.Fatalf("never saw %s; saw %d events, last: %s", what, len(h.seen), last(h.seen))
+			var all []string
+			for _, e := range h.seen {
+				if e.Type != "heartbeat" {
+					all = append(all, e.Type+" "+string(e.Data))
+				}
+			}
+			h.t.Fatalf("never saw %s; saw:\n%s", what, strings.Join(all, "\n"))
 		}
 	}
 }
@@ -287,5 +293,72 @@ func TestTheAPIRefusesWithoutTheTokenAndWithoutANonce(t *testing.T) {
 	}
 	if len(h.srv.Work.List()) != 0 {
 		t.Fatal("a task was created without a nonce")
+	}
+}
+
+func messageIn(e sseEvent) (m struct {
+	ID     string   `json:"id"`
+	Role   string   `json:"role"`
+	Text   string   `json:"text"`
+	TaskID string   `json:"task_id"`
+	Tasks  []string `json:"tasks"`
+}, ok bool) {
+	if e.Type != "message" {
+		return m, false
+	}
+	return m, json.Unmarshal(e.Data, &m) == nil
+}
+
+// G1 in miniature: the owner says one sentence; the chief of staff answers
+// and starts a task; the task asks for approval, is approved and finishes;
+// its outcome comes back to the conversation without the owner asking.
+func TestTheOwnerTalksToSteveAndTheWorkComesBack(t *testing.T) {
+	h := start(t)
+	var snap Snapshot
+	h.do("GET", "/v2/snapshot", nil, &snap)
+	h.follow(t.Context(), snap.Cursor)
+
+	var accepted struct {
+		Accepted bool
+		Message  struct{ ID string }
+	}
+	if code := h.do("POST", "/v2/messages", map[string]string{"client_nonce": "m-1", "text": "delegate: perm plan fix issue 7"}, &accepted); code != http.StatusAccepted || !accepted.Accepted {
+		t.Fatalf("post %d %+v", code, accepted)
+	}
+	if code := h.do("POST", "/v2/messages", map[string]string{"client_nonce": "m-1", "text": "delegate: perm plan fix issue 7"}, nil); code != http.StatusAccepted {
+		t.Fatalf("resend %d", code)
+	}
+	var status struct{ Accepted bool }
+	if h.do("GET", "/v2/messages/status?client_nonce=m-1", nil, &status); !status.Accepted {
+		t.Fatal("status does not know the nonce")
+	}
+	reply := h.await("Steve's reply", func(e sseEvent) bool { m, ok := messageIn(e); return ok && m.Role == "steve" })
+	m, _ := messageIn(reply)
+	// The chief's own permission request ("perm" is in what it read) was
+	// refused at once, not put in front of the owner.
+	if !strings.HasSuffix(m.Text, "chief: on it") || !strings.Contains(m.Text, "selected/reject") || len(m.Tasks) != 1 {
+		t.Fatalf("reply = %+v", m)
+	}
+	taskID := m.Tasks[0]
+	opened := h.await("the task's approval card", func(e sseEvent) bool { return e.Type == approvals.EventOpened })
+	var ask approvals.Card
+	json.Unmarshal(opened.Data, &ask)
+	if ask.TaskID != taskID {
+		t.Fatalf("approval for %s, task is %s", ask.TaskID, taskID)
+	}
+	h.do("POST", "/v2/approvals/"+ask.ID, map[string]string{"decision": "approve"}, nil)
+	notice := h.await("the outcome in the conversation", func(e sseEvent) bool { m, ok := messageIn(e); return ok && m.Role == "notice" && m.TaskID == taskID })
+	n, _ := messageIn(notice)
+	if !strings.Contains(n.Text, "任务 #"+taskID+" 已完成") || !strings.Contains(n.Text, "[permission: selected/allow]") {
+		t.Fatalf("notice = %+v", n)
+	}
+	var after Snapshot
+	h.do("GET", "/v2/snapshot", nil, &after)
+	roles := []string{}
+	for _, m := range after.Messages {
+		roles = append(roles, m.Role)
+	}
+	if strings.Join(roles, ",") != "owner,steve,notice" || len(after.Tasks) != 1 || after.Tasks[0].State != work.StateDone {
+		t.Fatalf("snapshot roles=%v tasks=%+v", roles, after.Tasks)
 	}
 }

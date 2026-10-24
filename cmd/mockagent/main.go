@@ -509,6 +509,8 @@ func (a *agent) switchModel(ctx context.Context, sessionID acp.SessionID) error 
 // mock can answer a revision (it keeps the finished step ids).
 func scriptedReply(input string) string {
 	switch {
+	case strings.Contains(input, "You are Steve, the owner's chief of staff"):
+		return chiefReply(input)
 	case strings.Contains(input, "输出一份 JSON 计划"):
 		return mockPlan(input)
 	case strings.Contains(input, "你是审核者"):
@@ -527,6 +529,32 @@ func scriptedReply(input string) string {
 		return "echo: " + input + "\nFINDING: noted in passing\nREPLAN: the target now requires a recheck before shipping"
 	}
 	return "echo: " + input
+}
+
+// chiefReply plays the chief of staff: an owner's latest message of the form
+// "delegate: <goal>" becomes one delegation, anything else a short acknowledgement. Only the
+// conversation is read, never the instructions, which quote an example block.
+func chiefReply(input string) string {
+	conversation := input
+	if _, after, ok := strings.Cut(input, "\nConversation (oldest first):\n"); ok {
+		conversation = after
+	}
+	conversation, _, _ = strings.Cut(conversation, "\nAnswer the owner's latest message(s).")
+	last := ""
+	for _, line := range strings.Split(conversation, "\n") {
+		if strings.HasPrefix(line, "[owner] ") {
+			last = line
+		}
+	}
+	goal := ""
+	if rest, ok := strings.CutPrefix(last, "[owner] delegate: "); ok {
+		goal = strings.TrimSpace(rest)
+	}
+	if goal == "" {
+		return "chief: noted"
+	}
+	raw, _ := json.Marshal(map[string]any{"delegate": []map[string]string{{"goal": goal}}})
+	return "chief: on it\n```steve-actions\n" + string(raw) + "\n```"
 }
 
 // instruction is what this turn was asked to do: the first line of the

@@ -103,10 +103,11 @@ type Service struct {
 	feed    *feed.Feed
 	opts    Options
 
-	mu      sync.Mutex
-	live    map[string]*liveTask // running in this process
-	running sync.WaitGroup
-	ctx     context.Context
+	mu       sync.Mutex
+	live     map[string]*liveTask // running in this process
+	finished []func(Card)
+	running  sync.WaitGroup
+	ctx      context.Context
 }
 
 type liveTask struct {
@@ -229,8 +230,14 @@ func (s *Service) start(id string) {
 		s.run(ctx, id)
 		s.mu.Lock()
 		delete(s.live, id)
+		listeners := append([]func(Card){}, s.finished...)
 		s.mu.Unlock()
 		s.publish(id)
+		if card, err := s.Get(id); err == nil {
+			for _, f := range listeners {
+				f(card)
+			}
+		}
 	}()
 }
 
@@ -271,6 +278,14 @@ func (s *Service) run(ctx context.Context, id string) {
 	if _, err := s.tasks.AdvanceExecution(token, to); err != nil && !errors.Is(err, task.ErrExecutionStopped) {
 		slog.Warn("work: finish", "task", id, "error", err)
 	}
+}
+
+// OnFinished registers a listener told of each task's final card once its
+// execution in this process has returned: done, failed or stopped.
+func (s *Service) OnFinished(f func(Card)) {
+	s.mu.Lock()
+	s.finished = append(s.finished, f)
+	s.mu.Unlock()
 }
 
 // Stop cancels a task. The executor is stopped and its worktree reclaimed by

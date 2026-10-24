@@ -36,6 +36,9 @@ const (
 	EventResolved = "approval.resolved"
 
 	ModeYolo = "yolo"
+	// ModeDeny refuses at once, with a record: for executions that only
+	// propose (the chief of staff) and ask the person in their reply instead.
+	ModeDeny = "deny"
 )
 
 // Option is one answer a card offers.
@@ -122,10 +125,15 @@ func (s *Service) Ask(ctx context.Context, ask permission.Ask) (acp.RequestPermi
 		title = "Permission for " + string(ask.Kind)
 	}
 	card := Card{TaskID: taskID, Kind: KindPermission, Title: title, Detail: ask.Reason, Options: options}
-	if taskID != "" && s.tasks != nil && s.tasks.ModeOf(taskID) == ModeYolo {
+	switch s.modeOf(taskID) {
+	case ModeYolo:
 		card.Auto = true
 		s.record(card, StateApproved, Decision{Approve: true})
 		return permission.Choose(true, ask.Options), nil
+	case ModeDeny:
+		card.Auto = true
+		s.record(card, StateRejected, Decision{})
+		return permission.Choose(false, ask.Options), nil
 	}
 	decision, state, err := s.wait(ctx, card)
 	if err != nil || state != StateApproved {
@@ -152,6 +160,11 @@ func (s *Service) AskUser(ctx context.Context, q view.Question) (view.Answer, er
 		title = strings.TrimSpace(q.Message)
 	}
 	card := Card{TaskID: taskOf(ctx), Kind: KindQuestion, Title: title, Detail: q.Message, Options: options, AllowFreeText: q.AllowFreeText || len(q.Choices) == 0}
+	if s.modeOf(card.TaskID) == ModeDeny {
+		card.Auto = true
+		s.record(card, StateRejected, Decision{})
+		return view.Answer{Decision: "decline"}, nil
+	}
 	decision, state, err := s.wait(ctx, card)
 	if err != nil {
 		return view.Answer{}, err
@@ -165,13 +178,16 @@ func (s *Service) AskUser(ctx context.Context, q view.Question) (view.Answer, er
 // wait opens the card and blocks until it is decided, expires, or the
 // execution ends. An execution that ends first leaves the card expired.
 func (s *Service) wait(ctx context.Context, card Card) (Decision, string, error) {
-	p := s.open(card)
-	var done func()
+	// The task shows as waiting before the card can be seen, so nobody
+	// reads an open card on a task that still says running.
 	if card.TaskID != "" && s.tasks != nil {
-		done = s.tasks.Waiting(card.TaskID)
-		defer done()
+		defer s.tasks.Waiting(card.TaskID)()
 	}
-	timer := time.NewTimer(time.Until(p.card.Deadline))
+	p := s.open(card)
+	s.mu.Lock()
+	deadline, id := p.card.Deadline, p.card.ID
+	s.mu.Unlock()
+	timer := time.NewTimer(time.Until(deadline))
 	defer timer.Stop()
 	select {
 	case d := <-p.answers:
@@ -180,15 +196,23 @@ func (s *Service) wait(ctx context.Context, card Card) (Decision, string, error)
 		s.mu.Unlock()
 		return d, state, nil
 	case <-timer.C:
-		s.expire(p.card.ID)
+		s.expire(id)
 		return Decision{}, StateExpired, nil
 	case <-ctx.Done():
-		s.expire(p.card.ID)
+		s.expire(id)
 		return Decision{}, StateExpired, ctx.Err()
 	}
 }
 
 func (s *Service) open(card Card) *pending {
+	p, opened := s.store(card)
+	s.publish(EventOpened, opened)
+	return p
+}
+
+// store keeps a new card without telling anyone, and returns it as stored:
+// a copy taken under the lock, since an answer may already be changing it.
+func (s *Service) store(card Card) (*pending, Card) {
 	s.mu.Lock()
 	s.nextID++
 	card.ID = strconv.Itoa(s.nextID)
@@ -199,13 +223,15 @@ func (s *Service) open(card Card) *pending {
 	s.cards[card.ID] = p
 	s.order = append(s.order, card.ID)
 	s.trimLocked()
+	stored := p.card
 	s.mu.Unlock()
-	s.publish(EventOpened, card)
-	return p
+	return p, stored
 }
 
+// record keeps a card decided without the person (yolo, deny). Nothing is
+// put in front of them: only the resolution is published, for the record.
 func (s *Service) record(card Card, state string, d Decision) {
-	p := s.open(card)
+	p, _ := s.store(card)
 	s.mu.Lock()
 	p.card.State, p.card.ResolvedAt = state, s.now().UTC()
 	p.card.Choice, p.card.Text = d.Choice, d.Text
@@ -309,6 +335,13 @@ func (s *Service) publish(kind string, card Card) {
 	if s.feed != nil {
 		_, _ = s.feed.Publish(kind, card)
 	}
+}
+
+func (s *Service) modeOf(taskID string) string {
+	if taskID == "" || s.tasks == nil {
+		return ""
+	}
+	return s.tasks.ModeOf(taskID)
 }
 
 func hasOption(options []Option, id string) bool {
