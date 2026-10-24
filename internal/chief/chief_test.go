@@ -191,3 +191,23 @@ func TestATaskOutcomeIsPostedByTheProgram(t *testing.T) {
 		t.Fatal("a notice started a turn")
 	}
 }
+
+func TestAMessageLeftUnansweredByARestartIsAnswered(t *testing.T) {
+	w := newWorld(t, func(string) (string, error) { return "抱歉久等，刚才重启了", nil })
+	// A message stored by the previous process, before any chief listened.
+	quiet := thread.New(w.thread.Book(), nil)
+	if _, _, err := quiet.Post(t.Context(), thread.Message{Role: thread.RoleOwner, Text: "还在吗"}); err != nil {
+		t.Fatal(err)
+	}
+	w.chief.Resume()
+	w.chief.Wait()
+	all := w.messages(t)
+	if len(all) != 2 || all[1].Role != thread.RoleSteve {
+		t.Fatalf("thread = %+v", all)
+	}
+	w.chief.Resume()
+	w.chief.Wait()
+	if len(w.runner.prompts) != 1 {
+		t.Fatal("an answered thread was answered again")
+	}
+}

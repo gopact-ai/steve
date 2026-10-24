@@ -61,6 +61,9 @@ func New(book *ledger.Ledger, events *feed.Feed) *Service {
 	return &Service{book: book, feed: events, now: time.Now}
 }
 
+// Book is the ledger the thread is kept in.
+func (s *Service) Book() *ledger.Ledger { return s.book }
+
 // OnPosted registers a listener told of every message after it is stored.
 func (s *Service) OnPosted(f func(Message)) {
 	s.mu.Lock()

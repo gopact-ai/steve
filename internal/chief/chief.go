@@ -88,6 +88,17 @@ func New(ctx context.Context, threads *thread.Service, w Work, tasks *task.Store
 	return c
 }
 
+// Resume answers what a previous process accepted but did not answer: if
+// the thread ends with the owner speaking, a turn starts. Accepting a
+// message promises an answer, restart or not.
+func (c *Chief) Resume() {
+	last, err := c.thread.Recent(c.ctx, thread.Main, 1)
+	if err != nil || len(last) == 0 || last[0].Role != thread.RoleOwner {
+		return
+	}
+	c.kick()
+}
+
 // kick asks for a turn; a turn already running picks the message up next.
 func (c *Chief) kick() {
 	c.mu.Lock()

@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -93,6 +94,20 @@ func New(parent context.Context, cfg *config.Config, opts Options) (s *Server, e
 	return s, err
 }
 
+// isolated is the configuration the harnesses run with: each one's process
+// gets its own home under the state directory instead of the operator's, so
+// an agent sees only the credentials and settings Steve prepared for it.
+func isolated(cfg *config.Config, stateDir string) *config.Config {
+	running := *cfg
+	running.Harnesses = make(map[string]config.Harness, len(cfg.Harnesses))
+	for id, item := range cfg.Harnesses {
+		item.Args = slices.Clone(item.Args)
+		item.Env = runtime.ApplyEnv(slices.Clone(item.Env), id, stateDir)
+		running.Harnesses[id] = item
+	}
+	return &running
+}
+
 // kernel is what the product services are built on.
 type kernel struct {
 	catalog    *agent.Catalog
@@ -131,10 +146,16 @@ func (s *Server) openRuntime() (*skills.Map, error) {
 	if err := live.Apply(); err != nil {
 		return nil, err
 	}
-	s.manager, err = configbuild.HarnessManager(cfg)
+	// Adapters named by the configuration are fetched and verified now, so a
+	// machine either has the pinned adapter or refuses to start.
+	if err := configbuild.PrepareAdapters(s.ctx, cfg); err != nil {
+		return nil, err
+	}
+	s.manager, err = configbuild.HarnessManager(isolated(cfg, stateDir))
 	if err != nil {
 		return nil, err
 	}
+	live.After = s.manager.Restart
 	s.defer_(s.manager.Stop)
 	return skillMap, nil
 }
@@ -221,6 +242,7 @@ func (s *Server) assembleProduct(k kernel, skillMap *skills.Map, opts Options) e
 	s.Thread = thread.New(s.book, s.Feed)
 	s.Chief = chief.New(ctx, s.Thread, s.Work, k.tasks, runner, chief.Options{Agent: chiefAgent(cfg, k.catalog.Default().ID), Project: cfg.Gateway.DefaultProject, Locale: cfg.EffectiveLocale()})
 	s.Token = config.ConsoleToken(cfg.Gateway.ReadModelToken)
+	s.Chief.Resume()
 	return nil
 }
 
