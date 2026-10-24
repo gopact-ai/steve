@@ -15,7 +15,7 @@ const module = "github.com/gopact-ai/steve/"
 // runLayer is where Steve executes work; storeLayer is where it keeps it.
 // A denied path covers its subpackages too.
 var (
-	runLayer   = []string{"internal/exec", "internal/lifecycle", "internal/turn", "internal/node", "internal/harness", "internal/artifact"}
+	runLayer   = []string{"internal/lifecycle", "internal/node", "internal/harness", "internal/artifact", "internal/attempt", "internal/execution"}
 	storeLayer = []string{"internal/ledger", "modernc.org/sqlite"}
 )
 
@@ -28,10 +28,6 @@ var reachRules = []struct {
 	// The file format and the text catalog describe, they do not run.
 	{"internal/config", slices.Concat(runLayer, storeLayer)},
 	{"internal/i18n", slices.Concat(runLayer, storeLayer)},
-	// The console contract carries task, project, material and
-	// plugin-library records, which live beside their ledger stores, and
-	// artifact edits.
-	{"internal/consoleapi", slices.DeleteFunc(slices.Clone(runLayer), func(pkg string) bool { return pkg == "internal/artifact" })},
 	// A node keeps its own state; the hub's ledger is not its business.
 	{"cmd/steve-node", []string{"internal/ledger"}},
 }

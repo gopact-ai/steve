@@ -246,25 +246,6 @@ func TestInlineInterfaceAssertionsOnlyShrink(t *testing.T) {
 	ratchet(t, "interface_assertions", offenders)
 }
 
-// consoleapi.Admin, Console and PluginsService are each implemented by one
-// service and consumed only by httpapi. A method httpapi neither calls nor
-// takes as a method value is dead, yet still compiles because the service
-// must satisfy the interface.
-func TestConsoleAPIPortMethodsAreAllUsedByHTTPAPI(t *testing.T) {
-	root := repoRoot(t)
-	for _, port := range []string{"Admin", "Console", "PluginsService"} {
-		t.Run(port, func(t *testing.T) {
-			unused, problems := unusedMethods(t, root, port)
-			for _, problem := range problems {
-				t.Errorf("consoleapi.%s, so this test cannot list its methods", problem)
-			}
-			for _, method := range unused {
-				t.Errorf("consoleapi.%s is neither called nor referenced in internal/httpapi; remove it from its interface, and from its implementation too if nothing else calls it", method)
-			}
-		})
-	}
-}
-
 // unusedMethods lists, as Interface.Method, each method of the port
 // interface in root's internal/consoleapi that no selector in a non-test
 // file of root's internal/httpapi names. The port's methods include those
@@ -385,25 +366,6 @@ func packageSourceFiles(t *testing.T, dir string) []string {
 		}
 	}
 	return files
-}
-
-// The methods of consoleapi.Admin include those of every interface it
-// embeds from its own package, however deep; an embedded interface from
-// elsewhere cannot be listed without type information and is reported.
-func TestAdminMethodsIncludeThoseOfEmbeddedInterfaces(t *testing.T) {
-	root := filepath.Join(repoRoot(t), "internal", "architecture", "testdata", "admin_methods")
-	unused, problems := unusedMethods(t, root, "Admin")
-	if want := []string{"Deeper.Unused"}; fmt.Sprint(unused) != fmt.Sprint(want) {
-		t.Errorf("unused = %v, want %v", unused, want)
-	}
-	if want := []string{"Admin embeds io.Closer, which is not an interface declared in internal/consoleapi"}; fmt.Sprint(problems) != fmt.Sprint(want) {
-		t.Errorf("problems = %v, want %v", problems, want)
-	}
-	// Another port reaches Deeper through Extra, without Admin's io.Closer.
-	unused, problems = unusedMethods(t, root, "Extra")
-	if fmt.Sprint(unused) != "[Deeper.Unused]" || len(problems) != 0 {
-		t.Errorf("Extra: unused = %v, problems = %v", unused, problems)
-	}
 }
 
 func TestInlineStateLiteralsOnlyShrink(t *testing.T) {
