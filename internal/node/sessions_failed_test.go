@@ -3,11 +3,14 @@ package node
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/procgroup"
@@ -305,5 +308,177 @@ func TestFailedSessionStopProvedByHostWithoutRecordedGroup(t *testing.T) {
 				t.Fatal("unproved stop released the failed owner")
 			}
 		})
+	}
+}
+
+// A stop whose identity the record doesn't hold is refused before the
+// process is touched: retiring a failed owner can't be undone.
+func TestFailedSessionStopRefusesWrongIdentityBeforeEnding(t *testing.T) {
+	for _, mode := range []string{"close-harness", "close-input", "close-command", "kill-other-command", "cancel-expired-receipt"} {
+		t.Run(mode, func(t *testing.T) {
+			s, one, _ := failedSession(t)
+			settled := 0
+			recordGroup(t, s, one, func() error { settled++; return nil })
+			req := nodeSessionRequest(nodewire.SessionActionClose)
+			req.ID, req.CommandID = one.record.State.ID, "input-1"
+			switch mode {
+			case "close-harness":
+				req.Harness = "another"
+			case "close-input":
+				req.InputSequence = 7
+			case "close-command":
+				req.CommandID = "never-sent"
+			case "kill-other-command":
+				req.Action, req.CommandID = nodewire.SessionActionKill, "another-input"
+			case "cancel-expired-receipt":
+				req.Action, req.CommandID, req.InputSequence = nodewire.SessionActionCancel, "pruned-input", 1
+			}
+			if _, err := s.Do(t.Context(), "cluster-1", req); err == nil {
+				t.Fatal("stop with a wrong identity was accepted")
+			}
+			durable, _, err := s.readRecord(req.ID)
+			if err != nil || durable.State.ProcessStopped || settled != 0 {
+				t.Fatalf("refused stop ended the process: stopped=%v settled=%d %v", durable.State.ProcessStopped, settled, err)
+			}
+			if s.sessions[req.ID] != one {
+				t.Fatal("refused stop released the failed owner")
+			}
+		})
+	}
+}
+
+// A workspace callback still running keeps the stop unproved even when the
+// recorded group is proved gone; once it drains the same stop is recorded.
+func TestFailedSessionStopWaitsForWorkspaceCallbacks(t *testing.T) {
+	s, one, failure := failedSession(t)
+	recordGroup(t, s, one, func() error { return nil })
+	failedHost(t, one, true)
+	drained := false
+	s.hostDrained = func(*acphost.Host) bool { return drained }
+	req := nodeSessionRequest(nodewire.SessionActionKill)
+	req.ID, req.CommandID = one.record.State.ID, "input-1"
+	_, err := s.Do(t.Context(), "cluster-1", req)
+	var refusal *SessionError
+	if !errors.Is(err, failure) || !errors.As(err, &refusal) || refusal.Code != "stop_unproven" {
+		t.Fatalf("stop with a running callback = %v", err)
+	}
+	durable, _, err := s.readRecord(req.ID)
+	if err != nil || durable.State.ProcessStopped || s.sessions[req.ID] != one {
+		t.Fatalf("stop with a running callback was recorded: %+v %v", durable.State, err)
+	}
+	drained = true
+	if state, err := s.Do(t.Context(), "cluster-1", req); err != nil || !state.ProcessStopped {
+		t.Fatalf("stop after callbacks drained = %+v %v", state, err)
+	}
+}
+
+// failedOpen is a failed owner whose open never answered: the hub knows no
+// session ID and recovers it by its open command.
+func failedOpen(t *testing.T) (*SessionService, *ownedSession, nodewire.SessionRequest) {
+	t.Helper()
+	s, one, _ := failedSession(t)
+	req := nodeSessionRequest(nodewire.SessionActionKill)
+	req.CommandID, req.Harness = "input-1/open", "mock"
+	id := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness)
+	failure := one.failure
+	delete(s.sessions, one.record.State.ID)
+	open := &ownedSession{service: s, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
+	record := sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, State: nodewire.SessionState{ID: id, Binding: req.Binding, Harness: "mock", State: nodewire.SessionOpening}, Commands: map[string]nodewire.SessionCommand{}, CommandHashes: map[string]string{}}
+	if err := open.commitLocked(record); err != nil {
+		t.Fatal(err)
+	}
+	open.failure = failure
+	s.sessions[id] = open
+	return s, open, req
+}
+
+// Open recovery reaches a failed owner too: kill and cancel-open end it and
+// answer the original open receipt, closed, even when the journal refuses
+// the Closed state; a retry is answered from the record.
+func TestFailedOpenRecoveryStopsFailedOwner(t *testing.T) {
+	for _, mode := range []string{"kill", "cancel-open", "closed-refused"} {
+		t.Run(mode, func(t *testing.T) {
+			s, one, req := failedOpen(t)
+			recordGroup(t, s, one, func() error { return nil })
+			if mode == "cancel-open" {
+				req.Action = nodewire.SessionActionCancelOpen
+			}
+			if mode == "closed-refused" {
+				store, err := s.recordsStore()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.db.Exec(`CREATE TRIGGER refuse_closed BEFORE UPDATE OF header ON sessions WHEN json_extract(NEW.header,'$.state.state') = 'closed' BEGIN SELECT RAISE(ABORT, 'CHECK constraint failed: retained_bytes'); END`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			id := one.record.State.ID
+			for attempt := range 2 {
+				state, err := s.Do(t.Context(), "cluster-1", req)
+				if err != nil || state.OpenReceipt == nil || state.OpenReceipt.Action != req.Action || state.OpenReceipt.CommandID != req.CommandID ||
+					state.ID != id || !state.ProcessStopped || state.State != nodewire.SessionClosed {
+					t.Fatalf("open recovery %d of a failed owner = %+v %v", attempt, state, err)
+				}
+				if _, live := s.sessions[id]; live {
+					t.Fatal("failed open owner was not released")
+				}
+			}
+			if mode == "closed-refused" {
+				durable, _, err := s.readRecord(id)
+				if err != nil || durable.State.State == nodewire.SessionClosed {
+					t.Fatalf("fixture did not refuse the Closed state: %+v %v", durable.State, err)
+				}
+			}
+		})
+	}
+}
+
+// A plugin use whose settlement fails keeps the owner, so a later stop
+// settles it; releasing the owner first would strand the use until restart.
+func TestFailedSessionStopRetriesPluginSettlement(t *testing.T) {
+	s, one, failure := failedSession(t)
+	recordGroup(t, s, one, func() error { return nil })
+	selection := nodeRuntimeFixture(t, s.server, "")
+	runtime, err := s.server.pluginRuntimePool().Prepare(t.Context(), "native", selection, harness.Config{Command: buildMockAgent(t), Permission: "read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.server.closePluginRuntimes)
+	id := one.record.State.ID
+	if err := s.server.pluginStore().BeginRuntimeUse(t.Context(), runtime.Ref, "session/"+id, "session"); err != nil {
+		t.Fatal(err)
+	}
+	one.failure = nil
+	next := one.copyLocked()
+	next.State.Plugin = runtime.Ref.Clone()
+	if err := one.commitLocked(next); err != nil {
+		t.Fatal(err)
+	}
+	one.failure = failure
+	uses := filepath.Join(s.server.pluginStore().Dir, "runtimes", runtime.Ref.ID, "uses")
+	if err := os.Chmod(uses, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(uses, 0700) })
+	req := nodeSessionRequest(nodewire.SessionActionKill)
+	req.ID, req.CommandID = id, "input-1"
+	if _, err := s.Do(t.Context(), "cluster-1", req); !errors.Is(err, failure) {
+		t.Fatalf("stop with an unsettled plugin use = %v", err)
+	}
+	if s.sessions[id] != one {
+		t.Fatal("owner released with its plugin use unsettled")
+	}
+	if err := os.Chmod(uses, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := s.Do(t.Context(), "cluster-1", req); err != nil || !state.ProcessStopped {
+		t.Fatalf("retried stop = %+v %v", state, err)
+	}
+	if _, live := s.sessions[id]; live {
+		t.Fatal("settled owner was not released")
+	}
+	infos, err := s.server.pluginStore().RuntimeInfos()
+	if err != nil || len(infos) != 1 || len(infos[0].Uses) != 1 || !infos[0].Uses[0].Stopped {
+		t.Fatalf("plugin use left active: %+v %v", infos, err)
 	}
 }

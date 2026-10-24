@@ -73,6 +73,8 @@ type SessionService struct {
 	// node process ended and released with the stop recorded, possibly
 	// without the state change that should have followed it.
 	retiredFailed map[string]bool
+	// hostDrained replaces Host.CallbacksDrained in tests; nil is the host's.
+	hostDrained func(*acphost.Host) bool
 }
 
 // harnessCapabilities is what starting a harness once said about the agent

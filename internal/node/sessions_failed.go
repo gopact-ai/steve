@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/procgroup"
 )
@@ -22,12 +23,11 @@ import (
 // isolated.
 func (s *SessionService) doFailed(ctx context.Context, one *ownedSession, failure error, req nodewire.SessionRequest) (nodewire.SessionState, error) {
 	one.mu.Lock()
-	clusterID, old, binding := one.record.ClusterID, one.record.Authority, one.record.State.Binding
+	record := one.record
 	one.mu.Unlock()
-	a := req.Authority
-	if a.ClusterID != clusterID || a.CoordinatorEpoch < old.CoordinatorEpoch || a.WriterGeneration < old.WriterGeneration ||
-		a.CoordinatorEpoch == old.CoordinatorEpoch && a.CoordinatorNodeID != old.CoordinatorNodeID {
-		return nodewire.SessionState{}, sessionError("forbidden", "stale coordinator activation")
+	binding := record.State.Binding
+	if err := checkRecordedAuthority(record, req.Authority); err != nil {
+		return nodewire.SessionState{}, err
 	}
 	switch req.Action {
 	case nodewire.SessionActionAttach, nodewire.SessionActionSettings:
@@ -43,6 +43,11 @@ func (s *SessionService) doFailed(ctx context.Context, one *ownedSession, failur
 		if req.Binding != binding {
 			return nodewire.SessionState{}, sessionError("conflict", "session belongs to another execution")
 		}
+		// A stop the receipt check after it would refuse must not end the
+		// process first: retiring is irreversible.
+		if err := s.checkFailedStop(one, req); err != nil {
+			return nodewire.SessionState{}, err
+		}
 		if err := s.retireFailed(ctx, one, failure, req.Action != nodewire.SessionActionCancel); err != nil {
 			return nodewire.SessionState{}, err
 		}
@@ -50,6 +55,98 @@ func (s *SessionService) doFailed(ctx context.Context, one *ownedSession, failur
 	default:
 		return nodewire.SessionState{}, failure
 	}
+}
+
+// checkRecordedAuthority is admitLocked's coordinator check without the
+// commit that records a newer activation, which a failed journal refuses.
+func checkRecordedAuthority(record sessionRecord, a nodewire.SessionAuthority) error {
+	old := record.Authority
+	if a.ClusterID != record.ClusterID || a.CoordinatorEpoch < old.CoordinatorEpoch || a.WriterGeneration < old.WriterGeneration ||
+		a.CoordinatorEpoch == old.CoordinatorEpoch && a.CoordinatorNodeID != old.CoordinatorNodeID {
+		return sessionError("forbidden", "stale coordinator activation")
+	}
+	return nil
+}
+
+// reconcileFailedOpen answers an open recovery for a failed owner whose
+// open identity the caller has checked: the hub has no confirmed session ID
+// for it, so this, not a session stop, is how it asks for the stop.
+func (s *SessionService) reconcileFailedOpen(ctx context.Context, one *ownedSession, failure error, id string, req nodewire.SessionRequest) (nodewire.SessionState, error) {
+	one.mu.Lock()
+	record := one.record
+	one.mu.Unlock()
+	if err := checkRecordedAuthority(record, req.Authority); err != nil {
+		return nodewire.SessionState{}, err
+	}
+	if req.Action == nodewire.SessionActionCancelOpen || req.Action == nodewire.SessionActionKill {
+		if err := s.retireFailed(ctx, one, failure, true); err != nil {
+			return nodewire.SessionState{}, err
+		}
+	}
+	store, err := s.recordsStore()
+	if err != nil {
+		return nodewire.SessionState{}, err
+	}
+	durable, exists, err := store.read(id, "")
+	if err != nil {
+		return nodewire.SessionState{}, err
+	}
+	if !exists {
+		return nodewire.SessionState{}, sessionError("unavailable", "node session receipt cannot be read")
+	}
+	return openRecoveryReceipt(s.retiredOpenState(id, durable), req, false), nil
+}
+
+// retiredOpenState is a record's state as an open recovery reports it. A
+// session a failed owner retired is closed whether or not the journal took
+// the Closed state after its recorded stop.
+func (s *SessionService) retiredOpenState(id string, record sessionRecord) nodewire.SessionState {
+	state := (&ownedSession{record: record}).stateLocked("")
+	s.mu.Lock()
+	retired := s.retiredFailed[id]
+	s.mu.Unlock()
+	if retired && state.ProcessStopped {
+		state.State = nodewire.SessionClosed
+	}
+	return state
+}
+
+// checkFailedStop refuses, before anything is ended, a stop the healthy
+// owner would refuse and one whose receipt closedState would then refuse:
+// another command while one runs, and a close or receipt identity the
+// durable record doesn't hold.
+func (s *SessionService) checkFailedStop(one *ownedSession, req nodewire.SessionRequest) error {
+	one.mu.Lock()
+	current, running := one.record.CurrentCommand, one.runningLocked()
+	one.mu.Unlock()
+	if req.Action != nodewire.SessionActionClose && req.CommandID != "" && req.CommandID != current && running {
+		return sessionError("conflict", "stop targets another command")
+	}
+	store, err := s.recordsStore()
+	if err != nil {
+		return err
+	}
+	selected := req.CommandID
+	if req.Action == nodewire.SessionActionClose {
+		selected = ""
+	}
+	record, exists, err := store.read(req.ID, selected)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return sessionError("unavailable", "node session receipt cannot be read")
+	}
+	if record.ClusterID != req.Authority.ClusterID {
+		return sessionError("forbidden", "session belongs to another cluster")
+	}
+	if record.State.Binding != req.Binding {
+		return sessionError("conflict", "session belongs to another execution")
+	}
+	if req.Action == nodewire.SessionActionClose {
+		return checkCloseIdentity(req, record)
+	}
+	return checkSessionReceipt(req, record)
 }
 
 // durableState is the last receipt the journal accepted for req's command.
@@ -91,7 +188,7 @@ func (s *SessionService) retireFailed(ctx context.Context, one *ownedSession, fa
 	one.mu.Lock()
 	id := one.record.State.ID
 	one.mu.Unlock()
-	hostStopped, err := endFailedHost(ctx, one)
+	hostStopped, err := s.endFailedHost(ctx, one)
 	if err != nil {
 		return errors.Join(failure, err)
 	}
@@ -102,12 +199,15 @@ func (s *SessionService) retireFailed(ctx context.Context, one *ownedSession, fa
 		return errors.Join(failure, err)
 	}
 	fresh = s.settleRetired(fresh, closed)
+	// The owner is kept until its plugin use is settled too: once released,
+	// nothing visits the use again before a restart. A later stop finds the
+	// stop recorded and retries just this.
 	if err := s.endStoppedRuntime(fresh.record); err != nil {
-		slog.Error("steve-node: plugin shutdown receipt failed", "session", id, "error", err)
+		return errors.Join(failure, err)
 	}
 	if plugin := fresh.record.State.Plugin; plugin != nil {
 		if err := s.server.pluginRuntimePool().Drop(plugin.ID); err != nil {
-			slog.Error("steve-node: plugin runtime release failed", "session", id, "error", err)
+			return errors.Join(failure, err)
 		}
 	}
 	s.mu.Lock()
@@ -129,8 +229,11 @@ func (s *SessionService) retireFailed(ctx context.Context, one *ownedSession, fa
 }
 
 // endFailedHost kills a failed owner's host and reports whether the host
-// saw every process it started exit.
-func endFailedHost(ctx context.Context, one *ownedSession) (bool, error) {
+// saw every process it started exit. Its workspace callbacks must drain
+// whatever proves the exit: one still running can write after the agent's
+// group is gone, so a stop recorded before it ends would release the
+// workspace too early.
+func (s *SessionService) endFailedHost(ctx context.Context, one *ownedSession) (bool, error) {
 	one.mu.Lock()
 	id, host := one.record.State.ID, one.host
 	openCancel, openDone, runDone := one.openCancel, one.openDone, one.runDone
@@ -155,15 +258,23 @@ func endFailedHost(ctx context.Context, one *ownedSession) (bool, error) {
 		}
 	}
 	// The host's own record of the exit can trail the kill by the moment
-	// its watcher takes to see the group empty.
-	stopped := host.AllProcessesStopped()
-	for wait := time.Now().Add(recordedGroupWithin); !stopped && time.Now().Before(wait); {
+	// its watcher takes to see the group empty, and a cancelled callback
+	// takes a moment to return.
+	drained := s.hostDrained
+	if drained == nil {
+		drained = (*acphost.Host).CallbacksDrained
+	}
+	stopped, idle := host.AllProcessesStopped(), drained(host)
+	for wait := time.Now().Add(recordedGroupWithin); (!stopped || !idle) && time.Now().Before(wait); {
 		select {
 		case <-time.After(10 * time.Millisecond):
 		case <-ctx.Done():
 			return false, killFailure(ctx.Err())
 		}
-		stopped = host.AllProcessesStopped()
+		stopped, idle = host.AllProcessesStopped(), drained(host)
+	}
+	if !idle {
+		return false, sessionError("stop_unproven", "a workspace callback of the original agent is still running")
 	}
 	return stopped, nil
 }

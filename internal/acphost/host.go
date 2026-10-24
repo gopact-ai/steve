@@ -1615,6 +1615,15 @@ func (h *Host) Close() {
 	h.shutdownLocked()
 }
 
+// CallbacksDrained reports whether no workspace file callback is still
+// executing. A callback the agent's exit cancelled can still be writing in
+// the workspace; the agent's process group being empty says nothing of it.
+func (h *Host) CallbacksDrained() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.fileCalls) == 0
+}
+
 // AllProcessesStopped requires positive transport evidence, including older
 // generations whose connection has already closed.
 func (h *Host) AllProcessesStopped() bool {
